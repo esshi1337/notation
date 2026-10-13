@@ -1,0 +1,43 @@
+[package]
+name = "notation"
+version = "0.1.0"
+description = "A local Markdown and Mermaid editor"
+edition = "2021"
+rust-version = "1.89"
+
+[lib]
+name = "notation_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "notation"
+path = "src/main.rs"
+
+[features]
+default = []
+desktop = ["dep:tauri", "dep:tauri-plugin-dialog", "dep:tauri-build"]
+
+[build-dependencies]
+tauri-build = { version = "2", optional = true, features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde-saphyr = { version = "1.3", default-features = false, features = ["deserialize"] }
+rquickjs = "0.14"
+libc = "0.2"
+rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
+pulldown-cmark = { version = "0.13", default-features = false }
+regex = "1"
+percent-encoding = "2"
+base64 = "0.22"
+roxmltree = "0.21"
+url = "2"
+resvg = { version = "0.48", default-features = false, features = ["text", "raster-images"] }
+landlock = "0.4"
+tempfile = "3"
+tauri = { version = "2", optional = true, features = [] }
+tauri-plugin-dialog = { version = "2", optional = true }
+
+[dev-dependencies]
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "The main editor can open and save local documents through native dialogs.",
+  "windows": ["main"],
+  "permissions": ["core:default", "core:window:allow-close", "core:window:allow-destroy", "dialog:allow-open", "dialog:allow-save", "dialog:allow-message"]
+}

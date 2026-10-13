@@ -1,0 +1,15 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/schemas/
+playwright-report/
+test-results/
+__pycache__/
+*.pyc
+*.local
+.env
+.env.*
+!.env.example
+
+public/pdfjs/
+src-tauri/resources/engines/

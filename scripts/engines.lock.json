@@ -1,0 +1,145 @@
+{
+  "platform": "linux-x86_64",
+  "artifacts": [
+    {
+      "id": "pandoc",
+      "version": "3.12.1",
+      "url": "https://github.com/jgm/pandoc/releases/download/3.12.1/pandoc-3.12.1-linux-amd64.tar.gz",
+      "sha256": "d0c90410e90204c9ca83b8539fac5c7aed01fd537207e4585849f8abc5df20b8",
+      "archive": "tar",
+      "member": "pandoc-3.12.1/bin/pandoc",
+      "destination": "bin/pandoc"
+    },
+    {
+      "id": "typst",
+      "version": "0.15.1",
+      "url": "https://github.com/typst/typst/releases/download/v0.15.1/typst-x86_64-unknown-linux-musl.tar.xz",
+      "sha256": "a6d077d0a95eed5a2eba715b2dae06be954f624ccbf85758a03f389ded33118c",
+      "archive": "tar",
+      "member": "typst-x86_64-unknown-linux-musl/typst",
+      "destination": "bin/typst"
+    },
+    {
+      "id": "d2",
+      "version": "0.9.0",
+      "url": "https://github.com/d2lang/d2/releases/download/v0.9.0/d2-v0.9.0-linux-amd64.tar.gz",
+      "sha256": "5669ddc46b99e942cc96078f4a4e36d5e62103348f4c05179ede27802fdd87a9",
+      "archive": "tar",
+      "member": "d2-v0.9.0/bin/d2",
+      "destination": "bin/d2"
+    },
+    {
+      "id": "plantuml",
+      "version": "1.2026.8-mit",
+      "url": "https://github.com/plantuml/plantuml/releases/download/v1.2026.8/plantuml-mit-1.2026.8.jar",
+      "sha256": "3629c9cd017c7f73e6450396eea0040216c7e1eef8473ce33cc1aad469dab2f9",
+      "destination": "plantuml.jar"
+    },
+    {
+      "id": "jre",
+      "version": "21.0.12.1+1",
+      "url": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jre_x64_linux_hotspot_21.0.12.1_1.tar.gz",
+      "sha256": "2413149700df0f7d440500a84a8f764c535f21e5a5e87d38328b64eec2c5b500",
+      "archive": "tree",
+      "destination": "jre"
+    },
+    {
+      "id": "pandoc-copying",
+      "version": "pinned",
+      "url": "https://raw.githubusercontent.com/jgm/pandoc/3.12.1/COPYING.md",
+      "sha256": "3ebfbf9235b049d384cdba5a66a1a3434bb544391e720b76faa8e1b3ee61a4e5",
+      "destination": "licenses/pandoc-COPYING.md"
+    },
+    {
+      "id": "pandoc-copyright",
+      "version": "pinned",
+      "url": "https://raw.githubusercontent.com/jgm/pandoc/3.12.1/COPYRIGHT",
+      "sha256": "842e33ef01625e93f85bebb8bac83aa570186b7aa77a09971257cc29f8f60740",
+      "destination": "licenses/pandoc-COPYRIGHT"
+    },
+    {
+      "id": "typst-license",
+      "version": "pinned",
+      "url": "https://raw.githubusercontent.com/typst/typst/v0.15.1/LICENSE",
+      "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
+      "destination": "licenses/typst-LICENSE"
+    },
+    {
+      "id": "typst-notice",
+      "version": "pinned",
+      "url": "https://raw.githubusercontent.com/typst/typst/v0.15.1/NOTICE",
+      "sha256": "1778244777547c281b6f5fa9fc0c18ab21f8d4491c803f64e09046800f5fcb26",
+      "destination": "licenses/typst-NOTICE"
+    },
+    {
+      "id": "d2-license",
+      "version": "pinned",
+      "url": "https://raw.githubusercontent.com/d2lang/d2/v0.9.0/LICENSE.txt",
+      "sha256": "97933e571f92c0b21e09a59fe67d7ce9a77d3eac5efe5f341756d5f93d191775",
+      "destination": "licenses/d2-LICENSE.txt"
+    },
+    {
+      "id": "d2-notices",
+      "version": "pinned",
+      "url": "https://raw.githubusercontent.com/d2lang/d2/v0.9.0/THIRD_PARTY_NOTICES.txt",
+      "sha256": "b5543d14ae949663052296904c0f2f3b1521150dda871f693a67dddadcefb3be",
+      "destination": "licenses/d2-THIRD_PARTY_NOTICES.txt"
+    },
+    {
+      "id": "plantuml-license",
+      "version": "pinned",
+      "url": "https://raw.githubusercontent.com/plantuml/plantuml/v1.2026.8/plantuml-mit/mit-license.txt",
+      "sha256": "0aadc58e7c3e1eee5914418ff63ffbd19b79747075190b5f9f69017ab58966df",
+      "destination": "licenses/plantuml-MIT.txt"
+    },
+    {
+      "id": "plantuml-notices",
+      "version": "pinned",
+      "url": "https://raw.githubusercontent.com/plantuml/plantuml/v1.2026.8/LICENSES.md",
+      "sha256": "abe27e05429b44ad61a342ee26c14d2be25fe3c8574e7e01442bddb9b0248cc3",
+      "destination": "licenses/plantuml-LICENSES.md"
+    },
+    {
+      "id": "noto-font",
+      "version": "pinned",
+      "url": "https://raw.githubusercontent.com/google/fonts/66928797f271fed5ee428544e7229685e2d90127/ofl/notosans/NotoSans%5Bwdth%2Cwght%5D.ttf",
+      "sha256": "bfb7bb691513f12e734dc346c03a03f784912432d7e3fa8e56efcf906fe86b3d",
+      "destination": "fonts/NotoSans.ttf"
+    },
+    {
+      "id": "noto-license",
+      "version": "pinned",
+      "url": "https://raw.githubusercontent.com/google/fonts/66928797f271fed5ee428544e7229685e2d90127/ofl/notosans/OFL.txt",
+      "sha256": "cee9892f9f0cc8fe882c9e9537ee6a89621d86ee7ceaf70b02e2b2b1c25c061a",
+      "destination": "licenses/NotoSans-OFL.txt"
+    },
+    {
+      "id": "viz-js-license",
+      "version": "bundled-wasm-notice",
+      "url": "https://raw.githubusercontent.com/mdaines/viz-js/c8ce050d28eb0dc1ed1629ea32ab7f3dc117db0f/LICENSE",
+      "sha256": "f1fb91bf7cbcb42b2af56949e4fa909e1979d5b57c2826cabacdb4b631457720",
+      "destination": "licenses/viz-js-LICENSE"
+    },
+    {
+      "id": "graphviz-license",
+      "version": "bundled-wasm-notice",
+      "url": "https://www.eclipse.org/org/documents/epl-2.0/EPL-2.0.txt",
+      "sha256": "0becf16567beb77fa252b7664631dd177c8f9a1889e48995b45379c7130e5303",
+      "destination": "licenses/graphviz-EPL-2.0.txt"
+    },
+    {
+      "id": "expat-license",
+      "version": "bundled-wasm-notice",
+      "url": "https://raw.githubusercontent.com/libexpat/libexpat/ac140c2d34e0aafb1c6a126ca2917ff32d765518/expat/COPYING",
+      "sha256": "31b15de82aa19a845156169a17a5488bf597e561b2c318d159ed583139b25e87",
+      "destination": "licenses/expat-COPYING"
+    }
+  ],
+  "sources": {
+    "pandoc": "https://github.com/jgm/pandoc/tree/3.12.1",
+    "typst": "https://github.com/typst/typst/tree/v0.15.1",
+    "d2": "https://github.com/d2lang/d2/tree/v0.9.0",
+    "plantuml": "https://github.com/plantuml/plantuml/tree/v1.2026.8",
+    "jre": "https://github.com/adoptium/temurin21-binaries/releases/tag/jdk-21.0.12.1%2B1"
+  }
+}

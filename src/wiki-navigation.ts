@@ -1,0 +1,2 @@
+export type WikiCandidate = { path: string; name: string; title: string; relativePath: string; link: string; aliases: string[]; blocks?: { id: string; line: number }[]; headings: { text: string; line: number; level: number }[] };
+export type WikiResolution = { status: 'resolved' | 'ambiguous' | 'missing'; target: string; alias: string | null; heading: string | null; path: string | null; candidates: WikiCandidate[]; createPath: string | null };
