@@ -87,6 +87,21 @@ return {theme:document.documentElement.dataset.theme,bar:box('.workspace-bar').h
                     reports.append(geometry)
                     screenshot(client, output / f'{theme}-editor.png', "!document.querySelector('dialog[open]')")
                     client.element_command(client.find('[aria-label="App menu"]'), '/click')
+                    smoke.wait_for(client, "document.querySelector('.app-menu')", 'Notation menu')
+                    navigation = client.execute("""
+const menu=document.querySelector('.app-menu'),brand=menu.querySelector('.compact-menu-brand');
+const tools=[...document.querySelectorAll('.sidebar-button')].map(e=>e.getAttribute('aria-label').replace(/ panel$/,''));
+const entries=[...menu.querySelectorAll('button[role^=menuitem]')].map(e=>e.getAttribute('aria-label'));
+const a=brand.getBoundingClientRect(),i=brand.querySelector('svg').getBoundingClientRect(),t=brand.querySelector('strong').getBoundingClientRect();
+return {tools:tools.length,noDuplicates:!tools.some(label=>entries.includes(label)),
+ settingsOnlyInMenu:entries.includes('Settings')&&!document.querySelector('[aria-label="Open settings"]'),
+ exportOnlyInMenu:entries.includes('Export')&&!tools.includes('Export'),
+ headerShortcuts:!!document.querySelector('[aria-label="Open workspace panel"]')&&entries.includes('New')&&entries.includes('Commands'),
+ brandText:brand.textContent.trim(),centered:Math.abs((i.left+t.right-a.left-a.right)/2)<.6&&Math.abs(i.y+i.height/2-t.y-t.height/2)<.6,
+ distinctGit:document.querySelector('[aria-label="Git panel"] svg').dataset.icon==='git'&&document.querySelector('[aria-label="Note graph panel"] svg').dataset.icon==='graph'};
+""")
+                    smoke.require(navigation == dict(tools=9, noDuplicates=True, settingsOnlyInMenu=True, exportOnlyInMenu=True, headerShortcuts=True, brandText='Notation', centered=True, distinctGit=True), f'Navigation ownership: {navigation}')
+                    reports.append({'theme': theme, 'navigation': navigation})
                     screenshot(client, output / f'{theme}-menu.png', "document.querySelector('.app-menu')")
                     client.element_command(client.find('[aria-label="App menu"]'), '/click')
                     client.element_command(client.find('[aria-label="Commands"]'), '/click')

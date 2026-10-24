@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { openSettings } from './commands';
 
 function localAssets(page: Page) {
   const requested: string[] = [];
@@ -124,22 +125,22 @@ test('keyboard tab closing preserves focus and respects discard cancellation', a
   await expect(tabs.getByRole('tab', { selected: true })).toBeFocused();
 });
 
-test('closing Settings restores usable focus after Focus mode removes its opener', async ({ page }) => {
+test('closing Settings restores the app menu focus after enabling Focus mode', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Open settings', exact: true }).click();
+  await openSettings(page);
   const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
   await dialog.getByRole('checkbox', { name: 'Focus mode', exact: true }).check();
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Commands', exact: true })).toBeFocused();
+  await expect(page.getByRole('button', { name: 'App menu', exact: true })).toBeFocused();
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('textbox', { name: 'Search commands' })).toBeFocused();
+  await expect(page.getByRole('menu', { name: 'App menu', exact: true })).toBeVisible();
 });
 
 test('settings sections stay contained with native keyboard-accessible checkboxes', async ({ page }) => {
   await page.setViewportSize({ width: 720, height: 520 });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Open settings', exact: true }).click();
+  await openSettings(page);
   const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
   const original = await dialog.boundingBox();
   expect(original).not.toBeNull();

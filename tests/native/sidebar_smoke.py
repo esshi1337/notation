@@ -10,6 +10,7 @@ import signal
 import subprocess
 import tempfile
 import smoke
+from media_graph_smoke import stop_profile_apps
 from responsive_smoke import command
 
 
@@ -18,7 +19,8 @@ def click(client: smoke.Client, label: str) -> None:
 
 
 def side(client: smoke.Client, value: str) -> None:
-    click(client, 'Open settings')
+    click(client, 'App menu')
+    click(client, 'Settings')
     select = client.find('dialog[aria-label="Settings"] select[aria-label="Sidebar position"]')
     client.send_keys(select, '\ue011' if value == 'left' else '\ue010')  # Home / End
     client.send_keys(select, '\ue007')  # Enter
@@ -88,7 +90,7 @@ def run(app: Path) -> None:
                 smoke.require(client.execute('return document.querySelector(".content-area").dataset.sidebarPosition')=='right','Native restart lost sidebar position')
                 smoke.require(smoke.editor_text(client)==text,'Native restart lost draft')
                 click(client,'Explorer panel');geometry(client,'right')
-                click(client,'Open settings')
+                click(client,'App menu');click(client,'Settings')
                 smoke.require(client.execute('return document.querySelector(\'[aria-label="Sidebar position"]\').value')=='right','Settings did not restore right')
                 client.screenshot(output/'settings.png')
                 print('PASS: left/right geometry, native settings control, tool state, draft preservation, Focus mode and restart persistence',flush=True)
@@ -96,6 +98,7 @@ def run(app: Path) -> None:
                 if client.session_id:
                     try:client.quit()
                     except smoke.WebDriverError:pass
+                stop_profile_apps(root / 'data')
                 if driver and driver.poll() is None:
                     os.killpg(driver.pid,signal.SIGTERM)
                     try:driver.wait(timeout=5)

@@ -1,15 +1,16 @@
 import type { CommandId } from './shortcuts';
 
 export type IconTheme = 'dark' | 'light';
-export type IconName = 'mark' | 'settings' | 'export' | 'code' | 'table' | 'history' | 'graph' | 'workspace' | 'folder' | 'plus' | 'save' | 'file' | 'close' | 'search' | 'chevron' | 'play' | 'check' | 'checkbox-check';
+export type IconName = 'mark' | 'settings' | 'export' | 'code' | 'table' | 'history' | 'graph' | 'git' | 'workspace' | 'folder' | 'plus' | 'save' | 'file' | 'close' | 'search' | 'chevron' | 'play' | 'check' | 'checkbox-check';
 
 type SizedAssets = Record<number, string>;
 type IconAsset = { dark: SizedAssets; light: SizedAssets };
 const path = (context: number, file: string) => `/identity/${context}-${file}.svg`;
 
-// These are the unmodified Figma exports. Size-specific entries keep each icon
-// on its exported canvas; the component only scales when a context has no
-// matching export (for example, the 20px light search icon).
+// Figma exports are unmodified; the Git icons are locally authored.
+// Size-specific entries keep each icon on its source canvas; the component
+// only scales when a context has no matching asset (for example, the 20px
+// light search icon).
 export const ICON_ASSETS: Record<IconName, IconAsset> = {
   mark: { dark: { 18: path(0, '9dfae') }, light: { 18: path(4, '7cd9f') } },
   settings: { dark: { 18: path(0, 'eddad') }, light: { 18: path(4, '63c20') } },
@@ -18,6 +19,7 @@ export const ICON_ASSETS: Record<IconName, IconAsset> = {
   table: { dark: { 18: path(0, '102d5') }, light: { 18: path(4, 'e0a91') } },
   history: { dark: { 18: path(0, 'd4caf') }, light: { 18: path(4, '4ea46') } },
   graph: { dark: { 18: path(0, '0f3b6') }, light: { 18: path(4, '85789') } },
+  git: { dark: { 18: '/identity/git-dark.svg' }, light: { 18: '/identity/git-light.svg' } },
   workspace: { dark: { 18: path(0, 'c9aaa') }, light: { 18: path(4, '814b1') } },
   folder: { dark: { 18: path(0, '5ab1b') }, light: { 18: path(4, '77aff') } },
   plus: { dark: { 18: path(0, 'a3bc6') }, light: { 18: path(4, '0e332') } },
@@ -46,7 +48,7 @@ const commandIcons: Partial<Record<CommandId, IconName>> = {
   'edit.undo': 'history', 'edit.redo': 'history', 'edit.replace': 'search', 'edit.gotoLine': 'search', 'edit.find': 'search',
   'tab.close': 'close', 'tab.next': 'file', 'tab.previous': 'file',
   'view.hemingway': 'file', 'view.source': 'code', 'view.split': 'table', 'view.preview': 'file', 'view.live': 'file', 'view.focus': 'file',
-  'panel.templates': 'file', 'panel.table': 'table', 'panel.explorer': 'folder', 'panel.workspace': 'workspace', 'panel.graph': 'graph', 'panel.git': 'graph',
+  'panel.templates': 'file', 'panel.table': 'table', 'panel.explorer': 'folder', 'panel.workspace': 'workspace', 'panel.graph': 'graph', 'panel.git': 'git',
   'panel.history': 'history', 'panel.properties': 'table', 'panel.scripts': 'code', 'app.settings': 'settings', 'app.commands': 'search', 'block.actions': 'code',
 };
 

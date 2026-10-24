@@ -31,7 +31,7 @@
     {#if branded}<Icon name="mark" size={18} {theme} />{:else}<span class="compact-menu-label">{text}</span><Icon name="chevron" size={14} {theme} />{/if}
   </button>
   {#if open}<div class="compact-menu" class:app-menu={branded} role="menu" aria-label={label} tabindex="-1" onkeydown={keyboard}>
-    {#if branded}<div class="compact-menu-brand"><Icon name="mark" size={18} {theme} /><div><strong>Notation</strong><span>Notes, notebooks and ideas.</span></div></div>{/if}
+    {#if branded}<div class="compact-menu-brand"><Icon name="mark" size={18} {theme} /><strong>Notation</strong></div>{/if}
     {#each items as item, index (item.id)}
       {#if index === 0 || items[index - 1].group !== item.group}<div class="menu-group">{item.group}</div>{/if}
       <button role={radio ? 'menuitemradio' : item.checked !== undefined ? 'menuitemcheckbox' : 'menuitem'} aria-label={item.label} aria-checked={radio || item.checked !== undefined ? !!item.checked : undefined} disabled={item.disabled} onclick={() => choose(item)}>

@@ -118,10 +118,10 @@
     ? commandItems.filter(command => ['view.source', 'view.preview'].includes(command.id)).map(command => ({ ...command, label: command.id === 'view.preview' ? 'Canvas' : 'Source', checked: command.id === (canvasVisible ? 'view.preview' : 'view.source') }))
     : commandItems.filter(command => ['view.source', 'view.split', 'view.preview', 'view.live'].includes(command.id)));
   let paletteItems = $derived(paletteScope === 'blocks' ? commandItems.filter((command) => command.group === 'Blocks' && command.id !== 'block.actions') : commandItems);
-  const sidebarCommands: CommandId[] = ['panel.explorer', 'panel.workspace', 'panel.graph', 'panel.git', 'panel.history', 'panel.properties', 'panel.templates', 'panel.table', 'panel.scripts', 'panel.export', 'app.settings'];
+  const sidebarCommands: CommandId[] = ['panel.explorer', 'panel.workspace', 'panel.graph', 'panel.git', 'panel.history', 'panel.properties', 'panel.templates', 'panel.table', 'panel.scripts'];
   let sidebarItems = $derived(sidebarCommands.map(id => commandItems.find(item => item.id === id)!));
   let visiblePanel = $derived(panel !== null && !ui.focusMode && (!['properties', 'templates', 'export', 'table'].includes(panel) || (!canvasDocument && !active.hemingway)));
-  let appMenuItems = $derived(['Document', 'Application', 'Panels'].flatMap(group => commandItems.filter(command => command.group === group)));
+  let appMenuItems = $derived(['Document', 'Application'].flatMap(group => commandItems.filter(command => command.group === group)));
 
   $effect(() => {
     document.documentElement.dataset.theme = theme;

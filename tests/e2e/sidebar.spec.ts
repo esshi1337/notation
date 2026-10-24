@@ -1,10 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
-import { runCommand } from './commands';
+import { openSettings, runCommand } from './commands';
 
 const sidebar = (page: Page) => page.getByRole('navigation', { name: 'App sidebar' });
 const source = (page: Page) => page.getByRole('textbox', { name: 'Document source' });
 async function position(page: Page, side: 'left' | 'right') {
-  await sidebar(page).getByRole('button', { name: 'Open settings', exact: true }).click();
+  await openSettings(page);
   const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
   await settings.getByRole('combobox', { name: 'Sidebar position' }).selectOption(side);
   await settings.getByRole('button', { name: 'Close settings' }).click();
@@ -68,7 +68,7 @@ test('sidebar supports keyboard navigation, panel toggling and Focus mode', asyn
   await page.keyboard.press('Enter');
   await expect(page.getByRole('region', { name: 'Workspace', exact: true })).toHaveCount(0);
   await page.keyboard.press('End');
-  await expect(sidebar(page).getByRole('button', { name: 'Open settings' })).toBeFocused();
+  await expect(sidebar(page).getByRole('button', { name: 'Scripts panel' })).toBeFocused();
   await page.keyboard.press('Home'); await expect(explorer).toBeFocused();
   await page.keyboard.press('Enter');
   await runCommand(page, 'Focus mode');
@@ -86,7 +86,7 @@ test('narrow windows keep tools reachable on either side and appearance reset re
   await checkGeometry(page, 'left', true);
   await position(page, 'right');
   await checkGeometry(page, 'right', true);
-  await sidebar(page).getByRole('button', { name: 'Open settings' }).click();
+  await openSettings(page);
   const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
   await settings.getByRole('tab', { name: 'Editor', exact: true }).click();
   await settings.getByRole('button', { name: 'Reset editor', exact: true }).click();

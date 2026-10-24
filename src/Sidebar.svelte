@@ -28,9 +28,4 @@
       </button>
     {/each}
   </div>
-  <div class="sidebar-footer">
-    <button class="sidebar-button" aria-label="Open settings" title="Settings" onclick={() => execute('app.settings')} onkeydown={navigate}>
-      <Icon name="settings" size={18} {theme} />
-    </button>
-  </div>
 </nav>
