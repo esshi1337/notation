@@ -71,8 +71,9 @@
 .workspace-control { display: flex; align-items: center; flex: 0 1 136px; width: 136px; min-width: 32px; height: 32px; }
 .workspace-personal { flex: 1; min-width: 0; padding-left: 8px; overflow: hidden; color: var(--text); font-size: 13px; font-weight: 600; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-panel-trigger { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 32px; padding: 0; border-radius: var(--radius-control); color: var(--muted); }
-.workspace-bar .document-tabs-wrap { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; height: 32px; }
-.document-tabs { display: flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 0; height: 32px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+.workspace-bar .document-tabs-wrap { display: flex; align-items: center; gap: 4px; flex: 1 1 0; min-width: 0; height: 32px; }
+.document-tabs { display: flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 0; height: 32px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.document-tabs::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .document-tab { display: flex; align-items: center; flex: 0 1 188px; min-width: 104px; max-width: 210px; height: 32px; overflow: hidden; border-radius: var(--radius-control); }
 .document-tab.active { background: var(--hover); }
 .document-tab > button[role='tab'] { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; height: 32px; padding: 0 0 0 10px; border-radius: var(--radius-control); color: var(--muted); font-size: 13px; line-height: 20px; text-align: left; }

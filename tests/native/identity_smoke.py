@@ -97,6 +97,32 @@ return {theme:document.documentElement.dataset.theme,bar:box('.workspace-bar').h
                     client.element_command(client.find('[aria-label="Close settings"]'), '/click')
                 command(client, 'Source')
                 smoke.require(smoke.editor_text(client) == markdown, 'Identity interactions changed the document')
+                for _ in range(17):
+                    client.element_command(client.find('[aria-label="New document"]'), '/click')
+                smoke.wait_for(client, "document.querySelectorAll('.document-tab').length === 18", 'overflowed tab strip')
+                client.execute_async('const done=arguments[arguments.length-1];requestAnimationFrame(()=>requestAnimationFrame(done))')
+                overflow = client.execute("""
+const tabs=document.querySelector('.document-tabs'),bar=document.querySelector('.workspace-bar');
+const host=tabs.getBoundingClientRect(),active=tabs.querySelector('.document-tab.active').getBoundingClientRect();
+return {height:tabs.clientHeight,scrollbar:getComputedStyle(tabs).scrollbarWidth,
+ overflow:tabs.scrollWidth>tabs.clientWidth,barContained:bar.scrollWidth<=bar.clientWidth,
+ activeVisible:active.left>=host.left-1&&active.right<=host.right+1,
+ controlsVisible:['App menu','New document','Commands','Layout'].every(label=>{const r=document.querySelector(`button[aria-label="${label}"]`).getBoundingClientRect();return r.left>=0&&r.right<=innerWidth;})};
+""")
+                smoke.require(overflow == dict(height=32, scrollbar='none', overflow=True, barContained=True, activeVisible=True, controlsVisible=True), f'Tab strip overflow: {overflow}')
+                wheel = client.execute("""
+const tabs=document.querySelector('.document-tabs');tabs.scrollLeft=0;
+const event=new WheelEvent('wheel',{deltaY:240,bubbles:true,cancelable:true});tabs.dispatchEvent(event);
+return {moved:tabs.scrollLeft>0,consumed:event.defaultPrevented,headerFixed:document.querySelector('.workspace-bar').scrollLeft===0};
+""")
+                smoke.require(all(wheel.values()), f'Tab strip wheel navigation: {wheel}')
+                client.execute("document.querySelector('.document-tab.active [role=tab]').focus({preventScroll:true})")
+                client.send_keys(client.find('.document-tab.active [role=tab]'), '\ue014')
+                smoke.wait_for(client, "document.querySelector('.document-tab:first-child.active') && document.querySelector('.document-tabs').scrollLeft === 0", 'keyboard tab wrap to first')
+                client.send_keys(client.find('.document-tab.active [role=tab]'), '\ue012')
+                smoke.wait_for(client, "document.querySelector('.document-tab:last-child.active')", 'keyboard tab wrap to last')
+                screenshot(client, output / 'light-many-tabs.png', "document.querySelectorAll('.document-tab').length === 18")
+                reports.append({'tabs': overflow, 'wheel': wheel})
                 (output / 'report.json').write_text(json.dumps(reports, indent=2))
                 print('PASS: native identity assets, centered icons, fonts, themes, menus, and source preservation ' + json.dumps(reports), flush=True)
             finally:
