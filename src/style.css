@@ -427,7 +427,8 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .cm-line { min-width: 0; padding: 0 20px 0 10px; overflow-wrap: anywhere; }
 .editor-host .cm-editor .cm-gutters { border: none; background: var(--panel); color: var(--muted); font-size: max(10px, calc(var(--editor-font-size, 14px) * 0.8)); padding: 0 0 0 5px; }
 .cm-lineNumbers .cm-gutterElement { padding: 0 10px 0 9px; min-width: 35px; }
-.editor-host .cm-editor:not(.cm-live-preview) .cm-content { width: 100%; max-width: calc(var(--reading-width, 756px) + 30px); margin-inline: auto; }
+.source-pane:not(.code-source) .editor-host .cm-editor:not(.cm-live-preview) .cm-content { width: 100%; max-width: calc(var(--reading-width, 756px) + 30px); margin-inline: 0; }
+.source-pane:not(.code-source) .editor-host .cm-editor:not(.cm-live-preview) .cm-gutters { margin-inline-start: max(0px, calc((100% - (var(--reading-width, 756px) + 30px)) / 2)); }
 .cm-activeLine { background: color-mix(in srgb, var(--hover) 45%, transparent) !important; }
 .cm-activeLineGutter { background: transparent !important; color: var(--text); }
 .cm-cursor { border-left-color: var(--text) !important; }
@@ -777,7 +778,7 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 
 :root { --code-keyword: #bc9fda; --code-string: #a5c496; --code-number: #d8b38b; }
 :root[data-theme='light'] { --code-keyword: #78509b; --code-string: #42723a; --code-number: #955816; }
-.code-source .cm-content { max-width: none; }
+.code-source .cm-content { max-width: none; margin-inline: 0; width: 100%; }
 .code-source .cm-scroller { font-family: 'IBM Plex Mono', monospace; }
 .disk-conflict-banner { display:flex; align-items:center; gap:10px; padding:10px 14px; flex-wrap:wrap; background:var(--panel); font-size:13px; }
 .file-navigator, .disk-dialog { width:min(720px,calc(100vw - 48px)); max-height:80vh; overflow:auto; padding:20px; color:var(--text); background:var(--panel); border:1px solid var(--border); border-radius:16px; }

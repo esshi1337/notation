@@ -83,6 +83,66 @@ test('source view honors the reading width preference', async ({ page }) => {
   await expect(content).toHaveCSS('max-width', '630px');
 });
 
+test('the gutter hugs the centered source column in a wide pane', async ({ page }) => {
+  await seedSettings(page, { theme: 'dark', fontSize: 14, layout: 'source', readingWidth: 600 });
+  const scroller = page.locator('.editor-host .cm-scroller').first();
+  const gutters = page.locator('.editor-host .cm-gutters').first();
+  const content = page.locator('.editor-host .cm-editor:not(.cm-live-preview) .cm-content').first();
+  await expect(gutters).toBeVisible();
+
+  const scrollerBox = (await scroller.boundingBox())!;
+  const gutterBox = (await gutters.boundingBox())!;
+  const contentBox = (await content.boundingBox())!;
+
+  expect(gutterBox.x - scrollerBox.x).toBeGreaterThan(120);
+  expect(contentBox.x - (gutterBox.x + gutterBox.width)).toBeLessThanOrEqual(2);
+  const leftGap = gutterBox.x - scrollerBox.x;
+  const rightGap = scrollerBox.x + scrollerBox.width - (contentBox.x + contentBox.width);
+  expect(Math.abs(leftGap - rightGap)).toBeLessThanOrEqual(gutterBox.width + 2);
+
+  const settings = await openEditorSettings(page);
+  const size = settings.getByRole('spinbutton', { name: 'Font size', exact: true });
+  await size.fill('24');
+  await size.press('Tab');
+  await closeSettings(page);
+  await expect(gutters).toHaveCSS('font-size', '19.2px');
+
+  const grownGutterBox = (await gutters.boundingBox())!;
+  const grownContentBox = (await content.boundingBox())!;
+  expect(grownContentBox.x - (grownGutterBox.x + grownGutterBox.width)).toBeLessThanOrEqual(2);
+});
+
+test('the gutter stays flush in a narrow source pane', async ({ page }) => {
+  await page.setViewportSize({ width: 560, height: 720 });
+  await runCommand(page, 'Source');
+  const scroller = page.locator('.editor-host .cm-scroller').first();
+  const gutters = page.locator('.editor-host .cm-gutters').first();
+  const content = page.locator('.editor-host .cm-editor:not(.cm-live-preview) .cm-content').first();
+  await expect(gutters).toBeVisible();
+
+  const scrollerBox = (await scroller.boundingBox())!;
+  const gutterBox = (await gutters.boundingBox())!;
+  const contentBox = (await content.boundingBox())!;
+
+  expect(gutterBox.x - scrollerBox.x).toBeLessThanOrEqual(2);
+  expect(contentBox.x + contentBox.width - (scrollerBox.x + scrollerBox.width)).toBeLessThanOrEqual(2);
+});
+
+test('a wide wrap-off source pane keeps the gutter hugged without horizontal overflow', async ({ page }) => {
+  await seedSettings(page, { theme: 'dark', fontSize: 14, layout: 'source', readingWidth: 600, wrap: false });
+  const gutters = page.locator('.editor-host .cm-gutters').first();
+  const content = page.locator('.editor-host .cm-editor:not(.cm-live-preview) .cm-content').first();
+  const gutterBox = (await gutters.boundingBox())!;
+  const contentBox = (await content.boundingBox())!;
+  expect(gutterBox.x).toBeGreaterThan(120);
+  expect(contentBox.x - (gutterBox.x + gutterBox.width)).toBeLessThanOrEqual(2);
+  const overflow = await page.evaluate(() => {
+    const scroller = document.querySelector('.editor-host .cm-scroller');
+    return scroller ? scroller.scrollWidth - scroller.clientWidth : Number.POSITIVE_INFINITY;
+  });
+  expect(overflow).toBeLessThanOrEqual(1);
+});
+
 test('the default indent is four spaces', async ({ page }) => {
   const settings = await openEditorSettings(page);
   await expect(settings.getByRole('spinbutton', { name: 'Indent size', exact: true })).toHaveValue('4');
