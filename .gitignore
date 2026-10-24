@@ -13,3 +13,5 @@ __pycache__/
 
 public/pdfjs/
 src-tauri/resources/engines/
+src-tauri/resources/language-servers/
+src-tauri/resources/language-stage-*/

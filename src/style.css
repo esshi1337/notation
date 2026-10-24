@@ -772,3 +772,23 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 @supports (corner-shape: squircle) {
   .settings-heading .settings-close, .document-tab .tab-close, .scripts-heading button[aria-label^='Close'] { corner-shape: squircle; }
 }
+
+:root { --code-keyword: #bc9fda; --code-string: #a5c496; --code-number: #d8b38b; }
+:root[data-theme='light'] { --code-keyword: #78509b; --code-string: #42723a; --code-number: #955816; }
+.code-heading { display: flex; align-items: center; gap: 18px; flex: 0 0 auto; padding: 6px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.code-heading .settings-field { display: flex; align-items: center; gap: 10px; margin: 0; }
+.code-heading .select-control { width: 200px; }
+.code-heading > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .7; }
+.code-source .cm-content { max-width: none; }
+.code-source .cm-scroller { font-family: 'IBM Plex Mono', monospace; }
+.disk-conflict-banner { display:flex; align-items:center; gap:10px; padding:10px 14px; flex-wrap:wrap; background:var(--panel); font-size:13px; }
+.file-navigator, .disk-dialog { width:min(720px,calc(100vw - 48px)); max-height:80vh; overflow:auto; padding:20px; color:var(--text); background:var(--panel); border:1px solid var(--border); border-radius:16px; }
+.navigator-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.navigator-heading button { width:28px; height:28px; border-radius:9px; padding:0; }
+.navigator-query { display:flex; gap:8px; }
+.navigator-query input { flex:1; min-width:0; }
+.navigator-results { max-height:50vh; overflow:auto; margin-top:12px; }
+.navigator-results button { width:100%; text-align:left; display:flex; flex-direction:column; align-items:start; gap:4px; margin:4px 0; padding:10px; }
+.navigator-results small, .navigator-results code { display:block; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.7; }
+.disk-dialog pre { max-height:45vh; overflow:auto; white-space:pre; padding:12px; font:12px/1.6 'IBM Plex Mono',monospace; }
+.cm-tooltip { max-width:min(640px,90vw); max-height:40vh; overflow:auto; }

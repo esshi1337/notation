@@ -360,3 +360,60 @@ The file-launch checks exercise actual CLI and desktop-entry opening, text MIME 
 - `playwright.config.ts`: browser and development-server configuration.
 
 Build frontend assets with `npm run build`; build the desktop application with `npm run desktop:build` once native prerequisites are installed.
+
+### Code editing and language intelligence
+
+Text and code files open in source mode without changing a workspace's Markdown
+preview layout. Notation preserves code extensions and extensionless filenames.
+Choose a language from the editor's Language menu when automatic detection is
+insufficient; the override is saved with the document session. Syntax support
+covers JavaScript/TypeScript/JSX/TSX, Svelte, Rust, JSON, HTML, CSS, Python, and YAML.
+Code mode provides bracket matching, automatic bracket closing, indentation,
+line comments, and syntax-aware folding. Settings → Editor controls indent size,
+tabs versus spaces, and language intelligence.
+
+Saved TypeScript/JavaScript, Svelte, and Rust files can use completion, hover,
+signature help, diagnostics, definition/reference navigation, symbol rename, and
+formatting. The Linux AppImage includes Node, TypeScript, and the TypeScript and
+Svelte language servers. Rust uses `rust-analyzer` from the installed Rust
+toolchain; Rust formatting also needs that toolchain's `rustfmt` component.
+Missing servers and initialization failures appear beside the Language menu.
+Servers start on demand, are shared by canonical project root and server kind,
+and stop after their last document closes. At most six servers run per app
+process. Workspace references can span different project roots.
+
+| Command | Default shortcut |
+| --- | --- |
+| Go to file | Ctrl/Cmd+P |
+| Search workspace files | Ctrl/Cmd+Alt+J |
+| Go to definition | F12 |
+| Find references | Shift+F12 |
+| Rename symbol | Ctrl/Cmd+Alt+R |
+| Format document | Ctrl/Cmd+Shift+I |
+| Toggle line comment | Ctrl/Cmd+Alt+/ |
+
+Go to file and workspace search cover open tabs and the active workspace's
+explicit file references. Search uses current unsaved buffers when available,
+performs a case-insensitive literal search on demand, and reports truncation
+(500 files, 16 MiB of text, or 200 matches). It does not crawl unrelated folders.
+
+Rename opens affected files as unsaved, undoable buffers. It validates all
+ranges before applying changes, rejects file operations and targets outside the
+server's root, and limits one rename to 32 files. Save each changed file when
+ready. Formatting and rename reject edits when their source buffer changed
+while the request was running. Ordinary saves compare the disk contents with
+the saved baseline and reject stale overwrites. Tab changes and window focus
+check for external edits; Compare / reload lets you inspect the difference,
+keep editing, or explicitly replace the buffer. Save As can preserve a separate
+copy. The disk comparison is not an operating-system lock on other editors.
+
+Language servers run locally. Svelte project configuration/preprocessors are
+not executed automatically. The bundled Svelte server also bypasses project Prettier configuration and plugins (a pinned packaging patch), and Rust build scripts, procedural macros, and
+automatic cargo checks are disabled. This limits features that depend on those
+project hooks. Language intelligence is not a terminal, debugger, build-task
+runner, or full Git client. File size and tab limits remain 4 MiB and 64 tabs.
+
+Desktop packaging stages the server dependency closure from `package-lock.json`
+and a checksum-pinned official Node binary using
+`scripts/bundle-language-servers.py`. Generated resources are ignored by git;
+run `npm ci` before packaging. No CI service is required.

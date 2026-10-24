@@ -2,13 +2,13 @@ export type UIPreferences = {
   darkPreset: 'midnight' | 'charcoal'; density: 'compact' | 'comfortable';
   accentColor: string; editorFont: 'mono' | 'sans'; lineHeight: number;
   readingWidth: number; sidebarWidth: number; sidebarRailWidth: 'narrow' | 'standard' | 'wide'; sidebarPosition: 'left' | 'right'; showStatusBar: boolean;
-  showLineNumbers: boolean; focusMode: boolean; smoothScrolling: boolean;
+  tabSize: number; indentWithTabs: boolean; languageIntelligence: boolean; showLineNumbers: boolean; focusMode: boolean; smoothScrolling: boolean;
 };
 
 export const DEFAULT_UI_PREFERENCES: Readonly<UIPreferences> = {
   darkPreset: 'midnight', density: 'compact', accentColor: '#d8d8df',
   editorFont: 'mono', lineHeight: 1.7, readingWidth: 756, sidebarWidth: 260, sidebarRailWidth: 'standard', sidebarPosition: 'left',
-  showStatusBar: true, showLineNumbers: true, focusMode: false, smoothScrolling: true,
+  showStatusBar: true, tabSize: 2, indentWithTabs: false, languageIntelligence: true, showLineNumbers: true, focusMode: false, smoothScrolling: true,
 };
 
 function bounded(value: unknown, fallback: number, min: number, max: number) {
@@ -28,6 +28,9 @@ export function readUIPreferences(settings: Record<string, unknown>): UIPreferen
     sidebarWidth: Math.round(bounded(settings.sidebarWidth, defaults.sidebarWidth, 180, 420)),
     sidebarRailWidth: settings.sidebarRailWidth === 'narrow' || settings.sidebarRailWidth === 'wide' ? settings.sidebarRailWidth : defaults.sidebarRailWidth,
     showStatusBar: typeof settings.showStatusBar === 'boolean' ? settings.showStatusBar : defaults.showStatusBar,
+    tabSize: Math.round(bounded(settings.tabSize, defaults.tabSize, 1, 8)),
+    indentWithTabs: settings.indentWithTabs === true,
+    languageIntelligence: settings.languageIntelligence !== false,
     showLineNumbers: typeof settings.showLineNumbers === 'boolean' ? settings.showLineNumbers : defaults.showLineNumbers,
     focusMode: settings.focusMode === true,
     smoothScrolling: typeof settings.smoothScrolling === 'boolean' ? settings.smoothScrolling : defaults.smoothScrolling,

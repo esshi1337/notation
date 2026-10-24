@@ -4,10 +4,12 @@ pub mod documents;
 pub mod engine_process;
 pub mod engines;
 pub mod explorer;
+pub mod file_changes;
 pub mod frontmatter;
 pub mod git;
 #[cfg(target_os = "linux")]
 pub mod instance;
+pub mod language_server;
 pub mod launch;
 pub mod mcp;
 pub mod search_graph;
@@ -21,8 +23,8 @@ mod desktop {
     #[cfg(target_os = "linux")]
     use super::instance;
     use super::{
-        assets, automation, documents, engines, explorer, frontmatter, git, launch, mcp,
-        search_graph, storage, wiki, workspace,
+        assets, automation, documents, engines, explorer, frontmatter, git, language_server, launch,
+        mcp, search_graph, storage, wiki, workspace,
     };
     use serde_json::Value;
     use tauri::{Emitter, Manager, State};
@@ -77,7 +79,7 @@ mod desktop {
         database: State<'_, DatabaseState>,
     ) -> Result<documents::Document, String> {
         let database = database.get();
-        tauri::async_runtime::spawn_blocking(move || storage::read_with_metadata(&path, &database))
+        tauri::async_runtime::spawn_blocking(move || launch::read_with_metadata(&path, &database))
             .await
             .map_err(|error| format!("Could not open file: {error}"))?
     }
@@ -98,6 +100,54 @@ mod desktop {
         })
         .await
         .map_err(|error| error.to_string())?
+    }
+    #[tauri::command]
+    async fn read_document_snapshot(path: String) -> Result<documents::Document, String> {
+        tauri::async_runtime::spawn_blocking(move || launch::read_document(&path))
+            .await
+            .map_err(|error| error.to_string())?
+    }
+    #[tauri::command]
+    async fn write_document_checked(
+        path: String,
+        content: String,
+        expected_content: String,
+        database: State<'_, DatabaseState>,
+    ) -> Result<documents::Document, String> {
+        let database = database.get();
+        tauri::async_runtime::spawn_blocking(move || {
+            super::file_changes::write_checked(&path, &content, &expected_content, &database)
+        })
+        .await
+        .map_err(|error| error.to_string())?
+    }
+    #[tauri::command]
+    fn lsp_typescript_path(app: tauri::AppHandle) -> Result<String, String> {
+        let bundled = app
+            .path()
+            .resource_dir()
+            .map_err(|error| error.to_string())?
+            .join("language-servers/node_modules/typescript/lib/tsserver.js");
+        if bundled.is_file() {
+            return bundled
+                .into_os_string()
+                .into_string()
+                .map_err(|_| "TypeScript path is not UTF-8".into());
+        }
+        #[cfg(debug_assertions)]
+        {
+            let development = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../node_modules/typescript/lib/tsserver.js");
+            if development.is_file() {
+                return development
+                    .canonicalize()
+                    .map_err(|error| error.to_string())?
+                    .into_os_string()
+                    .into_string()
+                    .map_err(|_| "TypeScript path is not UTF-8".into());
+            }
+        }
+        Err("The bundled TypeScript runtime is unavailable. Reinstall Notation.".into())
     }
     #[tauri::command]
     async fn write_document(
@@ -310,6 +360,48 @@ mod desktop {
         })
         .await
     }
+    #[tauri::command]
+    async fn lsp_start(
+        path: String,
+        language: String,
+        service: State<'_, language_server::Service>,
+    ) -> Result<language_server::StartInfo, String> {
+        let service = service.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || service.start(path, language))
+            .await
+            .map_err(|error| format!("Language server start task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn lsp_send(
+        id: String,
+        message: String,
+        service: State<'_, language_server::Service>,
+    ) -> Result<(), String> {
+        let service = service.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || service.send(id, message))
+            .await
+            .map_err(|error| format!("Language server send task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn lsp_stop(
+        id: String,
+        service: State<'_, language_server::Service>,
+    ) -> Result<(), String> {
+        let service = service.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || service.stop(id))
+            .await
+            .map_err(|error| format!("Language server stop task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    fn lsp_status(
+        service: State<'_, language_server::Service>,
+    ) -> Vec<language_server::ServerStatus> {
+        service.status()
+    }
+
     #[tauri::command]
     async fn engine_status(
         runtime: State<'_, engines::Runtime>,
@@ -601,6 +693,10 @@ mod desktop {
                     .app_data_dir()
                     .map_err(|error| format!("Could not locate local data directory: {error}"));
                 app.manage(engines::Runtime::discover(app.path().resource_dir().ok()));
+                app.manage(language_server::Service::discover(
+                    app.path().resource_dir().ok(),
+                    app.handle().clone(),
+                ));
                 let database = data_directory
                     .clone()
                     .and_then(|path| storage::Database::open(&path.join("state.sqlite3")));
@@ -630,6 +726,9 @@ mod desktop {
                 read_launch_document,
                 resolve_document_path,
                 write_document,
+                write_document_checked,
+                read_document_snapshot,
+                lsp_typescript_path,
                 run_script,
                 stop_script,
                 bootstrap_state,
@@ -654,6 +753,10 @@ mod desktop {
                 graph_workspace,
                 read_workspace_note,
                 read_workspace_asset,
+                lsp_start,
+                lsp_send,
+                lsp_stop,
+                lsp_status,
                 engine_status,
                 render_diagram,
                 export_document,
@@ -723,7 +826,11 @@ mod desktop {
                 std::process::exit(1);
             }
         }
-        app.run(|_, _| {});
+        app.run(|handle, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                handle.state::<language_server::Service>().stop_all();
+            }
+        });
     }
 }
 #[cfg(feature = "desktop")]

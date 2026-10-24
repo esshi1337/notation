@@ -1,10 +1,14 @@
 <script lang="ts">
   import type { CellSession } from './cells';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
+  import { type CodeLanguage, intelligenceLanguage } from './code-languages';
+  import { languageExtensions } from './code-syntax';
+  import { attachIntelligence, intelligenceCommand, formatCode, renameCode, type IntelligenceState } from './language-intelligence';
+  import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
   import { Compartment, EditorState, Transaction } from '@codemirror/state';
   import { EditorView, drawSelection, highlightActiveLine, keymap, lineNumbers } from '@codemirror/view';
-  import { defaultKeymap, history, historyKeymap, indentWithTab, isolateHistory, undo, redo } from '@codemirror/commands';
-  import { foldEffect, foldedRanges, unfoldEffect, foldGutter, HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+  import { defaultKeymap, history, historyKeymap, indentWithTab, isolateHistory, undo, redo, toggleComment } from '@codemirror/commands';
+  import { foldEffect, foldedRanges, unfoldEffect, foldGutter, HighlightStyle, syntaxHighlighting, bracketMatching, indentOnInput, indentUnit, foldCode, unfoldCode, foldAll, unfoldAll } from '@codemirror/language';
   import { tags } from '@lezer/highlight';
   import { markdown } from '@codemirror/lang-markdown';
   import { search, searchKeymap, highlightSelectionMatches, openSearchPanel, gotoLine } from '@codemirror/search';
@@ -23,9 +27,12 @@
   import { hemingwayAllows, hemingwayProtection } from './hemingway';
   import { editorToRaw, rawToEditor, sourceEolEffect, sourceFormat, sourceText } from './source-format';
 
-  let { value, wrap, live, standalone, theme, folds, initialSelection, active = true, showLineNumbers = true, appearance = '', hemingway = false, cells, sourcePath, loadEmbed, onOpenPath, onOpenWiki, onEditProperties, wikiCandidates, onSelection, onChange }: { value: string; wrap: boolean; live: boolean; standalone: boolean; theme: 'dark' | 'light'; folds: Map<string, boolean>; initialSelection?: DocumentSelection; active?: boolean; showLineNumbers?: boolean; appearance?: string; hemingway?: boolean; cells?: CellSession; sourcePath?: string; loadEmbed?: (target: string, sourcePath?: string) => Promise<{ path: string; content: string; label: string; key: string }>; onOpenPath?: (path: string) => void; onOpenWiki?: (target: string, sourcePath?: string) => void; onEditProperties?: () => void; wikiCandidates?: (context: WikiCompletion) => Promise<WikiCandidate[]>; onSelection?: (selection: DocumentSelection) => void; onChange: (value: string) => void } = $props();
+  let { codeLanguage = 'markdown', intelligenceEnabled = false, tabSize = 2, indentWithTabs = false, onIntelligence, value, wrap, live, standalone, theme, folds, initialSelection, active = true, showLineNumbers = true, appearance = '', hemingway = false, cells, sourcePath, loadEmbed, onOpenPath, onOpenWiki, onEditProperties, wikiCandidates, onSelection, onChange }: { codeLanguage?: CodeLanguage; intelligenceEnabled?: boolean; tabSize?: number; indentWithTabs?: boolean; onIntelligence?: (state: IntelligenceState) => void; value: string; wrap: boolean; live: boolean; standalone: boolean; theme: 'dark' | 'light'; folds: Map<string, boolean>; initialSelection?: DocumentSelection; active?: boolean; showLineNumbers?: boolean; appearance?: string; hemingway?: boolean; cells?: CellSession; sourcePath?: string; loadEmbed?: (target: string, sourcePath?: string) => Promise<{ path: string; content: string; label: string; key: string }>; onOpenPath?: (path: string) => void; onOpenWiki?: (target: string, sourcePath?: string) => void; onEditProperties?: () => void; wikiCandidates?: (context: WikiCompletion) => Promise<WikiCandidate[]>; onSelection?: (selection: DocumentSelection) => void; onChange: (value: string) => void } = $props();
   let host: HTMLDivElement;
   let view: EditorView | undefined;
+  let initialized = $state(false);
+  const intelligence = new Compartment();
+  const indentation = new Compartment();
   const wrapping = new Compartment();
   const presentation = new Compartment();
   const commands = new Compartment();
@@ -49,7 +56,14 @@
     view.dispatch({ selection: { anchor: clamp(selection.anchor), head: clamp(selection.head) }, scrollIntoView: true });
   }
   export function focus() { view?.focus(); }
-  export function fold(action: FoldAction) { if (!view || standalone || hemingway) return false; const changed = performFold(view, action); view.focus(); return changed; }
+  export function getView() { return view ?? null; }
+  export function comment() { if (view && !hemingway && codeLanguage !== 'markdown') toggleComment(view); }
+  export function codeAction(action: 'definition' | 'references') { if (view) return intelligenceCommand(view, action); }
+  export function format() { if (view && !hemingway) return formatCode(view, tabSize, !indentWithTabs); }
+  export function renameSymbol(name: string) { if (view && !hemingway) return renameCode(view, name); }
+  export function symbolName() { if (!view) return ''; const word = view.state.wordAt(view.state.selection.main.head); return word ? view.state.sliceDoc(word.from, word.to) : ''; }
+
+  export function fold(action: FoldAction) { if (!view || standalone || hemingway) return false; const changed = codeLanguage === 'markdown' ? performFold(view, action) : ({ 'Fold block': foldCode, 'Unfold block': unfoldCode, 'Fold all': foldAll, 'Unfold all': unfoldAll }[action])(view); view.focus(); return changed; }
   export function undoEdit() { if (!view || hemingway) return false; view.focus(); return undo(view); }
   export function redoEdit() { if (!view || hemingway) return false; view.focus(); return redo(view); }
   export function replace() { if (view && !hemingway) { view.focus(); openSearchPanel(view); host.querySelector<HTMLInputElement>('.cm-search input[name=replace]')?.focus(); } }
@@ -57,8 +71,8 @@
   export function find() { if (view) { view.focus(); openSearchPanel(view); } }
   export function reveal(from: number) { if (view) revealDocumentSource(view, rawToEditor(sourceText(view.state), from)); }
   export function revealLine(number: number) { if (view) revealDocumentSource(view, view.state.doc.line(Math.max(1, Math.min(view.state.doc.lines, number))).from); }
-  export function insert(key: string) { return view && !standalone && !hemingway ? insertEditorTemplate(view,key) : false; }
-  export function act(action: BlockAction) { return view && !standalone && !hemingway ? performBlockAction(view, action) : false; }
+  export function insert(key: string) { return view && codeLanguage === 'markdown' && !standalone && !hemingway ? insertEditorTemplate(view,key) : false; }
+  export function act(action: BlockAction) { return view && codeLanguage === 'markdown' && !standalone && !hemingway ? performBlockAction(view, action) : false; }
   export function snapshot() {
     const range = view?.state.selection.main;
     return { text: view ? sourceText(view.state) : value, selection: range ? sourceText(view!.state, range.from, range.to) : '', from: range ? editorToRaw(view!.state, range.from) : 0, to: range ? editorToRaw(view!.state, range.to) : 0 };
@@ -79,9 +93,18 @@
     { tag: tags.strikethrough, textDecoration: 'line-through' },
     { tag: tags.link, textDecoration: 'underline', textUnderlineOffset: '3px' },
     { tag: [tags.url, tags.meta, tags.comment, tags.processingInstruction], color: 'var(--muted)' },
-    { tag: [tags.monospace, tags.string, tags.keyword, tags.literal], color: 'var(--text)' },
+    { tag: tags.monospace, color: 'var(--text)' },
+    { tag: [tags.keyword, tags.operatorKeyword], color: 'var(--code-keyword)', fontWeight: '600' },
+    { tag: tags.string, color: 'var(--code-string)' },
+    { tag: [tags.number, tags.bool, tags.null], color: 'var(--code-number)' },
   ]);
 
+  function syntax() {
+    if (hemingway) return [];
+    return codeLanguage === 'markdown'
+      ? [markdown({ extensions: [mathMarkdown] }), markdownFolding, syntaxHighlighting(highlighting), highlightActiveLine(), wikiCompletion(context => standalone || !wikiCandidates ? Promise.resolve([]) : wikiCandidates(context))]
+      : [languageExtensions(codeLanguage), syntaxHighlighting(highlighting), highlightActiveLine(), bracketMatching(), closeBrackets(), indentOnInput(), keymap.of(closeBracketsKeymap)];
+  }
   onMount(() => {
     view = new EditorView({
       parent: host,
@@ -89,6 +112,10 @@
         // History intentionally bypasses transaction filters. Check the final
         // dispatch too, without consuming history or updating a rejected edit.
         if (hemingway && transactions.some(transaction => !hemingwayAllows(transaction))) return;
+        if (transactions.some(transaction => transaction.docChanged && transaction.newDoc.length > 1024 * 1024 && new TextEncoder().encode(transaction.newDoc.toString()).length > 4 * 1024 * 1024)) {
+          onIntelligence?.({state:'error',message:'Edit rejected: documents are limited to 4 MiB.'});
+          return;
+        }
         editorView.update(transactions);
       },
       state: EditorState.create({
@@ -96,15 +123,15 @@
         selection: initialSelection ? { anchor: rawToEditor(value, initialSelection.anchor), head: rawToEditor(value, initialSelection.head) } : undefined,
         extensions: [
           sourceFormat(value),
-          history(), markdownFolding, drawSelection(),
+          history(), drawSelection(), intelligence.of([]), indentation.of([EditorState.tabSize.of(tabSize), indentUnit.of(indentWithTabs ? "\t" : " ".repeat(tabSize))]),
           protection.of(hemingway ? hemingwayProtection : []),
-          language.of(hemingway ? [] : [markdown({ extensions: [mathMarkdown] }), syntaxHighlighting(highlighting), highlightActiveLine(), wikiCompletion((context) => standalone || !wikiCandidates ? Promise.resolve([]) : wikiCandidates(context))]),
+          language.of(syntax()),
           search({ top: true }), highlightSelectionMatches(),
           keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
           wrapping.of(wrap ? EditorView.lineWrapping : []),
           livePreviewFocus,
           presentation.of(hemingway ? [] : live ? livePreview(theme, standalone, folds, { openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells }) : [showLineNumbers ? lineNumbers() : [], standalone ? [] : foldGutter()]),
-          commands.of(hemingway || standalone ? [] : [slashCommands, wikiNavigation({ openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells })]),
+          commands.of(hemingway || standalone || codeLanguage !== 'markdown' ? [] : [slashCommands, wikiNavigation({ openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells })]),
           EditorView.contentAttributes.of({
             'aria-label': 'Document source', 'aria-multiline': 'true', spellcheck: 'false',
           }),
@@ -118,14 +145,14 @@
         ],
       }),
     });
-    protectedMode = hemingway;
-    return () => view?.destroy();
+    protectedMode = hemingway; initialized = true;
+    return () => { initialized = false; view?.destroy(); view = undefined; };
   });
 
   $effect(() => {
     const locked = hemingway;
     if (!view) return;
-    const effects = [protection.reconfigure(locked ? hemingwayProtection : []), language.reconfigure(locked ? [] : [markdown({extensions:[mathMarkdown]}),syntaxHighlighting(highlighting),highlightActiveLine(),wikiCompletion(context => standalone || !wikiCandidates ? Promise.resolve([]) : wikiCandidates(context))])];
+    const effects = [protection.reconfigure(locked ? hemingwayProtection : []), language.reconfigure(syntax())];
     if (locked && !protectedMode) {
       savedFolds = []; foldedRanges(view.state).between(0,view.state.doc.length,(from,to) => { savedFolds.push({from,to}); });
       effects.push(...savedFolds.map(range => unfoldEffect.of(range)));
@@ -156,11 +183,24 @@
     if (view) view.dispatch({ effects: presentation.reconfigure(locked ? [] : enabled ? livePreview(palette, raw, folded, { openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells }) : [numbers ? lineNumbers() : [], raw ? [] : foldGutter()]) });
   });
 
-  $effect(() => { const raw = standalone, locked = hemingway; if (view) view.dispatch({ effects: commands.reconfigure(locked || raw ? [] : [slashCommands, wikiNavigation({ openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells })]) }); });
+  $effect(() => { const raw = standalone || codeLanguage !== 'markdown', locked = hemingway; if (view) view.dispatch({ effects: commands.reconfigure(locked || raw ? [] : [slashCommands, wikiNavigation({ openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells })]) }); });
 
   $effect(() => {
     const shouldWrap = wrap;
     if (view) view.dispatch({ effects: wrapping.reconfigure(shouldWrap ? EditorView.lineWrapping : []) });
+  });
+  $effect(() => { if (initialized && view) view.dispatch({ effects: indentation.reconfigure([EditorState.tabSize.of(tabSize), indentUnit.of(indentWithTabs ? "\t" : " ".repeat(tabSize))]) }); });
+  $effect(() => {
+    const ready = initialized, path = sourcePath, id = codeLanguage, enabled = intelligenceEnabled && !hemingway;
+    const report = untrack(() => onIntelligence);
+    if (!ready || !view) return;
+    if (!enabled || !path?.startsWith('/') || !intelligenceLanguage(id)) { report?.({ state: 'off', message: !enabled ? 'Language intelligence off' : !path?.startsWith('/') ? 'Save this file to enable language intelligence' : 'Syntax highlighting' }); return; }
+    let cancelled = false, release: (() => void) | undefined;
+    void attachIntelligence(path, id, value => { if (!cancelled) report?.(value); }).then(connection => {
+      if (cancelled || !view) { connection.release(); return; }
+      release = connection.release; view.dispatch({ effects: intelligence.reconfigure(connection.extension) });
+    }).catch(cause => { if (!cancelled) report?.({ state: 'error', message: String(cause) }); });
+    return () => { cancelled = true; if (view) view.dispatch({ effects: intelligence.reconfigure([]) }); release?.(); };
   });
 </script>
 

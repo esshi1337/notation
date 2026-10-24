@@ -143,6 +143,14 @@ def repackage(appdir, output):
     if not plugin.is_file():
         raise RuntimeError(f'Tauri AppImage output plugin is missing: {plugin}')
     restore_engines(appdir)
+    language_source = ROOT / 'src-tauri/resources/language-servers'
+    language_targets = list((appdir / 'usr/lib').glob('*/language-servers/manifest.json'))
+    if len(language_targets) != 1:
+        raise RuntimeError('Bundled language servers are missing')
+    language_target = language_targets[0].parent
+    shutil.rmtree(language_target)
+    shutil.copytree(language_source, language_target)
+    subprocess.run([str(language_target / 'node'), '--version'], check=True, timeout=15)
     restore_webkit_helpers(appdir)
     verify_media_bundle(appdir)
     preserve_launch_directory(appdir)
@@ -185,6 +193,8 @@ def main():
         if environment.get('LD_LIBRARY_PATH'):
             paths.append(environment['LD_LIBRARY_PATH'])
         environment['LD_LIBRARY_PATH'] = os.pathsep.join(paths)
+    if len(sys.argv)>1 and sys.argv[1] in ('build', 'bundle'):
+        subprocess.run([sys.executable, str(ROOT / 'scripts/bundle-language-servers.py')], check=True)
     started = time.time()
     arguments = sys.argv[1:]
     if arguments and arguments[0] in ('build', 'bundle') and '--no-bundle' not in arguments:

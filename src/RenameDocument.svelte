@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack } from 'svelte';
-  let { name, rename, close }: { name: string; rename: (name: string) => void; close: () => void } = $props();
+  let { name, rename, close, label = 'Rename document', fieldLabel = 'Document name' }: { name: string; label?: string; fieldLabel?: string; rename: (name: string) => void; close: () => void } = $props();
   let value = $state(untrack(() => name)), error = $state('');
   let dialog: HTMLDialogElement, input: HTMLInputElement;
   let previous: HTMLElement | null = null;
@@ -14,6 +14,6 @@
   onMount(() => { previous = document.activeElement as HTMLElement; dialog.showModal(); input.focus(); input.select(); });
   onDestroy(() => { if (dialog?.open) dialog.close(); previous?.focus(); });
 </script>
-<dialog class="rename-dialog" aria-label="Rename document" bind:this={dialog} onkeydown={keyboard} oncancel={(event) => { event.preventDefault(); close(); }}>
-  <form onsubmit={submit}><strong>Rename document</strong><input bind:this={input} aria-label="Document name" bind:value={value} spellcheck="false" />{#if error}<div role="alert" class="script-error">{error}</div>{/if}<div class="dialog-actions"><button type="button" onclick={close}>Cancel</button><button type="submit">Rename</button></div></form>
+<dialog class="rename-dialog" aria-label={label} bind:this={dialog} onkeydown={keyboard} oncancel={(event) => { event.preventDefault(); close(); }}>
+  <form onsubmit={submit}><strong>{label}</strong><input bind:this={input} aria-label={fieldLabel} bind:value={value} spellcheck="false" />{#if error}<div role="alert" class="script-error">{error}</div>{/if}<div class="dialog-actions"><button type="button" onclick={close}>Cancel</button><button type="submit">Rename</button></div></form>
 </dialog>

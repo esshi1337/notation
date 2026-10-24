@@ -120,6 +120,7 @@
   function resetEditor() {
     fontSize = 14; wrap = true; layout = 'split';
     prefs.editorFont = DEFAULT_UI_PREFERENCES.editorFont; prefs.lineHeight = DEFAULT_UI_PREFERENCES.lineHeight;
+    prefs.tabSize = DEFAULT_UI_PREFERENCES.tabSize; prefs.indentWithTabs = DEFAULT_UI_PREFERENCES.indentWithTabs; prefs.languageIntelligence = DEFAULT_UI_PREFERENCES.languageIntelligence;
     prefs.readingWidth = DEFAULT_UI_PREFERENCES.readingWidth; prefs.showLineNumbers = DEFAULT_UI_PREFERENCES.showLineNumbers;
     prefs.smoothScrolling = DEFAULT_UI_PREFERENCES.smoothScrolling;
   }
@@ -196,6 +197,9 @@
           <SelectControl label="Editor font" options={editorFontOptions} value={prefs.editorFont} onchange={(value) => prefs.editorFont = value as UIPreferences['editorFont']} {theme} />
           <NumberControl label="Font size" bind:value={fontSize} min={10} max={24} step={1} defaultValue={14} unit="px" />
           <NumberControl label="Line height" bind:value={prefs.lineHeight} min={1.3} max={2.2} step={0.1} precision={1} defaultValue={DEFAULT_UI_PREFERENCES.lineHeight} sliderStep={0.1} />
+          <NumberControl label="Indent size" bind:value={prefs.tabSize} min={1} max={8} step={1} defaultValue={2} />
+          <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.indentWithTabs} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Indent with tabs</label>
+          <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.languageIntelligence} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Language intelligence</label>
           <NumberControl label="Reading width" bind:value={prefs.readingWidth} min={480} max={1200} step={10} sliderStep={1} defaultValue={DEFAULT_UI_PREFERENCES.readingWidth} unit="px" />
           <SelectControl label="Layout" options={layoutOptions} value={layout} onchange={(value) => layout = value as Layout} {theme} />
           <div class="settings-toggle-group">

@@ -20,7 +20,7 @@ try {
   });
   check('custom appearance survives serialization without losing boolean settings', () => {
     const custom = { darkPreset: 'charcoal', density: 'comfortable', accentColor: '#AABBCC', editorFont: 'sans', lineHeight: 2, readingWidth: 700, sidebarWidth: 320, sidebarRailWidth: 'wide', sidebarPosition: 'right', showStatusBar: false, showLineNumbers: false, focusMode: true, smoothScrolling: false };
-    assert.deepEqual(preferences.readUIPreferences(JSON.parse(JSON.stringify(custom))), { ...custom, accentColor: '#aabbcc' });
+    assert.deepEqual(preferences.readUIPreferences(JSON.parse(JSON.stringify(custom))), { ...preferences.DEFAULT_UI_PREFERENCES, ...custom, accentColor: '#aabbcc' });
   });
   check('icon strip presets are independent of legacy tool panel widths and density', () => {
     const legacy = preferences.readUIPreferences({ sidebarWidth: 310 });
