@@ -225,6 +225,14 @@ The Linux x86-64 package bundles Pandoc and Typst, so conversion does not depend
 
 ## Tabs, explorer, and settings
 
+The interface uses Notation's original mark and centered custom icons, with a
+compact 44-pixel tool rail that can sit on either side. Source Sans 3 is used for the
+interface and rendered prose; IBM Plex Mono is used for source, code blocks, and
+shortcut hints. Dark and warm light themes share rounded tabs, menus, and
+dialogs. New profiles use a 756-pixel reading column; existing reading-width
+and editor preferences are preserved. Settings stays within the window, with
+scrolling inside its sections rather than moving the surrounding editor.
+
 The interface uses one compact tab row. Press **Ctrl/Cmd+K** to search commands, or open the **N** menu for mouse access. Commands display their current shortcuts; the layout menu stays available at the right edge.
 
 | Default shortcut | Action |
@@ -244,7 +252,7 @@ The interface uses one compact tab row. Press **Ctrl/Cmd+K** to search commands,
 
 Open **Explorer** to browse the selected workspace’s referenced files. Full file paths appear on hover and in **Workspace → Referenced files**, including when filenames repeat in different locations. Migrated folder workspaces retain expandable directory browsing; hidden/build directories and symlinks are omitted from those listings.
 
-**Settings → Appearance** controls dark presets, accent color, interface density, sidebar position and width, status bar, and focus mode. The app sidebar opens Explorer, Workspace, Graph, Git, History, Properties, Templates, Table editor, Scripts, and Export; Settings stays at its bottom. Choose **Sidebar position → Left / Right** to move the navigation and its open tool together. The side is saved across restarts. Click the selected tool again to close it, or use Focus mode to hide the sidebar. In narrow windows, the tool overlays the editor to preserve writing width. Arrow Up/Down and Home/End navigate the sidebar buttons. **Editor** controls font family/size (bundled Geist and Geist Mono), line height, reading width, wrapping, layout, line numbers, and smooth scrolling. Smooth scrolling eases mouse-wheel steps, including small and fractional high-resolution mouse input, in documents and panels; turn it off for immediate native scrolling. System reduced-motion preferences disable the animation. If animation misses its frame budget, the rest of that wheel gesture switches to immediate scrolling instead of accumulating delays. Each section has its own reset; these resets preserve documents, scripts, and recovery data.
+**Settings → Appearance** controls dark presets, accent color, interface density, sidebar position and width, status bar, and focus mode. The app sidebar opens Explorer, Workspace, Graph, Git, History, Properties, Templates, Table editor, Scripts, and Export; Settings stays at its bottom. Choose **Sidebar position → Left / Right** to move the navigation and its open tool together. The side is saved across restarts. Click the selected tool again to close it, or use Focus mode to hide the sidebar. In narrow windows, the tool overlays the editor to preserve writing width. Arrow Up/Down and Home/End navigate the sidebar buttons. **Editor** controls font family/size (bundled Source Sans 3 and IBM Plex Mono), line height, reading width, wrapping, layout, line numbers, and smooth scrolling. Smooth scrolling eases mouse-wheel steps, including small and fractional high-resolution mouse input, in documents and panels; turn it off for immediate native scrolling. System reduced-motion preferences disable the animation. If animation misses its frame budget, the rest of that wheel gesture switches to immediate scrolling instead of accumulating delays. Each section has its own reset; these resets preserve documents, scripts, and recovery data.
 
 Settings keeps the same window-relative size across sections. Long sections scroll inside the dialog; the Shortcuts list scrolls independently while its search and close controls stay visible.
 

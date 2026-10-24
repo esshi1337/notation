@@ -2,7 +2,11 @@
   import { onDestroy, onMount } from 'svelte';
   import type { CommandId } from './shortcuts';
   import type { CommandItem } from './ui-commands';
-  let { commands, execute, close }: { commands: CommandItem[]; execute: (id: CommandId) => void; close: () => void } = $props();
+  import Icon from './Icon.svelte';
+  import { commandIcon } from './icons';
+  import type { IconTheme } from './icons';
+
+  let { commands, execute, close, theme }: { commands: CommandItem[]; execute: (id: CommandId) => void; close: () => void; theme: IconTheme } = $props();
   let query = $state(''), selected = $state(0);
   let dialog: HTMLDialogElement, search: HTMLInputElement, results: HTMLDivElement;
   let previous: HTMLElement | null = null;
@@ -30,13 +34,20 @@
 
 <dialog class="command-palette" aria-label="Commands" bind:this={dialog} onkeydown={keyboard} oncancel={(event) => { event.preventDefault(); close(); }}>
   <span id="command-enabled" hidden>Enabled</span>
-  <div class="palette-heading"><span>Commands</span><button aria-label="Close commands" onclick={close}>Esc</button></div>
-  <input bind:this={search} class="command-search" aria-label="Search commands" placeholder="Type a command…" bind:value={query} autocomplete="off" spellcheck="false" aria-controls="command-results" aria-activedescendant={matches[selected] ? 'command-' + matches[selected].id : undefined} />
+  <div class="palette-search-row">
+    <Icon name="search" size={20} {theme} />
+    <input bind:this={search} class="command-search" aria-label="Search commands" placeholder="Type a command…" bind:value={query} autocomplete="off" spellcheck="false" aria-controls="command-results" aria-activedescendant={matches[selected] ? 'command-' + matches[selected].id : undefined} />
+    <button class="palette-close" aria-label="Close commands" onclick={close}>Esc</button>
+  </div>
   <div id="command-results" class="command-results" role="listbox" aria-label="Commands" bind:this={results}>
     {#each matches as command, index (command.id)}
       {#if index === 0 || matches[index - 1].group !== command.group}<div class="command-group">{command.group}</div>{/if}
-      <button id={'command-' + command.id} role="option" aria-label={command.label} aria-describedby={command.checked ? 'command-enabled' : undefined} aria-selected={index === selected} disabled={command.disabled} tabindex="-1" onclick={() => choose(command)} onpointermove={() => selected = index}><span>{#if command.checked}<span aria-hidden="true">✓ </span>{/if}{command.label}</span><kbd aria-hidden="true">{command.shortcut}</kbd></button>
+      <button id={'command-' + command.id} role="option" aria-label={command.label} aria-describedby={command.checked ? 'command-enabled' : undefined} aria-selected={index === selected} disabled={command.disabled} tabindex="-1" onclick={() => choose(command)} onpointermove={() => selected = index}>
+        <span class="command-option-label"><Icon name={commandIcon(command.id)} size={18} {theme} /><span>{command.label}</span></span>
+        <span class="command-option-meta">{#if command.checked}<Icon name="check" size={12} {theme} />{/if}<kbd aria-hidden="true">{command.shortcut}</kbd></span>
+      </button>
     {/each}
     {#if !matches.length}<p class="command-empty">No matching commands.</p>{/if}
   </div>
+  <div class="palette-footer" aria-hidden="true"><span><kbd>↑ ↓</kbd> navigate</span><span><kbd>↵</kbd> choose</span><span><kbd>esc</kbd> close</span></div>
 </dialog>

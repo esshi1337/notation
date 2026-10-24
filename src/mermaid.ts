@@ -38,7 +38,7 @@ export function renderMermaidInto(
         suppressErrorRendering: true,
         htmlLabels: false,
         flowchart: { htmlLabels: false },
-        fontFamily: 'Geist, Inter, ui-sans-serif, system-ui, sans-serif',
+        fontFamily: '"Source Sans 3", ui-sans-serif, system-ui, sans-serif',
       });
       sandbox = document.createElement('div');
       sandbox.className = 'mermaid-sandbox';

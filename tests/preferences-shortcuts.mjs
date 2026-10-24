@@ -33,7 +33,7 @@ try {
   check('CSS values are constrained even when callers pass malformed preferences', () => {
     const css = preferences.preferencesStyle({ ...preferences.DEFAULT_UI_PREFERENCES, accentColor: 'red;position:fixed', editorFont: 'url(https://example.invalid)' });
     assert.ok(css.includes('--accent:#d8d8df'));
-    assert.ok(css.includes("'Geist Mono'"));
+    assert.ok(css.includes("'IBM Plex Mono'"));
     assert.ok(!css.includes('position') && !css.includes('url('));
   });
   check('default shortcuts are valid and unique', () => {

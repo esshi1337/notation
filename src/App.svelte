@@ -33,6 +33,7 @@
   import CloseRecovery from './CloseRecovery.svelte';
   import CommandPalette from './CommandPalette.svelte';
   import CompactMenu from './CompactMenu.svelte';
+  import Icon from './Icon.svelte';
   import RenameDocument from './RenameDocument.svelte';
   import { preferencesStyle, readUIPreferences } from './preferences';
   import { smoothScrolling } from './smooth-scroll';
@@ -101,6 +102,7 @@
   let fileInput: HTMLInputElement;
   const desktop = isTauri();
   let dirty = $derived(tabDirty(active));
+  let saveState = $derived(persistence.state === 'error' ? 'error' : dirty ? 'dirty' : 'saved');
   let canvasDocument = $derived(active.name.toLowerCase().endsWith('.canvas'));
   let canvasVisible = $derived(canvasDocument && !active.hemingway && layout !== 'source');
   let standalone = $derived(active.name.toLowerCase().endsWith('.mmd'));
@@ -149,6 +151,7 @@
   }
   async function closeTab(id: string) {
     if (busy || workspaceBusy) return;
+    const previousControl = document.activeElement;
     const tab = documents.find(item => item.id === id);
     const shared = Object.entries(workspaceViews).some(([key, view]) => key !== workspaceKey(catalog.activeId) && view.tabIds.includes(id));
     if (!tab) return;
@@ -159,7 +162,11 @@
     if (!shared) documents = documents.filter(item => item.id !== id);
     if (!visibleIds.length) { const blank = createTab(); documents.push(blank); visibleIds = [blank.id]; }
     if (activeId === id) activeId = visibleIds[Math.max(0, Math.min(index - 1, visibleIds.length - 1))];
-    await tick(); await flushPersistence();
+    await tick();
+    if (previousControl instanceof HTMLElement && !previousControl.isConnected && document.activeElement === document.body) {
+      document.querySelector<HTMLElement>('.document-tab.active [role="tab"]')?.focus();
+    }
+    await flushPersistence();
   }
   async function workspaceAction(command: string, args: Record<string, unknown> = {}) {
     if (workspaceBusy || busy) throw new Error('Another operation is in progress.');
@@ -301,6 +308,7 @@
     finally { busy = false; }
   }
   function togglePanel(value: Exclude<Panel, null>) { panel = panel === value ? null : value; }
+  function openWorkspacePanel() { appMenuOpen = false; layoutMenuOpen = false; ui.focusMode = false; panel = 'workspace'; }
   function togglePreviewTask(request: TaskToggle) { return editor?.toggle(request) ?? false; }
   async function editSource(from: number) { layout = 'live'; await tick(); editor?.reveal(from); }
   function scriptSnapshot() { return { document: { name: active.name, path: active.path, ...editor!.snapshot() }, documentId: active.lifetime }; }
@@ -525,11 +533,14 @@
 
 <main class="app" use:smoothScrolling={ui.smoothScrolling} class:focus-mode={ui.focusMode} data-density={ui.density} data-dark-preset={ui.darkPreset} inert={closingWindow} style={preferencesStyle(ui) + ';--editor-font-size:' + fontSize + 'px'}>
   <header class="workspace-bar">
-    <CompactMenu label="App menu" text="N" items={appMenuItems} execute={(id) => void runCommand(id)} bind:open={appMenuOpen} />
-    {#if catalog.workspaces.length}<select class="workspace-switcher" aria-label="Active workspace" value={catalog.activeId ?? ''} disabled={workspaceBusy || busy} onchange={event => void chooseWorkspace(event.currentTarget.value)}>{#each catalog.workspaces as workspace}<option value={workspace.id}>{workspace.name}</option>{/each}</select>{/if}
-    <Tabs documents={visibleDocuments} {activeId} select={selectTab} close={(id) => void closeTab(id)} rename={(id) => { selectTab(id); renameId = id; }} />
-    <button class="commands-trigger" aria-label="Commands" title={'Commands ' + formatShortcut(shortcutFor('app.commands', shortcuts), mac)} onclick={() => { paletteScope = 'all'; paletteOpen = true; }}><span>Commands</span><kbd aria-hidden="true">{formatShortcut(shortcutFor('app.commands', shortcuts), mac)}</kbd></button>
-    <CompactMenu label="Layout" text={active.hemingway ? 'Hemingway' : canvasVisible ? 'Canvas' : layout === 'live' ? 'Live' : layout[0].toUpperCase() + layout.slice(1)} items={layoutItems} execute={(id) => void runCommand(id)} bind:open={layoutMenuOpen} radio />
+    <CompactMenu label="App menu" text="N" items={appMenuItems} execute={(id) => void runCommand(id)} bind:open={appMenuOpen} {theme} />
+    <div class="workspace-control">
+      {#if catalog.workspaces.length}<select class="workspace-switcher" aria-label="Active workspace" value={catalog.activeId ?? ''} disabled={workspaceBusy || busy} onchange={event => void chooseWorkspace(event.currentTarget.value)}>{#each catalog.workspaces as workspace}<option value={workspace.id}>{workspace.name}</option>{/each}</select>{:else}<span class="workspace-personal">Personal</span>{/if}
+      <button class="workspace-panel-trigger" aria-label="Open workspace panel" title="Workspace panel" onclick={openWorkspacePanel}><Icon name="chevron" size={14} {theme} /></button>
+    </div>
+    <Tabs documents={visibleDocuments} {activeId} select={selectTab} close={(id) => void closeTab(id)} create={() => void runCommand('file.new')} rename={(id) => { selectTab(id); renameId = id; }} {theme} />
+    <button class="commands-trigger" aria-label="Commands" title={'Commands ' + formatShortcut(shortcutFor('app.commands', shortcuts), mac)} onclick={() => { paletteScope = 'all'; paletteOpen = true; }}><Icon name="search" size={16} {theme} /><span>Commands</span><kbd aria-hidden="true">{formatShortcut(shortcutFor('app.commands', shortcuts), mac)}</kbd></button>
+    <CompactMenu label="Layout" text={active.hemingway ? 'Hemingway' : canvasVisible ? 'Canvas' : layout === 'live' ? 'Live' : layout[0].toUpperCase() + layout.slice(1)} items={layoutItems} execute={(id) => void runCommand(id)} bind:open={layoutMenuOpen} radio {theme} />
   </header>
   {#if error}<div class="app-error" role="alert">{error}<button aria-label="Dismiss error" onclick={() => error = ''}>×</button></div>{/if}
   {#if persistence.state === 'error'}<div class="app-error" role="alert">{persistence.error}<button onclick={() => void retryPersistence()}>Retry saving app state</button></div>{/if}
@@ -537,7 +548,7 @@
   <div class="content-area" data-sidebar-position={ui.sidebarPosition}>
     {#if !ui.focusMode}
       <aside class="app-sidebar" aria-label="Application tools">
-        <Sidebar items={sidebarItems} execute={(id) => void runCommand(id)} />
+        <Sidebar items={sidebarItems} execute={(id) => void runCommand(id)} {theme} />
         {#if visiblePanel}<div class="sidebar-panel" class:sidebar-graph={panel === 'graph'}>
           {#if panel === 'explorer' && !ui.focusMode}<Explorer workspace={activeWorkspace} currentPath={active.path} openFile={(path) => void openPath(path)} configure={() => panel = 'workspace'} close={() => panel = null} />{/if}
           {#if panel === 'scripts' && !ui.focusMode}<Scripts lockedReason={active.hemingway ? HEMINGWAY_MESSAGE : ''} snapshot={scriptSnapshot} apply={applyScript} close={() => panel = null} />{:else if panel === 'workspace' && !ui.focusMode}<Workspace {catalog} action={workspaceAction} changing={workspaceBusy} currentPath={active.path} openDocument={openPath} close={() => panel = null} />{:else if panel === 'history' && !ui.focusMode}<History lockedReason={active.hemingway ? HEMINGWAY_MESSAGE : ''} currentContent={active.content} documentKey={active.path ?? active.id} snapshot={historySnapshot} restore={restoreRevision} close={() => panel = null} />{:else if panel === 'properties' && !ui.focusMode && !canvasDocument && !active.hemingway}<Properties content={active.content} documentId={active.lifetime} {standalone} apply={applyProperties} editSource={() => { layout = 'source'; void tick().then(() => editor?.reveal(0)); }} close={() => panel = null} />{:else if panel === 'templates' && !ui.focusMode && !canvasDocument && !active.hemingway}<Templates snapshot={scriptSnapshot} apply={applyTemplate} close={()=>panel=null} />{:else if panel === 'export' && !ui.focusMode && !canvasDocument && !active.hemingway}<Export snapshot={()=>({name:active.name,text:active.content,documentId:active.lifetime,path:active.path,sourcePath:active.path??active.id,standalone})} {theme} loadEmbed={loadEmbedded} close={()=>panel=null} />{:else if panel === 'table' && !ui.focusMode && !canvasDocument && !active.hemingway}<SmartTable content={active.content} documentId={active.lifetime} cursor={active.selection?.head ?? 0} {standalone} apply={applyTable} close={()=>panel=null} />{:else if panel === 'graph' && !ui.focusMode}{#key catalog.activeId}<Graph currentPath={active.path} open={(path)=>void openPath(path)} close={()=>panel=null} />{/key}{:else if panel === 'git' && !ui.focusMode}{#key catalog.activeId}<Git close={() => panel = null} />{/key}{/if}
@@ -554,8 +565,8 @@
     </div>
 
   </div>
-  {#if ui.showStatusBar && !ui.focusMode}<footer class="statusbar"><span class="status-message" role="status">{busy ? 'Working…' : status}</span>{#if !canvasVisible}<span class="status-detail">{lineCount} {lineCount === 1 ? 'line' : 'lines'}<span class="status-divider">·</span>{wordCount} {wordCount === 1 ? 'word' : 'words'}</span>{/if}<span class="save-state">{dirty ? 'Unsaved changes' : 'Saved'}</span>{#if nativeStore}<span class="database-state" data-state={persistence.state} hidden={persistence.state !== 'saving' && persistence.state !== 'error'} role="status">{persistence.state === 'saving' ? 'Saving app state…' : persistence.state === 'error' ? 'Recovery cache active' : ''}</span>{/if}{#if !desktop}<span class="browser-mode">Browser mode</span>{/if}</footer>{/if}
-  {#if paletteOpen}<CommandPalette commands={paletteItems} execute={(id) => void runCommand(id)} close={() => paletteOpen = false} />{/if}
+  {#if ui.showStatusBar && !ui.focusMode}<footer class="statusbar"><span class="status-message" role="status">{busy ? 'Working…' : status}</span>{#if !canvasVisible}<span class="status-detail">{lineCount} {lineCount === 1 ? 'line' : 'lines'}<span class="status-divider">·</span>{wordCount} {wordCount === 1 ? 'word' : 'words'}</span>{/if}<span class="save-state" data-state={saveState}>{#if saveState === 'saved'}<Icon name="check" size={12} {theme} />{/if}{saveState === 'error' ? dirty ? 'Unsaved changes' : 'App state not saved' : dirty ? 'Unsaved changes' : 'Saved'}</span>{#if nativeStore}<span class="database-state" data-state={persistence.state} hidden={persistence.state !== 'saving' && persistence.state !== 'error'} role="status">{persistence.state === 'saving' ? 'Saving app state…' : persistence.state === 'error' ? 'Recovery cache active' : ''}</span>{/if}{#if !desktop}<span class="browser-mode">Browser mode</span>{/if}</footer>{/if}
+  {#if paletteOpen}<CommandPalette commands={paletteItems} execute={(id) => void runCommand(id)} close={() => paletteOpen = false} {theme} />{/if}
   {#if renameTarget}<RenameDocument name={renameTarget.name} rename={(name) => { const target = documents.find((tab) => tab.id === renameId); if (target) { target.name = name; target.updatedAt = Date.now(); } }} close={() => renameId = null} />{/if}
   {#if wikiChoice}<WikiChooser resolution={wikiChoice.resolution} busy={wikiBusy} {error} choose={(path) => void chooseWiki(path)} create={() => void chooseWiki()} close={() => { wikiChoice = null; wikiSerial++; }} />{/if}
   {#if settingsOpen}<Settings bind:theme bind:fontSize bind:wrap bind:layout bind:agentEditsEnabled bind:prefs={ui} bind:shortcuts close={() => settingsOpen = false} />{/if}

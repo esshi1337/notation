@@ -7,7 +7,7 @@ export type UIPreferences = {
 
 export const DEFAULT_UI_PREFERENCES: Readonly<UIPreferences> = {
   darkPreset: 'midnight', density: 'compact', accentColor: '#d8d8df',
-  editorFont: 'mono', lineHeight: 1.7, readingWidth: 800, sidebarWidth: 260, sidebarPosition: 'left',
+  editorFont: 'mono', lineHeight: 1.7, readingWidth: 756, sidebarWidth: 260, sidebarPosition: 'left',
   showStatusBar: true, showLineNumbers: true, focusMode: false, smoothScrolling: true,
 };
 
@@ -35,6 +35,6 @@ export function readUIPreferences(settings: Record<string, unknown>): UIPreferen
 
 export function preferencesStyle(preferences: UIPreferences): string {
   const prefs = readUIPreferences(preferences);
-  const font = prefs.editorFont === 'sans' ? "'Geist', ui-sans-serif, system-ui, sans-serif" : "'Geist Mono', ui-monospace, monospace";
+  const font = prefs.editorFont === 'sans' ? "'Source Sans 3', ui-sans-serif, system-ui, sans-serif" : "'IBM Plex Mono', ui-monospace, monospace";
   return `--accent:${prefs.accentColor};--editor-font-family:${font};--editor-line-height:${prefs.lineHeight};--reading-width:${prefs.readingWidth}px;--sidebar-width:${prefs.sidebarWidth}px`;
 }

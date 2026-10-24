@@ -50,7 +50,7 @@ test('custom appearance and editor preferences persist and reset to defaults', a
   await settings.getByRole('button', { name: 'Reset editor', exact: true }).click();
   await expect(settings.getByRole('combobox', { name: 'Editor font' })).toHaveValue('mono');
   await expect(settings.getByRole('spinbutton', { name: 'Line height' })).toHaveValue('1.7');
-  await expect(settings.getByRole('spinbutton', { name: 'Reading width' })).toHaveValue('800');
+  await expect(settings.getByRole('spinbutton', { name: 'Reading width' })).toHaveValue('756');
   await expect(settings.getByRole('checkbox', { name: 'Show line numbers' })).toBeChecked();
 });
 

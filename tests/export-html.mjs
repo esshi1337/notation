@@ -29,8 +29,8 @@ try {
     assert.equal(typeof body, 'string'); assert.equal(typeof math, 'string');
     assert.ok(body.length > 1000); assert.ok(math.length > body.length);
   });
-  test('bundled Geist and KaTeX font styles embed every font with no external font URLs', () => {
-    assert.ok(body.includes('font-family:"Geist"')); assert.ok(body.includes('font-family:"Geist Mono"'));
+  test('bundled Source Sans 3 and KaTeX font styles embed every font with no external font URLs', () => {
+    assert.ok(body.includes('font-family:"Source Sans 3"')); assert.ok(body.includes('font-family:"IBM Plex Mono"'));
     assert.ok(math.includes('font-family:KaTeX_Main')); assert.ok(math.includes('.katex'));
     assert.equal(externalStyleResource(body), false); assert.equal(externalStyleResource(math), false);
     assert.ok([...math.matchAll(/url\("(data:font\/woff2;base64,[^"]+)"\)/gu)].length >= 20);

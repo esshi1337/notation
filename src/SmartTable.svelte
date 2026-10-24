@@ -141,7 +141,7 @@
   .smart-table td { min-width: 105px; padding: 0; border: 1px solid var(--border); vertical-align: top; }
   .smart-table tr:first-child td { border-top: 0; }
   .smart-table td:first-child { border-left: 0; }
-  .smart-table textarea { display: block; min-width: 105px; width: 100%; min-height: 32px; height: 32px; resize: vertical; border: 0; border-radius: 0; background: var(--bg); color: var(--text); padding: 6px; font: 11px/1.5 'Geist',sans-serif; }
+  .smart-table textarea { display: block; min-width: 105px; width: 100%; min-height: 32px; height: 32px; resize: vertical; border: 0; border-radius: 0; background: var(--bg); color: var(--text); padding: 6px; font: 11px/1.5 'Source Sans 3',sans-serif; }
   .smart-table .table-header textarea { font-weight: 600; background: var(--code); }
   .smart-table .selected-cell { outline: 1px solid var(--muted); outline-offset: -1px; }
   .table-choice { display: block; width: 100%; margin-top: 7px; text-align: left; white-space: normal; overflow-wrap: anywhere; }

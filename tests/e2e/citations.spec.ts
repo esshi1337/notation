@@ -68,7 +68,7 @@ test('native-shaped citation fragments stay inline, retain formatting, and navig
     const { inlineCitationHTML, sanitizeCitationHTML, connectCitationLinks } = await import('/src/render-citations.ts');
     const paragraph = document.createElement('p');
     paragraph.className = 'native-citation-regression';
-    paragraph.style.cssText = 'position:fixed;left:20px;top:80px;width:600px;z-index:9999;background:var(--bg);font:14px/1.7 Geist,sans-serif';
+    paragraph.style.cssText = 'position:fixed;left:20px;top:80px;width:600px;z-index:9999;background:var(--bg);font:14px/1.7 "Source Sans 3",sans-serif';
     paragraph.append(document.createTextNode('A fact '));
     const citation = document.createElement('span'); citation.className = 'citation-reference';
     citation.innerHTML = inlineCitationHTML('<div><p><span class="citation"><a href="#ref-doe2020">(<em>Doe</em> 2020<sup>a</sup>)</a></span></p></div>');
