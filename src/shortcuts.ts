@@ -29,6 +29,9 @@ export const COMMANDS = [
   { id: 'view.preview', label: 'Preview', group: 'View', defaultShortcut: 'Mod+Alt+3' },
   { id: 'view.live', label: 'Live Preview', group: 'View', defaultShortcut: 'Mod+Alt+4' },
   { id: 'view.focus', label: 'Focus mode', group: 'View', defaultShortcut: 'Mod+Shift+F' },
+  { id: 'view.zoomIn', label: 'Increase font size', group: 'View', defaultShortcut: 'Mod+=' },
+  { id: 'view.zoomOut', label: 'Decrease font size', group: 'View', defaultShortcut: 'Mod+-' },
+  { id: 'view.zoomReset', label: 'Reset font size', group: 'View', defaultShortcut: 'Mod+0' },
   { id: 'panel.templates', label: 'Templates', group: 'Panels', defaultShortcut: '' },
   { id: 'panel.table', label: 'Table editor', group: 'Panels', defaultShortcut: '' },
   { id: 'panel.explorer', label: 'Explorer', group: 'Panels', defaultShortcut: 'Mod+Shift+E' },
@@ -111,14 +114,19 @@ export function readShortcutOverrides(value: unknown): ShortcutOverrides {
 
 export function shortcutFromEvent(event: KeyEvent): string | null {
   if (event.isComposing || event.getModifierState?.('AltGraph') || event.key === 'Dead' || ['Control', 'Meta', 'Shift', 'Alt', 'AltGraph'].includes(event.key)) return null;
-  const punctuation: Record<string, string> = { Slash: '/', Comma: ',', Period: '.', Equal: '=', Minus: '-', Semicolon: ';', Quote: "'", Backquote: '`', BracketLeft: '[', BracketRight: ']', Backslash: '\\' };
+  const punctuation: Record<string, string> = { Slash: '/', Comma: ',', Period: '.', Equal: '=', Minus: '-', NumpadAdd: '=', NumpadSubtract: '-', Semicolon: ';', Quote: "'", Backquote: '`', BracketLeft: '[', BracketRight: ']', Backslash: '\\' };
   const key = /^Key[A-Z]$/u.test(event.code) ? event.code.slice(3) : /^Digit\d$/u.test(event.code) ? event.code.slice(5) : punctuation[event.code] ?? event.key;
   return normalizeShortcut([...(event.ctrlKey || event.metaKey ? ['Mod'] : []), ...(event.altKey ? ['Alt'] : []), ...(event.shiftKey ? ['Shift'] : []), key].join('+'));
 }
 
 export function commandForEvent(event: KeyEvent, overrides: ShortcutOverrides): CommandId | null {
   const binding = shortcutFromEvent(event);
-  return binding ? COMMANDS.find((command) => shortcutFor(command.id, overrides) === binding)?.id ?? null : null;
+  if (!binding) return null;
+  const direct = COMMANDS.find((command) => shortcutFor(command.id, overrides) === binding);
+  if (direct) return direct.id;
+  // "+" is Shift+"=" on common layouts; fall back to the unshifted binding.
+  if (binding === 'Mod+Shift+=') return COMMANDS.find((command) => shortcutFor(command.id, overrides) === 'Mod+=')?.id ?? null;
+  return null;
 }
 
 export function formatShortcut(binding: string, mac = false): string {

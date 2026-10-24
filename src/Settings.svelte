@@ -201,7 +201,7 @@
           <SelectControl label="Editor font" options={editorFontOptions} value={prefs.editorFont} onchange={(value) => prefs.editorFont = value as UIPreferences['editorFont']} {theme} />
           <NumberControl label="Font size" bind:value={fontSize} min={10} max={24} step={1} defaultValue={14} unit="px" />
           <NumberControl label="Line height" bind:value={prefs.lineHeight} min={1.3} max={2.2} step={0.1} precision={1} defaultValue={DEFAULT_UI_PREFERENCES.lineHeight} sliderStep={0.1} />
-          <NumberControl label="Indent size" bind:value={prefs.tabSize} min={1} max={8} step={1} defaultValue={2} />
+          <NumberControl label="Indent size" bind:value={prefs.tabSize} min={1} max={8} step={1} defaultValue={DEFAULT_UI_PREFERENCES.tabSize} />
           <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.indentWithTabs} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Indent with tabs</label>
           <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.languageIntelligenceEnabled} disabled={prefs.performanceMode} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Language intelligence</label>
           <p class="settings-help">Off by default. Install the optional TypeScript / Svelte language pack or Rust tooling first, then enable intelligence. Syntax highlighting works without it.</p>

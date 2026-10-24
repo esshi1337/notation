@@ -8,8 +8,20 @@ export type UIPreferences = {
 export const DEFAULT_UI_PREFERENCES: Readonly<UIPreferences> = {
   darkPreset: 'midnight', density: 'compact', accentColor: '#d8d8df',
   editorFont: 'mono', lineHeight: 1.7, readingWidth: 756, sidebarWidth: 260, sidebarRailWidth: 'standard', sidebarPosition: 'left',
-  showStatusBar: true, tabSize: 2, indentWithTabs: false, languageIntelligenceEnabled: false, showLineNumbers: true, focusMode: false, smoothScrolling: true, performanceMode: false,
+  showStatusBar: true, tabSize: 4, indentWithTabs: false, languageIntelligenceEnabled: false, showLineNumbers: true, focusMode: false, smoothScrolling: true, performanceMode: false,
 };
+
+export const UI_SETTINGS_VERSION = 2;
+
+export function migrateSettings(settings: Record<string, unknown>): Record<string, unknown> {
+  if (Number(settings.uiSettingsVersion) >= UI_SETTINGS_VERSION) return settings;
+  const next: Record<string, unknown> = { ...settings };
+  // Pre-v2 persistence wrote the whole UI object, so a stored tabSize of 2
+  // is the old automatic default, not a deliberate user choice.
+  if (next.tabSize === 2) next.tabSize = DEFAULT_UI_PREFERENCES.tabSize;
+  next.uiSettingsVersion = UI_SETTINGS_VERSION;
+  return next;
+}
 
 function bounded(value: unknown, fallback: number, min: number, max: number) {
   return typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;

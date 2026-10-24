@@ -9,6 +9,26 @@ try {
   const keys = await server.ssrLoadModule('/src/shortcuts.ts');
   const event = (key, extra = {}) => ({ key, code: key.length === 1 ? 'Key' + key.toUpperCase() : key, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, isComposing: false, ...extra });
 
+  check('default indent size is four spaces', () => {
+    assert.equal(preferences.DEFAULT_UI_PREFERENCES.tabSize, 4);
+    assert.equal(preferences.readUIPreferences({}).tabSize, 4);
+  });
+  check('settings migration upgrades the old automatic two-space indent once', () => {
+    const empty = preferences.migrateSettings({});
+    assert.equal(empty.uiSettingsVersion, 2);
+    assert.equal(empty.tabSize, undefined);
+    const two = preferences.migrateSettings({ tabSize: 2 });
+    assert.equal(two.tabSize, 4);
+    assert.equal(two.uiSettingsVersion, 2);
+    const three = preferences.migrateSettings({ tabSize: 3 });
+    assert.equal(three.tabSize, 3);
+    assert.equal(three.uiSettingsVersion, 2);
+    const marked = { tabSize: 2, uiSettingsVersion: 2 };
+    assert.strictEqual(preferences.migrateSettings(marked), marked);
+    const oldMarker = preferences.migrateSettings({ tabSize: 5, uiSettingsVersion: 1 });
+    assert.equal(oldMarker.tabSize, 5);
+    assert.equal(oldMarker.uiSettingsVersion, 2);
+  });
   check('existing settings receive safe compact defaults', () => {
     assert.deepEqual(preferences.readUIPreferences({ theme: 'dark', fontSize: 14 }), preferences.DEFAULT_UI_PREFERENCES);
     const value = preferences.readUIPreferences({ accentColor: '#fff;display:none', lineHeight: NaN, readingWidth: 9e9, sidebarWidth: 0, density: null, showStatusBar: 'false' });
@@ -88,6 +108,15 @@ try {
     assert.equal(keys.commandForEvent(event('S', { ctrlKey: true, shiftKey: true }), {}), 'file.saveAs');
     assert.equal(keys.commandForEvent(event('¡', { code: 'Digit1', ctrlKey: true, altKey: true }), {}), 'view.source');
     assert.equal(keys.shortcutFromEvent(event('+', { code: 'Equal', ctrlKey: true, shiftKey: true })), 'Mod+Shift+=');
+  });
+  check('zoom shortcuts match Ctrl plus, minus, zero, shifted plus and numpad keys', () => {
+    assert.equal(keys.commandForEvent(event('=', { code: 'Equal', ctrlKey: true }), {}), 'view.zoomIn');
+    assert.equal(keys.commandForEvent(event('-', { code: 'Minus', ctrlKey: true }), {}), 'view.zoomOut');
+    assert.equal(keys.commandForEvent(event('0', { code: 'Digit0', ctrlKey: true }), {}), 'view.zoomReset');
+    assert.equal(keys.commandForEvent(event('+', { code: 'Equal', ctrlKey: true, shiftKey: true }), {}), 'view.zoomIn');
+    assert.equal(keys.commandForEvent(event('+', { code: 'NumpadAdd', ctrlKey: true }), {}), 'view.zoomIn');
+    assert.equal(keys.commandForEvent(event('-', { code: 'NumpadSubtract', ctrlKey: true }), {}), 'view.zoomOut');
+    assert.equal(keys.commandForEvent(event('=', { ctrlKey: false }), {}), null);
   });
   check('reserved editing shortcuts and collisions produce actionable validation errors', () => {
     assert.match(keys.validateShortcut('file.new', 'Ctrl+Z', {}), /reserved/i);

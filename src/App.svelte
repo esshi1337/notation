@@ -42,7 +42,7 @@
   import CompactMenu from './CompactMenu.svelte';
   import Icon from './Icon.svelte';
   import RenameDocument from './RenameDocument.svelte';
-  import { preferencesStyle, readUIPreferences } from './preferences';
+  import { migrateSettings, preferencesStyle, readUIPreferences, UI_SETTINGS_VERSION } from './preferences';
   import { smoothScrolling } from './smooth-scroll';
   import { COMMANDS, commandForEvent, formatShortcut, readShortcutOverrides, shortcutFor } from './shortcuts';
   import type { CommandId } from './shortcuts';
@@ -101,7 +101,7 @@
   let wrap = $state(preferences.wrap !== false);
   let layout = $state<Layout>(initialView?.layout ?? (['source', 'preview', 'live'].includes(String(preferences.layout)) ? preferences.layout as Layout : 'split'));
   let agentEditsEnabled = $state(preferences.agentEditsEnabled !== false);
-  let ui = $state(readUIPreferences(preferences));
+  let ui = $state(readUIPreferences(migrateSettings(preferences)));
   let shortcuts = $state(readShortcutOverrides(preferences.shortcuts));
   let panel = $state<Panel>(null);
   let settingsOpen = $state(false);
@@ -170,7 +170,7 @@
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.darkPreset = ui.darkPreset;
     document.documentElement.dataset.density = ui.density;
-    persistMetadata({ settings: { theme, fontSize, wrap, layout, agentEditsEnabled, ...ui, shortcuts } });
+    persistMetadata({ settings: { uiSettingsVersion: UI_SETTINGS_VERSION, theme, fontSize, wrap, layout, agentEditsEnabled, ...ui, shortcuts } });
   });
   $effect(() => {
     document.title = (dirty ? '• ' : '') + active.name + ' — Notation';
@@ -578,6 +578,11 @@
     if (id === 'app.commands') { await tick(); paletteScope = 'all'; paletteOpen = true; return; }
     if (ui.performanceMode && ['view.split','view.preview','view.live'].includes(id)) { status = 'Turn off Performance mode in Settings → Editor to use rendered views.'; return; }
     if (id === 'view.language') { if (!canvasDocument) languageTarget = activeId; return; }
+    if (id === 'view.zoomIn' || id === 'view.zoomOut' || id === 'view.zoomReset') {
+      fontSize = id === 'view.zoomReset' ? 14 : Math.max(10, Math.min(24, fontSize + (id === 'view.zoomIn' ? 1 : -1)));
+      status = 'Font size ' + fontSize + 'px';
+      return;
+    }
     if (id === 'view.hemingway') { const tab = active; tab.hemingway = !tab.hemingway; tab.updatedAt = Date.now(); if (tab.hemingway) void cellsFor(tab).stop(); status = tab.hemingway ? 'Hemingway mode on — deletion blocked' : 'Hemingway mode off'; error = ''; await tick(); editors[tab.id]?.focus(); return; }
     if (active.hemingway && hemingwayCommandBlocked(id)) { error = HEMINGWAY_MESSAGE; return; }
     if (id === 'code.quickOpen' || id === 'code.search') { fileNavigator = id === 'code.search' ? 'search' : 'files'; return; }

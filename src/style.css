@@ -425,8 +425,9 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .cm-scroller { font-family: var(--editor-font-family, 'IBM Plex Mono', ui-monospace, monospace) !important; line-height: var(--editor-line-height, 1.7); overflow: auto; }
 .cm-content { min-width: 0; padding: var(--document-padding, 18px) 0 80px; caret-color: var(--text); }
 .cm-line { min-width: 0; padding: 0 20px 0 10px; overflow-wrap: anywhere; }
-.editor-host .cm-editor .cm-gutters { border: none; background: var(--panel); color: var(--muted); font-size: 11px; padding: 0 0 0 5px; }
+.editor-host .cm-editor .cm-gutters { border: none; background: var(--panel); color: var(--muted); font-size: max(10px, calc(var(--editor-font-size, 14px) * 0.8)); padding: 0 0 0 5px; }
 .cm-lineNumbers .cm-gutterElement { padding: 0 10px 0 9px; min-width: 35px; }
+.editor-host .cm-editor:not(.cm-live-preview) .cm-content { width: 100%; max-width: calc(var(--reading-width, 756px) + 30px); margin-inline: auto; }
 .cm-activeLine { background: color-mix(in srgb, var(--hover) 45%, transparent) !important; }
 .cm-activeLineGutter { background: transparent !important; color: var(--text); }
 .cm-cursor { border-left-color: var(--text) !important; }
@@ -480,6 +481,7 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .cm-live-preview.cm-editor { font-size: 16px; }
 .cm-live-preview .cm-scroller { font-family: 'Source Sans 3', Inter, ui-sans-serif, system-ui, sans-serif !important; line-height: 26px; }
 .cm-live-preview .cm-content { padding: 64px 0 80px; width: 100%; max-width: calc(var(--reading-width, 756px) + 44px); margin-inline: auto; }
+.cm-live-preview .cm-gutters { font-size: 11px; }
 .cm-live-preview .cm-line { padding-left: 18px; padding-right: 26px; }
 .cm-live-preview .cm-live-heading { color: var(--heading); font-family: 'Source Sans 3', Inter, ui-sans-serif, system-ui, sans-serif; font-weight: 600; line-height: 26px; letter-spacing: 0; padding-top: 5px; padding-bottom: 5px; }
 .cm-live-preview .cm-live-h1 { font-size: 32px; line-height: 40px; }
