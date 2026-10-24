@@ -17,6 +17,13 @@ from media_graph_smoke import stop_profile_apps
 from responsive_smoke import command
 
 
+def screenshot(client, path, ready):
+    smoke.wait_for(client, ready, 'visible screenshot target')
+    # WebDriver can observe updated DOM before WebKit composites the new dialog.
+    client.execute_async('const done=arguments[arguments.length-1];document.fonts.ready.then(()=>requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(done,150))))')
+    client.screenshot(path)
+
+
 def run(app):
     smoke.assert_ports_available()
     output = Path(__file__).resolve().parents[2] / 'test-results/native-identity'
@@ -78,15 +85,15 @@ return {theme:document.documentElement.dataset.theme,bar:box('.workspace-bar').h
                     smoke.require('Source Sans 3' in geometry['prose'] and 'IBM Plex Mono' in geometry['code'], f'Bundled typography: {geometry}')
                     smoke.require(all(any(name in family for family in geometry['fonts']) for name in ['Source Sans 3', 'IBM Plex Mono']), f'Bundled fonts did not load: {geometry}')
                     reports.append(geometry)
-                    client.screenshot(output / f'{theme}-editor.png')
+                    screenshot(client, output / f'{theme}-editor.png', "!document.querySelector('dialog[open]')")
                     client.element_command(client.find('[aria-label="App menu"]'), '/click')
-                    client.screenshot(output / f'{theme}-menu.png')
+                    screenshot(client, output / f'{theme}-menu.png', "document.querySelector('.app-menu')")
                     client.element_command(client.find('[aria-label="App menu"]'), '/click')
                     client.element_command(client.find('[aria-label="Commands"]'), '/click')
-                    client.screenshot(output / f'{theme}-commands.png')
+                    screenshot(client, output / f'{theme}-commands.png', "document.querySelector('[aria-label=\"Search commands\"]')")
                     client.element_command(client.find('[aria-label="Close commands"]'), '/click')
                     command(client, 'Settings')
-                    client.screenshot(output / f'{theme}-settings.png')
+                    screenshot(client, output / f'{theme}-settings.png', "document.querySelector('.settings-dialog[open]')")
                     client.element_command(client.find('[aria-label="Close settings"]'), '/click')
                 command(client, 'Source')
                 smoke.require(smoke.editor_text(client) == markdown, 'Identity interactions changed the document')
