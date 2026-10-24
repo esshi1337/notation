@@ -447,3 +447,14 @@ preview, near-limit text, repeated tab cycles, and idle CPU/RSS/PSS while assert
 that no language servers start. The second checks single-profile ownership,
 concurrent launches, separate profiles, and recovery. They use disposable state;
 measurements include WebKit and remain machine- and workload-dependent.
+
+### Performance mode and memory
+
+Enable **Settings → Editor → Performance mode** for source-only editing without
+syntax parsing, language intelligence or smooth scrolling. Your usual settings
+and undo history are preserved. It is off by default. In normal mode, inactive
+editor views are released unless language intelligence is explicitly enabled.
+See [memory retention and disk caching](docs/memory-retention.md) for what stays
+in RAM, cache limits and verification commands. The
+[measured performance report](docs/performance-report.md) includes packaged-app
+stress results, language-server costs and remaining optimization targets.

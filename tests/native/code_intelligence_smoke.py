@@ -13,7 +13,8 @@ import smoke
 from responsive_smoke import command
 from media_graph_smoke import stop_profile_apps
 from tooling_smoke import invoke
-from instance_smoke import rpc, owners
+from instance_smoke import rpc
+from lightweight_stress import resources
 
 
 def run(app, output, language_pack):
@@ -93,17 +94,29 @@ def run(app, output, language_pack):
                 servers=invoke(client,'lsp_status',{})
                 (output/'servers.json').write_text(json.dumps(servers,indent=2))
                 smoke.require(len([s for s in servers if s['running']])==3,'Expected one server per root/kind')
+                (output/'process-before-performance.json').write_text(json.dumps(resources(root/'data')['processes'],indent=2))
+                # Performance mode suspends existing servers without changing the opt-in.
+                command(client,'Settings')
+                client.element_command(client.find('//*[@role="tab" and normalize-space(.)="Editor"]',using='xpath'),'/click')
+                performance=client.find('//label[contains(.,"Performance mode")]/input',using='xpath')
+                client.element_command(performance,'/click')
+                deadline=time.time()+8
+                while time.time()<deadline and any(item['running'] for item in invoke(client,'lsp_status',{})):time.sleep(.1)
+                smoke.require(not any(item['running'] for item in invoke(client,'lsp_status',{})), 'Performance mode did not stop all servers')
+                smoke.require(client.execute('return document.querySelectorAll(".cm-editor").length === 1'), 'Performance mode retained inactive editor views')
+                client.screenshot(output/'performance-mode.png')
+                client.element_command(performance,'/click')
+                client.element_command(client.find('button[aria-label="Close settings"]'),'/click')
+                deadline=time.time()+30
+                while time.time()<deadline and len([item for item in invoke(client,'lsp_status',{}) if item['running']])!=3:time.sleep(.1)
+                smoke.require(len([item for item in invoke(client,'lsp_status',{}) if item['running']])==3, 'Leaving Performance mode did not restore enabled servers')
+                ready('rust-analyzer');diagnostics()
                 # Existing-file guard is checked through the packaged command.
                 original=rustfile.read_text();rustfile.write_text('external change\n')
                 result=client.execute_async('const done=arguments[arguments.length-1];window.__TAURI_INTERNALS__.invoke("write_document_checked",{path:arguments[0],content:"overwrite",expectedContent:arguments[1]}).then(()=>done("unexpected success"),error=>done(String(error)))',[str(rustfile),original])
                 smoke.require('changed on disk' in result,'Stale save was not rejected: '+str(result))
                 smoke.require(rustfile.read_text()=='external change\n','External change was overwritten')
-                process_rows = subprocess.check_output(['ps','-eo','pid=,ppid=,rss=,comm='],text=True).splitlines()
-                process_map = {int(parts[0]): {'pid':int(parts[0]),'ppid':int(parts[1]),'rssKiB':int(parts[2]),'name':parts[3]} for row in process_rows if len(parts:=row.split(None,3))==4}
-                selected=set(owners(root/'data'))
-                for _ in range(10):
-                    selected.update(pid for pid,row in process_map.items() if row['ppid'] in selected)
-                (output/'process-baseline.json').write_text(json.dumps([process_map[pid] for pid in sorted(selected) if pid in process_map],indent=2))
+                (output/'process-baseline.json').write_text(json.dumps(resources(root/'data')['processes'],indent=2))
                 open_file(component); command(client,'Save'); command(client,'Close tab')
                 deadline=time.time()+8
                 while time.time()<deadline and len([item for item in invoke(client,'lsp_status',{}) if item['running']])!=2: time.sleep(.1)
@@ -117,7 +130,7 @@ def run(app, output, language_pack):
                 smoke.require(not any(item['running'] for item in invoke(client,'lsp_status',{})), 'Disabling intelligence did not stop all servers')
                 client.execute("setTimeout(() => window.__TAURI_INTERNALS__.invoke('plugin:window|close',{label:'main'}),50);return true")
                 time.sleep(2)
-                print('PASS: packaged TS/Svelte/Rust startup, diagnostics, format, definitions/references, cross-file unsaved rename, shared sessions, guarded save',flush=True)
+                print('PASS: packaged TS/Svelte/Rust startup, diagnostics, format, definitions/references, cross-file unsaved rename, shared sessions, Performance mode suspension/resume, guarded save',flush=True)
             except Exception:
                 try:
                     (output/'lsp-messages.json').write_text(json.dumps(client.execute('return window.lspMessages'),indent=2))

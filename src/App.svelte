@@ -3,6 +3,7 @@
   import { invoke, isTauri } from '@tauri-apps/api/core';
   import { ask, open, save } from '@tauri-apps/plugin-dialog';
   import { HEMINGWAY_MESSAGE, hemingwayCommandBlocked } from './hemingway';
+  import { documentCounts } from './document-counts';
   import { detectLanguage, documentFileName, languageOptions } from './code-languages';
   import type { IntelligenceState } from './language-intelligence';
   import { configureLanguageIntelligence } from './intelligence-loader';
@@ -54,11 +55,9 @@
   import type { BlockAction } from './editor-commands';
   import type { TaskToggle } from './markdown-features';
   import type { ScriptDocument } from './script-runner';
-  import { dismissRecovery, flushPersistence, nativeStore, observePersistence, persistMetadata, retryPersistence } from './store';
-  import type { Metadata, PersistenceStatus } from './store';
+  import { currentMetadata, dismissRecovery, flushPersistence, nativeStore, observePersistence, persistMetadata, retryPersistence } from './store';
+  import type { PersistenceStatus } from './store';
 
-  let { metadata }: { metadata: Metadata } = $props();
-  const initial = untrack(() => metadata);
   const fence = String.fromCharCode(96).repeat(3);
   const sample = '# Welcome to Notation\n\nA small space for Markdown and Mermaid. Write on the left, see it on the right.\n\n## Follow an idea\n\n' + fence + 'mermaid\nflowchart LR\n  A[An idea] --> B[Make a note]\n  B --> C[Connect the dots]\n' + fence + '\n\n- Open a .md or .mmd file\n- Use **Ctrl/Cmd + S** to save\n- Use **Ctrl/Cmd + F** to find in your source\n';
   type Layout = 'split' | 'source' | 'preview' | 'live';
@@ -66,15 +65,28 @@
   type DocumentResult = { path: string; content: string; warning?: string };
   type LaunchRequest = { id: string; paths: string[] };
   const MAX_LAUNCH_FILES = 64, MAX_LAUNCH_QUEUE = 16, MAX_LAUNCH_DEDUP = 128;
-  const restored = restoreTabs(initial.session, initial.draft, sample);
+  // Consume startup buffers once. Keeping the bootstrap snapshot in component
+  // props would retain every restored document even after its tab was closed.
+  let { tabs: startingTabs, ...initial } = untrack(() => {
+    const metadata = currentMetadata();
+    const restored = restoreTabs(metadata.session, metadata.draft, sample);
+    const view = restoreWorkspaceView(metadata.session?.workspaceViews?.[workspaceKey(metadata.workspaceCatalog?.activeId ?? null)], restored.tabs,
+      ['source', 'preview', 'live'].includes(String(metadata.settings.layout)) ? metadata.settings.layout as Layout : 'split');
+    return {
+      tabs: restored.tabs, tabIds: restored.tabs.map(tab => tab.id), activeId: restored.activeTabId, view, settings: metadata.settings,
+      catalog: metadata.workspaceCatalog ?? emptyCatalog(),
+      workspaceViews: restoreWorkspaceViews(metadata.session?.workspaceViews, restored.tabs),
+      recovered: !!(metadata.session || metadata.draft),
+    };
+  });
   const preferences = initial.settings;
-  let documents = $state<DocumentTab[]>(restored.tabs);
-  let catalog = $state<WorkspaceCatalog>(initial.workspaceCatalog ?? emptyCatalog());
-  let workspaceViews = $state<Record<string, WorkspaceView>>(restoreWorkspaceViews(initial.session?.workspaceViews, restored.tabs));
-  const initialView = restoreWorkspaceView(initial.session?.workspaceViews?.[workspaceKey(initial.workspaceCatalog?.activeId ?? null)], restored.tabs,
-    ['source','preview','live'].includes(String(initial.settings.layout)) ? initial.settings.layout as Layout : 'split');
-  let visibleIds = $state(initialView?.tabIds ?? restored.tabs.map(tab => tab.id));
-  let activeId = $state(initialView?.activeTabId ?? restored.activeTabId);
+  let documents = $state<DocumentTab[]>(startingTabs);
+  startingTabs = [];
+  let catalog = $state<WorkspaceCatalog>(initial.catalog);
+  let workspaceViews = $state<Record<string, WorkspaceView>>(initial.workspaceViews);
+  const initialView = initial.view;
+  let visibleIds = $state(initialView?.tabIds ?? initial.tabIds);
+  let activeId = $state(initialView?.activeTabId ?? initial.activeId);
   let visibleDocuments = $derived(visibleIds.map(id => documents.find(tab => tab.id === id)).filter((tab): tab is DocumentTab => !!tab));
   let activeWorkspace = $derived(catalog.workspaces.find(workspace => workspace.id === catalog.activeId));
   let workspaceBusy = $state(false);
@@ -103,11 +115,19 @@
   let symbolTarget = $state<string | null>(null);
   let fileNavigator = $state<'files' | 'search' | null>(null);
   let diskConflicts = $state<Record<string, string>>({});
+  $effect(() => {
+    const ids = new Set(documents.map(tab => tab.id));
+    untrack(() => {
+      for (const id of Object.keys(editors)) if (!ids.has(id)) delete editors[id];
+      for (const id of Object.keys(intelligenceStates)) if (!ids.has(id)) delete intelligenceStates[id];
+      for (const id of Object.keys(diskConflicts)) if (!ids.has(id)) delete diskConflicts[id];
+    });
+  });
   let comparingDisk = $state<string | null>(null);
   let diskTarget = $derived(documents.find(tab => tab.id === comparingDisk));
   let renameId = $state<string | null>(null);
   let renameTarget = $derived(documents.find((tab) => tab.id === renameId));
-  let status = $state(initial.session || initial.draft ? 'Recovered your last session' : 'Ready');
+  let status = $state(initial.recovered ? 'Recovered your last session' : 'Ready');
   let error = $state('');
   let busy = $state(false);
   const launchRequests: LaunchRequest[] = [], launchOrder: string[] = [];
@@ -124,15 +144,17 @@
   let canvasDocument = $derived(active.name.toLowerCase().endsWith('.canvas'));
   let activeLanguage = $derived(detectLanguage(active.name, active.language));
   let codeDocument = $derived(!canvasDocument && activeLanguage !== 'markdown');
-  let effectiveLayout = $derived(codeDocument ? 'source' : layout);
-  let canvasVisible = $derived(canvasDocument && !active.hemingway && layout !== 'source');
+  let intelligenceEnabled = $derived(ui.languageIntelligenceEnabled && !ui.performanceMode);
+  let effectiveLayout = $derived(codeDocument || ui.performanceMode ? 'source' : layout);
+  let canvasVisible = $derived(canvasDocument && !ui.performanceMode && !active.hemingway && layout !== 'source');
   let standalone = $derived(active.name.toLowerCase().endsWith('.mmd'));
-  let lineCount = $derived(active.content.split('\n').length);
-  let wordCount = $derived(active.content.trim() ? active.content.trim().split(/\s+/u).length : 0);
+  let counts = $derived(documentCounts(active.content));
+  let lineCount = $derived(counts.lines);
+  let wordCount = $derived(counts.words);
   const mac = /Mac|iPhone|iPad/u.test(navigator.platform);
   let commandItems = $derived<CommandItem[]>(COMMANDS.map((command) => ({
     ...command, shortcut: formatShortcut(shortcutFor(command.id, shortcuts), mac),
-    disabled: (command.id === 'view.language' && canvasDocument) || (!ui.languageIntelligenceEnabled && ['code.definition','code.references','code.rename','code.format'].includes(command.id)) || (codeDocument && (command.id.startsWith('block.') || command.id.startsWith('insert.') || ['panel.properties','panel.templates','panel.table','panel.export','view.split','view.preview','view.live'].includes(command.id))) || (active.hemingway && hemingwayCommandBlocked(command.id)) || ((busy || workspaceBusy) && ['file.new', 'file.newCanvas', 'file.open', 'file.save', 'file.saveAs', 'tab.close'].includes(command.id)) || (canvasDocument && (['panel.properties','panel.table','panel.templates','panel.export','block.actions'].includes(command.id) || command.id.startsWith('block.') || command.id.startsWith('fold.') || command.id.startsWith('insert.'))),
+    disabled: (ui.performanceMode && ['view.split','view.preview','view.live'].includes(command.id)) || (command.id === 'view.language' && canvasDocument) || (!intelligenceEnabled && ['code.definition','code.references','code.rename','code.format'].includes(command.id)) || (codeDocument && (command.id.startsWith('block.') || command.id.startsWith('insert.') || ['panel.properties','panel.templates','panel.table','panel.export','view.split','view.preview','view.live'].includes(command.id))) || (active.hemingway && hemingwayCommandBlocked(command.id)) || ((busy || workspaceBusy) && ['file.new', 'file.newCanvas', 'file.open', 'file.save', 'file.saveAs', 'tab.close'].includes(command.id)) || (canvasDocument && (['panel.properties','panel.table','panel.templates','panel.export','block.actions'].includes(command.id) || command.id.startsWith('block.') || command.id.startsWith('fold.') || command.id.startsWith('insert.'))),
     checked: command.id.startsWith('view.') ? command.id === 'view.hemingway' ? active.hemingway : command.id === 'view.focus' ? ui.focusMode : !active.hemingway && command.id === 'view.' + effectiveLayout : command.id.startsWith('panel.') ? panel === command.id.slice(6) && !ui.focusMode : undefined,
   })));
   let layoutItems = $derived(codeDocument ? commandItems.filter(command => command.id === 'view.source') : active.hemingway ? commandItems.filter(command => command.id === 'view.hemingway') : canvasDocument
@@ -554,12 +576,13 @@
   async function runCommand(id: CommandId) {
     paletteOpen = false; appMenuOpen = false; layoutMenuOpen = false;
     if (id === 'app.commands') { await tick(); paletteScope = 'all'; paletteOpen = true; return; }
+    if (ui.performanceMode && ['view.split','view.preview','view.live'].includes(id)) { status = 'Turn off Performance mode in Settings → Editor to use rendered views.'; return; }
     if (id === 'view.language') { if (!canvasDocument) languageTarget = activeId; return; }
     if (id === 'view.hemingway') { const tab = active; tab.hemingway = !tab.hemingway; tab.updatedAt = Date.now(); if (tab.hemingway) void cellsFor(tab).stop(); status = tab.hemingway ? 'Hemingway mode on — deletion blocked' : 'Hemingway mode off'; error = ''; await tick(); editors[tab.id]?.focus(); return; }
     if (active.hemingway && hemingwayCommandBlocked(id)) { error = HEMINGWAY_MESSAGE; return; }
     if (id === 'code.quickOpen' || id === 'code.search') { fileNavigator = id === 'code.search' ? 'search' : 'files'; return; }
     if (id.startsWith('code.')) {
-      if (id !== 'code.comment' && !ui.languageIntelligenceEnabled) { status = 'Enable language intelligence in Settings → Editor after installing its tools.'; return; }
+      if (id !== 'code.comment' && !intelligenceEnabled) { status = 'Enable language intelligence in Settings → Editor after installing its tools.'; return; }
       if (active.hemingway) { error = HEMINGWAY_MESSAGE; return; }
       try {
         if (id === 'code.rename') symbolTarget = activeId;
@@ -706,7 +729,7 @@
   });
 </script>
 
-<main class="app" use:smoothScrolling={ui.smoothScrolling} class:focus-mode={ui.focusMode} data-density={ui.density} data-dark-preset={ui.darkPreset} inert={closingWindow} style={preferencesStyle(ui) + ';--editor-font-size:' + fontSize + 'px'}>
+<main class="app" use:smoothScrolling={ui.smoothScrolling && !ui.performanceMode} data-performance-mode={ui.performanceMode} class:focus-mode={ui.focusMode} data-density={ui.density} data-dark-preset={ui.darkPreset} inert={closingWindow} style={preferencesStyle(ui) + ';--editor-font-size:' + fontSize + 'px'}>
   <header class="workspace-bar">
     <CompactMenu label="App menu" text="N" items={appMenuItems} execute={(id) => void runCommand(id)} bind:open={appMenuOpen} {theme} />
     <div class="workspace-control">
@@ -734,14 +757,14 @@
       <section class="pane source-pane" class:code-source={codeDocument} aria-label="Source editor" hidden={!active.hemingway && (effectiveLayout === 'preview' || canvasVisible)}>
         {#if active.hemingway}<div class="pane-heading" role="status" aria-label="Hemingway mode"><span>HEMINGWAY MODE</span><span class="pane-hint">Deletion blocked · Commands → Hemingway mode</span></div>{:else if effectiveLayout === 'split'}<div class="pane-heading"><span>SOURCE</span><span class="pane-hint">{standalone ? '.mmd' : '.md'}</span></div>{/if}
         {#if diskConflicts[activeId]}<div class="disk-conflict-banner" role="alert"><span>{diskConflicts[activeId]}</span><button onclick={() => comparingDisk = activeId}>Compare / reload</button><button onclick={() => delete diskConflicts[activeId]}>Keep editing</button></div>{/if}
-        {#each documents as tab (tab.lifetime)}<div class="editor-tab-host" hidden={tab.id !== activeId}><Editor bind:this={editors[tab.id]} value={tab.content} codeLanguage={detectLanguage(tab.name, tab.language)} intelligenceEnabled={desktop && ui.languageIntelligenceEnabled} tabSize={ui.tabSize} indentWithTabs={ui.indentWithTabs} onIntelligence={(value) => intelligenceStates[tab.id] = value} hemingway={tab.hemingway} initialSelection={tab.selection} active={tab.id === activeId} {wrap} showLineNumbers={ui.showLineNumbers} appearance={[fontSize, ui.editorFont, ui.lineHeight, ui.readingWidth].join(':')} live={tab.id === activeId && effectiveLayout === 'live' && !canvasDocument} standalone={tab.name.toLowerCase().endsWith('.mmd')} {theme} folds={tab.folds} cells={cellsFor(tab)} sourcePath={tab.path ?? tab.id} loadEmbed={loadEmbedded} onOpenPath={(path) => void openPath(path)} onOpenWiki={(target, path) => void openWiki(target, tab.id, path)} onEditProperties={() => editProperties(tab.id)} wikiCandidates={(context) => candidatesFor(tab.id, context)} onChange={(value) => { tab.content = value; tab.updatedAt = Date.now(); }} onSelection={(selection) => tab.selection = selection} /></div>{/each}
+        {#each documents as tab (tab.lifetime)}<div class="editor-tab-host" hidden={tab.id !== activeId}><Editor bind:this={editors[tab.id]} value={tab.content} codeLanguage={ui.performanceMode ? 'plaintext' : detectLanguage(tab.name, tab.language)} intelligenceEnabled={desktop && intelligenceEnabled} tabSize={ui.tabSize} indentWithTabs={ui.indentWithTabs} onIntelligence={(value) => intelligenceStates[tab.id] = value} hemingway={tab.hemingway} initialSelection={tab.selection} active={tab.id === activeId} {wrap} showLineNumbers={ui.showLineNumbers} appearance={[fontSize, ui.editorFont, ui.lineHeight, ui.readingWidth].join(':')} live={tab.id === activeId && effectiveLayout === 'live' && !canvasDocument} standalone={tab.name.toLowerCase().endsWith('.mmd')} {theme} folds={tab.folds} cells={cellsFor(tab)} sourcePath={tab.path ?? tab.id} loadEmbed={loadEmbedded} onOpenPath={(path) => void openPath(path)} onOpenWiki={(target, path) => void openWiki(target, tab.id, path)} onEditProperties={() => editProperties(tab.id)} wikiCandidates={(context) => candidatesFor(tab.id, context)} onChange={(value) => { tab.content = value; tab.updatedAt = Date.now(); }} onSelection={(selection) => tab.selection = selection} /></div>{/each}
       </section>
       <section class="pane preview-pane" aria-label="Preview pane" hidden={effectiveLayout === 'source' || effectiveLayout === 'live' || canvasVisible || active.hemingway}>{#if effectiveLayout === 'split'}<div class="pane-heading"><span>PREVIEW</span></div>{/if}{#if !active.hemingway && !canvasVisible && (effectiveLayout === 'split' || effectiveLayout === 'preview')}<Preview documentId={active.lifetime} content={active.content} {standalone} {theme} folds={active.folds} onToggleTask={togglePreviewTask} onEditSource={(from) => void editSource(from)} cells={cellsFor(active)} sourcePath={active.path ?? active.id} loadEmbed={loadEmbedded} onOpenPath={(path) => void openPath(path)} onOpenWiki={wikiHandler(activeId)} onEditProperties={propertiesHandler(activeId)} />{/if}</section>
       {#if canvasVisible}<Canvas content={active.content} documentId={active.lifetime} path={active.path} apply={applyCanvas} openNote={(file,subpath)=>void openWiki(file+(subpath||''),activeId,'')} renderCard={renderCanvasCard} undo={()=>editor?.undoEdit()} redo={()=>editor?.redoEdit()} />{/if}
     </div>
 
   </div>
-  {#if ui.showStatusBar && !ui.focusMode}<footer class="statusbar"><span class="status-message" role="status">{busy ? 'Working…' : status}</span>{#if !canvasVisible}{#if !canvasDocument}<button class="document-language" aria-label="Change document language" title="Document language · automatic by file extension" onclick={() => languageTarget = activeId}>{languageOptions.find(item => item.value === activeLanguage)?.label ?? activeLanguage}{active.language ? ' · override' : ''}</button>{#if ui.languageIntelligenceEnabled && codeDocument}<span class="intelligence-status" role="status" title={intelligenceStates[activeId]?.message}>{intelligenceStates[activeId]?.state === 'error' ? 'Tools unavailable' : intelligenceStates[activeId]?.message ?? ''}</span>{/if}{/if}<span class="status-detail">{lineCount} {lineCount === 1 ? 'line' : 'lines'}<span class="status-divider">·</span>{wordCount} {wordCount === 1 ? 'word' : 'words'}</span>{/if}<span class="save-state" data-state={saveState}>{#if saveState === 'saved'}<Icon name="check" size={12} {theme} />{/if}{saveState === 'error' ? dirty ? 'Unsaved changes' : 'App state not saved' : dirty ? 'Unsaved changes' : 'Saved'}</span>{#if nativeStore}<span class="database-state" data-state={persistence.state} hidden={persistence.state !== 'saving' && persistence.state !== 'error'} role="status">{persistence.state === 'saving' ? 'Saving app state…' : persistence.state === 'error' ? 'Recovery cache active' : ''}</span>{/if}{#if !desktop}<span class="browser-mode">Browser mode</span>{/if}</footer>{/if}
+  {#if ui.showStatusBar && !ui.focusMode}<footer class="statusbar"><span class="status-message" role="status">{busy ? 'Working…' : status}</span>{#if !canvasVisible}{#if !canvasDocument}<button class="document-language" aria-label="Change document language" title="Document language · automatic by file extension" onclick={() => languageTarget = activeId}>{languageOptions.find(item => item.value === activeLanguage)?.label ?? activeLanguage}{active.language ? ' · override' : ''}</button>{#if intelligenceEnabled && codeDocument}<span class="intelligence-status" role="status" title={intelligenceStates[activeId]?.message}>{intelligenceStates[activeId]?.state === 'error' ? 'Tools unavailable' : intelligenceStates[activeId]?.message ?? ''}</span>{/if}{/if}<span class="status-detail">{lineCount} {lineCount === 1 ? 'line' : 'lines'}<span class="status-divider">·</span>{wordCount} {wordCount === 1 ? 'word' : 'words'}</span>{/if}{#if ui.performanceMode}<span class="status-detail">Performance mode</span>{/if}<span class="save-state" data-state={saveState}>{#if saveState === 'saved'}<Icon name="check" size={12} {theme} />{/if}{saveState === 'error' ? dirty ? 'Unsaved changes' : 'App state not saved' : dirty ? 'Unsaved changes' : 'Saved'}</span>{#if nativeStore}<span class="database-state" data-state={persistence.state} hidden={persistence.state !== 'saving' && persistence.state !== 'error'} role="status">{persistence.state === 'saving' ? 'Saving app state…' : persistence.state === 'error' ? 'Recovery cache active' : ''}</span>{/if}{#if !desktop}<span class="browser-mode">Browser mode</span>{/if}</footer>{/if}
   {#if fileNavigator}<FileNavigator mode={fileNavigator} files={[...new Set([...visibleDocuments.map(tab=>tab.path ?? tab.id), ...(activeWorkspace?.files ?? [])])]} label={(path)=>documents.find(tab=>tab.path===path || tab.id===path)?.name ?? path.split('/').pop() ?? path} read={readCodeFile} open={async (path,line) => { const tab=documents.find(tab=>tab.id===path || tab.path===path); if(tab){selectTab(tab.id); await tick(); if(line)editors[tab.id]?.revealLine(line);}else await openPath(path,line); }} close={()=>fileNavigator=null} />{/if}
   {#if symbolTarget}{@const target=editors[symbolTarget]}<RenameDocument name={target?.symbolName() ?? ''} label="Rename symbol" fieldLabel="Symbol name" rename={(name)=>{void target?.renameSymbol(name)?.then(count=>{status=`Renamed symbol in ${count} files · save each changed file to write to disk`;}).catch(cause=>error=String(cause));}} close={()=>symbolTarget=null} />{/if}
   {#if diskTarget?.path}{@const target=diskTarget}<DiskConflict path={target.path!} content={target.content} read={readDiskFile} reload={(content)=>{if(target.hemingway){error=HEMINGWAY_MESSAGE;return;}target.content=content;target.savedContent=content;target.updatedAt=Date.now();delete diskConflicts[target.id];comparingDisk=null;}} close={()=>comparingDisk=null} />{/if}

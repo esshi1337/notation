@@ -1,7 +1,8 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { safeSVG } from './safe-svg';
+import { DiagramCache, diagramCacheKey } from './diagram-cache';
 let queue:Promise<void>=Promise.resolve();
-const cache=new Map<string,string>();
+const cache=new DiagramCache();
 async function graphviz(source:string,dark:boolean):Promise<string>{
   const worker=new Worker(new URL('./diagram-worker.ts',import.meta.url),{type:'module'});
   return new Promise((resolve,reject)=>{
@@ -12,12 +13,12 @@ async function graphviz(source:string,dark:boolean):Promise<string>{
 }
 export async function advancedSVG(engine:string,source:string,dark:boolean):Promise<string>{
   if(source.length>128*1024)throw new Error('Diagram source exceeds 128 KiB.');
-  const key=engine+'\0'+dark+'\0'+source,cached=cache.get(key);if(cached)return cached;
+  const key=await diagramCacheKey(engine,source,dark),cached=key?await cache.get(key):undefined;if(cached!==undefined&&cached.length<=4*1024*1024)return cached;
   let svg:string;
   if(engine==='dot')svg=await graphviz(source,dark);
   else {if(!isTauri())throw new Error(engine+' uses the bundled desktop renderer.');svg=await invoke<string>('render_diagram',{engine,source});}
   if(svg.length>4*1024*1024)throw new Error('Rendered diagram exceeds 4 MiB.');
-  if(cache.size>=16)cache.delete(cache.keys().next().value!);cache.set(key,svg);return svg;
+  if(key)await cache.put(key,svg);return svg;
 }
 export async function renderAdvancedInto(target:HTMLElement,engine:string,source:string,dark:boolean,current:()=>boolean){
   target.setAttribute('aria-busy','true');

@@ -62,7 +62,8 @@
         : nativeStore
           ? 'The desktop MCP connection is not ready yet.'
           : 'MCP connections require the desktop app.');
-  let layoutLabel = $derived(layoutOptions.find((option) => option.value === layout)?.label ?? layout);
+  let specimenLayout = $derived(prefs.performanceMode ? 'source' : layout);
+  let layoutLabel = $derived(layoutOptions.find((option) => option.value === specimenLayout)?.label ?? specimenLayout);
   let specimenStyle = $derived(`--specimen-font:${prefs.editorFont === 'sans' ? "'Source Sans 3', sans-serif" : "'IBM Plex Mono', monospace"};--specimen-size:${fontSize}px;--specimen-leading:${prefs.lineHeight};--specimen-width:${Math.max(40, Math.min(100, prefs.readingWidth / 12))}%`);
 
   function toolPanelWidthOptions(width: number) {
@@ -123,6 +124,7 @@
     prefs.tabSize = DEFAULT_UI_PREFERENCES.tabSize; prefs.indentWithTabs = DEFAULT_UI_PREFERENCES.indentWithTabs; prefs.languageIntelligenceEnabled = DEFAULT_UI_PREFERENCES.languageIntelligenceEnabled;
     prefs.readingWidth = DEFAULT_UI_PREFERENCES.readingWidth; prefs.showLineNumbers = DEFAULT_UI_PREFERENCES.showLineNumbers;
     prefs.smoothScrolling = DEFAULT_UI_PREFERENCES.smoothScrolling;
+    prefs.performanceMode = DEFAULT_UI_PREFERENCES.performanceMode;
   }
   function resetDrafts() { drafts = Object.fromEntries(COMMANDS.map((item) => [item.id, shortcutFor(item.id, shortcuts)])); }
   function commitShortcut(id: CommandId) {
@@ -193,22 +195,24 @@
       {:else if section === 'Editor'}
         <div class="settings-editor-controls">
         <div class="settings-intro"><strong>Shape your writing space.</strong><p>Typography and layout, with a live specimen.</p></div>
+        <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.performanceMode} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Performance mode</label>
+        <p class="settings-help">For low-memory PCs: source-only editing, with syntax parsing, language intelligence and smooth scrolling paused. Your usual settings and undo history are preserved. Turn off to restore rendered views.</p>
         <div class="settings-fields">
           <SelectControl label="Editor font" options={editorFontOptions} value={prefs.editorFont} onchange={(value) => prefs.editorFont = value as UIPreferences['editorFont']} {theme} />
           <NumberControl label="Font size" bind:value={fontSize} min={10} max={24} step={1} defaultValue={14} unit="px" />
           <NumberControl label="Line height" bind:value={prefs.lineHeight} min={1.3} max={2.2} step={0.1} precision={1} defaultValue={DEFAULT_UI_PREFERENCES.lineHeight} sliderStep={0.1} />
           <NumberControl label="Indent size" bind:value={prefs.tabSize} min={1} max={8} step={1} defaultValue={2} />
           <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.indentWithTabs} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Indent with tabs</label>
-          <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.languageIntelligenceEnabled} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Language intelligence</label>
+          <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.languageIntelligenceEnabled} disabled={prefs.performanceMode} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Language intelligence</label>
           <p class="settings-help">Off by default. Install the optional TypeScript / Svelte language pack or Rust tooling first, then enable intelligence. Syntax highlighting works without it.</p>
           <details class="language-setup"><summary>Set up language tools</summary><p>From the Notation source checkout, run <code>npm run desktop:languages</code> to install the optional TypeScript / Svelte pack. This is a separate download, stored in your Notation data directory.</p><p>For Rust, install <code>rust-analyzer</code> and <code>rustfmt</code> with your Rust toolchain. After installation, turn intelligence on. No tools are downloaded automatically.</p></details>
           <NumberControl label="Reading width" bind:value={prefs.readingWidth} min={480} max={1200} step={10} sliderStep={1} defaultValue={DEFAULT_UI_PREFERENCES.readingWidth} unit="px" />
-          <SelectControl label="Layout" options={layoutOptions} value={layout} onchange={(value) => layout = value as Layout} {theme} />
+          <SelectControl label="Layout" options={layoutOptions} disabled={prefs.performanceMode} value={prefs.performanceMode ? 'source' : layout} onchange={(value) => layout = value as Layout} {theme} />
           <div class="settings-toggle-group">
             <label class="settings-checkbox"><input type="checkbox" bind:checked={wrap} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Word wrap</label>
             <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.showLineNumbers} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Show line numbers</label>
           </div>
-          <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.smoothScrolling} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Smooth scrolling</label>
+          <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.smoothScrolling} disabled={prefs.performanceMode} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Smooth scrolling</label>
         </div>
 
         <p class="settings-help settings-scroll-help">Smooth mouse-wheel scrolling in documents and panels. Turn off for immediate scrolling. Your system’s reduced-motion preference takes priority.</p>
@@ -216,9 +220,9 @@
         </div>
         <section class="settings-preview-card" aria-label="Editor preview" style={specimenStyle}>
           <div class="settings-preview-heading"><strong>Preview</strong><span>{layoutLabel} · {fontSize} px · {prefs.lineHeight}×</span></div>
-          <div class="settings-specimen-stage" data-layout={layout} data-wrap={wrap}>
+          <div class="settings-specimen-stage" data-layout={specimenLayout} data-wrap={wrap}>
             <div class="settings-specimen-page">
-              {#if layout !== 'preview'}
+              {#if specimenLayout !== 'preview'}
                 <div class="settings-specimen-editor" class:with-line-numbers={prefs.showLineNumbers}>
                   {#each specimenLines as line, index}
                     <div class="settings-specimen-line">
@@ -228,7 +232,7 @@
                   {/each}
                 </div>
               {/if}
-              {#if layout === 'preview' || layout === 'split'}
+              {#if specimenLayout === 'preview' || specimenLayout === 'split'}
                 <div class="settings-specimen-reading"><strong>A quieter place to write</strong><p>Thoughts become clear when the workspace gets out of the way.</p><span>Draft with intention.</span></div>
               {/if}
             </div>

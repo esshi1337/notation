@@ -24,6 +24,13 @@ try {
     assert.equal(preferences.readUIPreferences({languageIntelligenceEnabled: true}).languageIntelligenceEnabled, true);
     assert.equal(preferences.readUIPreferences({languageIntelligenceEnabled: false}).languageIntelligenceEnabled, false);
   });
+  check('performance mode is opt-in and preserves independent preferences', () => {
+    for (const performanceMode of [undefined, null, 'true', 1, false]) assert.equal(preferences.readUIPreferences({performanceMode}).performanceMode, false);
+    const restored = preferences.readUIPreferences(JSON.parse(JSON.stringify({performanceMode: true, smoothScrolling: true, languageIntelligenceEnabled: true})));
+    assert.equal(restored.performanceMode, true);
+    assert.equal(restored.smoothScrolling, true);
+    assert.equal(restored.languageIntelligenceEnabled, true);
+  });
   check('custom appearance survives serialization without losing boolean settings', () => {
     const custom = { darkPreset: 'charcoal', density: 'comfortable', accentColor: '#AABBCC', editorFont: 'sans', lineHeight: 2, readingWidth: 700, sidebarWidth: 320, sidebarRailWidth: 'wide', sidebarPosition: 'right', showStatusBar: false, showLineNumbers: false, focusMode: true, smoothScrolling: false };
     assert.deepEqual(preferences.readUIPreferences(JSON.parse(JSON.stringify(custom))), { ...preferences.DEFAULT_UI_PREFERENCES, ...custom, accentColor: '#aabbcc' });

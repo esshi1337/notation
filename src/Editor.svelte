@@ -1,8 +1,26 @@
+<script module lang="ts">
+  // Intelligence commands can finish after a tab switch, and cross-file rename
+  // collects every target view before applying its edits. Hold views only for
+  // the duration of those operations. Opt-in intelligence also keeps inactive
+  // views connected so servers can see unsaved buffers across files.
+  let intelligenceDepth = 0;
+  const residencyChecks = new Set<() => void>();
+  function holdIntelligenceViews() {
+    intelligenceDepth++;
+    let held = true;
+    return () => {
+      if (!held) return;
+      held = false;
+      if (--intelligenceDepth === 0) for (const check of residencyChecks) check();
+    };
+  }
+</script>
+
 <script lang="ts">
   import type { CellSession } from './cells';
   import { onMount, untrack } from 'svelte';
   import { type CodeLanguage, intelligenceLanguage } from './code-languages';
-  import type { Extension } from '@codemirror/state';
+  import type { Extension, StateEffect, TransactionSpec } from '@codemirror/state';
   import { loadLanguageIntelligence } from './intelligence-loader';
   import type { IntelligenceState } from './language-intelligence';
   import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
@@ -31,7 +49,12 @@
   let { codeLanguage = 'markdown', intelligenceEnabled = false, tabSize = 2, indentWithTabs = false, onIntelligence, value, wrap, live, standalone, theme, folds, initialSelection, active = true, showLineNumbers = true, appearance = '', hemingway = false, cells, sourcePath, loadEmbed, onOpenPath, onOpenWiki, onEditProperties, wikiCandidates, onSelection, onChange }: { codeLanguage?: CodeLanguage; intelligenceEnabled?: boolean; tabSize?: number; indentWithTabs?: boolean; onIntelligence?: (state: IntelligenceState) => void; value: string; wrap: boolean; live: boolean; standalone: boolean; theme: 'dark' | 'light'; folds: Map<string, boolean>; initialSelection?: DocumentSelection; active?: boolean; showLineNumbers?: boolean; appearance?: string; hemingway?: boolean; cells?: CellSession; sourcePath?: string; loadEmbed?: (target: string, sourcePath?: string) => Promise<{ path: string; content: string; label: string; key: string }>; onOpenPath?: (path: string) => void; onOpenWiki?: (target: string, sourcePath?: string) => void; onEditProperties?: () => void; wikiCandidates?: (context: WikiCompletion) => Promise<WikiCandidate[]>; onSelection?: (selection: DocumentSelection) => void; onChange: (value: string) => void } = $props();
   let host: HTMLDivElement;
   let view: EditorView | undefined;
+  let retainedState: EditorState | undefined;
+  let mounted = false;
   let initialized = $state(false);
+  let pendingSelection = untrack(() => initialSelection ? { ...initialSelection } : undefined);
+  let pendingScrollIntoView = false;
+  let savedScroll: StateEffect<unknown> | undefined;
   let codeSyntax = $state.raw<Extension>([]);
   $effect(() => {
     const id = codeLanguage;
@@ -49,6 +72,36 @@
   const protection = new Compartment();
   let protectedMode = false;
   let savedFolds: {from:number;to:number}[] = [];
+
+  function currentState() { return view?.state ?? retainedState; }
+  function rawPosition(text: string, position: number) {
+    const clamped = Math.max(0, Math.min(text.length, Math.trunc(position)));
+    return Number.isNaN(clamped) ? 0 : clamped;
+  }
+  function accepts(transactions: readonly Transaction[]) {
+    // History intentionally bypasses transaction filters. Check the final
+    // dispatch too, without consuming history or updating a rejected edit.
+    if (hemingway && transactions.some(transaction => !hemingwayAllows(transaction))) return false;
+    if (transactions.some(transaction => transaction.docChanged && transaction.newDoc.length > 1024 * 1024 && new TextEncoder().encode(transaction.newDoc.toString()).length > 4 * 1024 * 1024)) {
+      onIntelligence?.({state:'error',message:'Edit rejected: documents are limited to 4 MiB.'});
+      return false;
+    }
+    return true;
+  }
+  function dispatch(spec: TransactionSpec) {
+    const current = currentState();
+    if (!current) return false;
+    if (view) { view.dispatch(spec); return true; }
+    const transaction = current.update(spec);
+    if (!accepts([transaction])) return false;
+    retainedState = transaction.state;
+    if (savedScroll && transaction.docChanged) savedScroll = savedScroll.map(transaction.changes);
+    if (protectedMode && transaction.docChanged) savedFolds = savedFolds.map(range => ({from:transaction.changes.mapPos(range.from,-1),to:transaction.changes.mapPos(range.to,1)}));
+    if (transaction.docChanged) onChange(sourceText(transaction.state));
+    if (transaction.docChanged || transaction.selection) onSelection?.({ anchor: editorToRaw(transaction.state, transaction.state.selection.main.anchor), head: editorToRaw(transaction.state, transaction.state.selection.main.head) });
+    return true;
+  }
+
   export function toggle(request: TaskToggle) {
     if (!view || hemingway) return false;
     const raw = sourceText(view.state);
@@ -59,17 +112,36 @@
     });
   }
   export function restoreSelection(selection: DocumentSelection) {
-    if (!view) return;
-    const raw = sourceText(view.state);
+    const current = currentState();
+    if (!current) {
+      pendingSelection = { anchor: rawPosition(value, selection.anchor), head: rawPosition(value, selection.head) };
+      pendingScrollIntoView = true;
+      onSelection?.({ ...pendingSelection });
+      return;
+    }
+    const raw = sourceText(current);
     const clamp = (position: number) => rawToEditor(raw, Math.max(0, Math.min(raw.length, position)));
-    view.dispatch({ selection: { anchor: clamp(selection.anchor), head: clamp(selection.head) }, scrollIntoView: true });
+    const restored = { anchor: clamp(selection.anchor), head: clamp(selection.head) };
+    if (view) view.dispatch({ selection: restored, scrollIntoView: true });
+    else if (dispatch({ selection: restored })) {
+      savedScroll = EditorView.scrollIntoView(restored.head);
+      pendingScrollIntoView = false;
+    }
   }
   export function focus() { view?.focus(); }
   export function getView() { return view ?? null; }
   export function comment() { if (view && !hemingway && codeLanguage !== 'markdown') toggleComment(view); }
   export async function codeAction(action: 'definition' | 'references') { const current = view; if (current && intelligenceEnabled) { const module = await loadLanguageIntelligence(); if (view === current && intelligenceEnabled) return module.intelligenceCommand(current, action); } }
   export async function format() { const current = view; if (current && !hemingway && intelligenceEnabled) { const module = await loadLanguageIntelligence(); if (view === current && !hemingway && intelligenceEnabled) return module.formatCode(current, tabSize, !indentWithTabs); } }
-  export async function renameSymbol(name: string) { const current = view; if (current && !hemingway && intelligenceEnabled) { const module = await loadLanguageIntelligence(); if (view === current && !hemingway && intelligenceEnabled) return module.renameCode(current, name); } }
+  export async function renameSymbol(name: string) {
+    const current = view;
+    if (!current || hemingway || !intelligenceEnabled) return;
+    const module = await loadLanguageIntelligence();
+    if (view !== current || hemingway || !intelligenceEnabled) return;
+    const release = holdIntelligenceViews();
+    try { return await module.renameCode(current, name); }
+    finally { release(); }
+  }
   export function symbolName() { if (!view) return ''; const word = view.state.wordAt(view.state.selection.main.head); return word ? view.state.sliceDoc(word.from, word.to) : ''; }
 
   export function fold(action: FoldAction) { if (!view || standalone || hemingway) return false; const changed = codeLanguage === 'markdown' ? performFold(view, action) : ({ 'Fold block': foldCode, 'Unfold block': unfoldCode, 'Fold all': foldAll, 'Unfold all': unfoldAll }[action])(view); view.focus(); return changed; }
@@ -83,17 +155,28 @@
   export function insert(key: string) { return view && codeLanguage === 'markdown' && !standalone && !hemingway ? insertEditorTemplate(view,key) : false; }
   export function act(action: BlockAction) { return view && codeLanguage === 'markdown' && !standalone && !hemingway ? performBlockAction(view, action) : false; }
   export function snapshot() {
-    const range = view?.state.selection.main;
-    return { text: view ? sourceText(view.state) : value, selection: range ? sourceText(view!.state, range.from, range.to) : '', from: range ? editorToRaw(view!.state, range.from) : 0, to: range ? editorToRaw(view!.state, range.to) : 0 };
+    const current = currentState();
+    if (!current) {
+      const selection = pendingSelection ?? { anchor: 0, head: 0 };
+      const from = Math.min(selection.anchor, selection.head), to = Math.max(selection.anchor, selection.head);
+      return { text: value, selection: value.slice(from, to), from, to };
+    }
+    const range = current.selection.main;
+    return { text: sourceText(current), selection: sourceText(current, range.from, range.to), from: editorToRaw(current, range.from), to: editorToRaw(current, range.to) };
   }
   export function apply(text: string, expected: string, event = 'input.script') {
-    if (!view || hemingway || sourceText(view.state) !== expected) return false;
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, effects: sourceEolEffect(view.state, text), annotations: [isolateHistory.of('full'), Transaction.userEvent.of(event)] });
-    return sourceText(view.state) === text;
+    const current = currentState();
+    if (hemingway || (current ? sourceText(current) : value) !== expected) return false;
+    const target = current ?? createState();
+    if (!dispatch({ changes: { from: 0, to: target.doc.length, insert: text }, effects: sourceEolEffect(target, text), annotations: [isolateHistory.of('full'), Transaction.userEvent.of(event)] })) return false;
+    const updated = currentState();
+    return !!updated && sourceText(updated) === text;
   }
   export function selected() {
-    const range = view?.state.selection.main;
-    return { anchor: range ? editorToRaw(view!.state, range.anchor) : 0, head: range ? editorToRaw(view!.state, range.head) : 0 };
+    const current = currentState();
+    if (!current) return pendingSelection ? { ...pendingSelection } : { anchor: 0, head: 0 };
+    const range = current.selection.main;
+    return { anchor: editorToRaw(current, range.anchor), head: editorToRaw(current, range.head) };
   }
   const highlighting = HighlightStyle.define([
     { tag: tags.heading, fontWeight: '600', color: 'var(--text)' },
@@ -114,71 +197,122 @@
       ? [markdown({ extensions: [mathMarkdown] }), markdownFolding, syntaxHighlighting(highlighting), highlightActiveLine(), wikiCompletion(context => standalone || !wikiCandidates ? Promise.resolve([]) : wikiCandidates(context))]
       : [codeSyntax, syntaxHighlighting(highlighting), highlightActiveLine(), bracketMatching(), closeBrackets(), indentOnInput(), keymap.of(closeBracketsKeymap)];
   }
-  onMount(() => {
-    view = new EditorView({
-      parent: host,
-      dispatchTransactions(transactions, editorView) {
-        // History intentionally bypasses transaction filters. Check the final
-        // dispatch too, without consuming history or updating a rejected edit.
-        if (hemingway && transactions.some(transaction => !hemingwayAllows(transaction))) return;
-        if (transactions.some(transaction => transaction.docChanged && transaction.newDoc.length > 1024 * 1024 && new TextEncoder().encode(transaction.newDoc.toString()).length > 4 * 1024 * 1024)) {
-          onIntelligence?.({state:'error',message:'Edit rejected: documents are limited to 4 MiB.'});
-          return;
-        }
-        editorView.update(transactions);
-      },
-      state: EditorState.create({
-        doc: value,
-        selection: initialSelection ? { anchor: rawToEditor(value, initialSelection.anchor), head: rawToEditor(value, initialSelection.head) } : undefined,
-        extensions: [
-          sourceFormat(value),
-          history(), drawSelection(), intelligence.of([]), indentation.of([EditorState.tabSize.of(tabSize), indentUnit.of(indentWithTabs ? "\t" : " ".repeat(tabSize))]),
-          protection.of(hemingway ? hemingwayProtection : []),
-          language.of(syntax()),
-          search({ top: true }), highlightSelectionMatches(),
-          keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
-          wrapping.of(wrap ? EditorView.lineWrapping : []),
-          livePreviewFocus,
-          presentation.of(hemingway ? [] : live ? livePreview(theme, standalone, folds, { openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells }) : [showLineNumbers ? lineNumbers() : [], standalone ? [] : foldGutter()]),
-          commands.of(hemingway || standalone || codeLanguage !== 'markdown' ? [] : [slashCommands, wikiNavigation({ openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells })]),
-          EditorView.contentAttributes.of({
-            'aria-label': 'Document source', 'aria-multiline': 'true', spellcheck: 'false',
-          }),
-          EditorView.updateListener.of((update) => {
-            if (update.docChanged) {
-              if (protectedMode) savedFolds = savedFolds.map(range => ({from:update.changes.mapPos(range.from,-1),to:update.changes.mapPos(range.to,1)}));
-              onChange(sourceText(update.state));
-            }
-            if (update.docChanged || update.selectionSet) onSelection?.({ anchor: editorToRaw(update.state, update.state.selection.main.anchor), head: editorToRaw(update.state, update.state.selection.main.head) });
-          }),
-        ],
-      }),
+  function createState() {
+    const text = value;
+    const selection = pendingSelection;
+    retainedState = EditorState.create({
+      doc: text,
+      selection: selection ? { anchor: rawToEditor(text, selection.anchor), head: rawToEditor(text, selection.head) } : undefined,
+      extensions: [
+        sourceFormat(text),
+        history(), drawSelection(), intelligence.of([]), indentation.of([EditorState.tabSize.of(tabSize), indentUnit.of(indentWithTabs ? "\t" : " ".repeat(tabSize))]),
+        protection.of(hemingway ? hemingwayProtection : []),
+        language.of(syntax()),
+        search({ top: true }), highlightSelectionMatches(),
+        keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
+        wrapping.of(wrap ? EditorView.lineWrapping : []),
+        livePreviewFocus,
+        presentation.of(hemingway ? [] : live ? livePreview(theme, standalone, folds, { openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells }) : [showLineNumbers ? lineNumbers() : [], standalone ? [] : foldGutter()]),
+        commands.of(hemingway || standalone || codeLanguage !== 'markdown' ? [] : [slashCommands, wikiNavigation({ openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells })]),
+        EditorView.contentAttributes.of({
+          'aria-label': 'Document source', 'aria-multiline': 'true', spellcheck: 'false',
+        }),
+        // Capture while visible: Svelte may hide the parent before sleep(),
+        // at which point the browser has already reset its scroll geometry.
+        EditorView.domEventObservers({ scroll(_event, editorView) {
+          if (editorView.scrollDOM.clientHeight) savedScroll = editorView.scrollSnapshot();
+        } }),
+        EditorView.updateListener.of((update) => {
+          if (update.docChanged) {
+            if (savedScroll) savedScroll = savedScroll.map(update.changes);
+            if (protectedMode) savedFolds = savedFolds.map(range => ({from:update.changes.mapPos(range.from,-1),to:update.changes.mapPos(range.to,1)}));
+            onChange(sourceText(update.state));
+          }
+          if (update.docChanged || update.selectionSet) onSelection?.({ anchor: editorToRaw(update.state, update.state.selection.main.anchor), head: editorToRaw(update.state, update.state.selection.main.head) });
+        }),
+      ],
     });
-    protectedMode = hemingway; initialized = true;
-    return () => { initialized = false; view?.destroy(); view = undefined; };
+    pendingSelection = undefined;
+    protectedMode = hemingway;
+    return retainedState;
+  }
+  function wake() {
+    if (view) return;
+    const editorState = retainedState ?? createState();
+    const scrollTo = savedScroll ?? (pendingScrollIntoView ? EditorView.scrollIntoView(editorState.selection.main.head) : undefined);
+    const current = new EditorView({
+      parent: host,
+      state: editorState,
+      scrollTo,
+      dispatchTransactions(transactions, editorView) {
+        if (!accepts(transactions)) return;
+        editorView.update(transactions);
+        retainedState = editorView.state;
+      },
+    });
+    view = current;
+    retainedState = current.state;
+    savedScroll = undefined;
+    pendingScrollIntoView = false;
+    initialized = true;
+  }
+  function sleep() {
+    const current = view;
+    if (!current) return;
+    current.dispatch({ effects: intelligence.reconfigure([]) });
+    savedScroll ??= current.scrollSnapshot();
+    retainedState = current.state;
+    view = undefined;
+    initialized = false;
+    current.destroy();
+  }
+  function syncResidency() {
+    if (!mounted) return;
+    if (active || intelligenceEnabled) wake();
+    else if (!intelligenceDepth) sleep();
+  }
+  onMount(() => {
+    mounted = true;
+    residencyChecks.add(syncResidency);
+    syncResidency();
+    return () => {
+      mounted = false;
+      residencyChecks.delete(syncResidency);
+      const current = view;
+      view = undefined;
+      initialized = false;
+      current?.destroy();
+      retainedState = undefined;
+      savedScroll = undefined;
+    };
   });
+
+  $effect(() => { const visible = active, connected = intelligenceEnabled; if (visible || connected || view) syncResidency(); });
 
   $effect(() => {
     const locked = hemingway;
-    if (!view) return;
-    const effects = [protection.reconfigure(locked ? hemingwayProtection : []), language.reconfigure(syntax())];
+    const nextSyntax = syntax();
+    const current = currentState();
+    if (!current) return;
+    const effects = [protection.reconfigure(locked ? hemingwayProtection : []), language.reconfigure(nextSyntax)];
     if (locked && !protectedMode) {
-      savedFolds = []; foldedRanges(view.state).between(0,view.state.doc.length,(from,to) => { savedFolds.push({from,to}); });
+      savedFolds = []; foldedRanges(current).between(0,current.doc.length,(from,to) => { savedFolds.push({from,to}); });
       effects.push(...savedFolds.map(range => unfoldEffect.of(range)));
     } else if (!locked && protectedMode) {
-      effects.push(...savedFolds.filter(range => range.from < range.to && range.to <= view!.state.doc.length).map(range => foldEffect.of(range)));
+      effects.push(...savedFolds.filter(range => range.from < range.to && range.to <= current.doc.length).map(range => foldEffect.of(range)));
       savedFolds = [];
     }
     protectedMode = locked;
-    view.dispatch({effects});
+    dispatch({effects});
   });
 
   $effect(() => { const visible = active; const changed = appearance; if (view && visible) view.requestMeasure(); });
 
   $effect(() => {
     const next = value;
-    if (view && !hemingway && sourceText(view.state) !== next) {
-      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: next }, effects: sourceEolEffect(view.state, next) });
+    const current = currentState();
+    if (current && !hemingway && sourceText(current) !== next) {
+      dispatch({ changes: { from: 0, to: current.doc.length, insert: next }, effects: sourceEolEffect(current, next) });
     }
   });
 
@@ -189,28 +323,34 @@
     const raw = standalone;
     const folded = folds;
     const numbers = showLineNumbers;
-    if (view) view.dispatch({ effects: presentation.reconfigure(locked ? [] : enabled ? livePreview(palette, raw, folded, { openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells }) : [numbers ? lineNumbers() : [], raw ? [] : foldGutter()]) });
+    if (!currentState()) return;
+    dispatch({ effects: presentation.reconfigure(locked ? [] : enabled ? livePreview(palette, raw, folded, { openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells }) : [numbers ? lineNumbers() : [], raw ? [] : foldGutter()]) });
   });
 
-  $effect(() => { const raw = standalone || codeLanguage !== 'markdown', locked = hemingway; if (view) view.dispatch({ effects: commands.reconfigure(locked || raw ? [] : [slashCommands, wikiNavigation({ openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells })]) }); });
+  $effect(() => {
+    const raw = standalone || codeLanguage !== 'markdown', locked = hemingway;
+    if (!currentState()) return;
+    dispatch({ effects: commands.reconfigure(locked || raw ? [] : [slashCommands, wikiNavigation({ openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells })]) });
+  });
 
   $effect(() => {
     const shouldWrap = wrap;
-    if (view) view.dispatch({ effects: wrapping.reconfigure(shouldWrap ? EditorView.lineWrapping : []) });
+    if (currentState()) dispatch({ effects: wrapping.reconfigure(shouldWrap ? EditorView.lineWrapping : []) });
   });
-  $effect(() => { if (initialized && view) view.dispatch({ effects: indentation.reconfigure([EditorState.tabSize.of(tabSize), indentUnit.of(indentWithTabs ? "\t" : " ".repeat(tabSize))]) }); });
+  $effect(() => { const ready = initialized, size = tabSize, tabs = indentWithTabs; if (ready && currentState()) dispatch({ effects: indentation.reconfigure([EditorState.tabSize.of(size), indentUnit.of(tabs ? "\t" : " ".repeat(size))]) }); });
   $effect(() => {
     const ready = initialized, path = sourcePath, id = codeLanguage, enabled = intelligenceEnabled && !hemingway;
     const report = untrack(() => onIntelligence);
     if (!ready || !view) return;
+    const current = view;
     if (!enabled || !path?.startsWith('/') || !intelligenceLanguage(id)) { report?.({ state: 'off', message: !enabled ? 'Language intelligence off' : !path?.startsWith('/') ? 'Save this file to enable language intelligence' : 'Syntax highlighting' }); return; }
     let cancelled = false, release: (() => void) | undefined;
     void loadLanguageIntelligence().then(module => cancelled ? null : module.attachIntelligence(path, id, value => { if (!cancelled) report?.(value); })).then(connection => {
       if (!connection) return;
-      if (cancelled || !view) { connection.release(); return; }
-      release = connection.release; view.dispatch({ effects: intelligence.reconfigure(connection.extension) });
+      if (cancelled || view !== current) { connection.release(); return; }
+      release = connection.release; current.dispatch({ effects: intelligence.reconfigure(connection.extension) });
     }).catch(cause => { if (!cancelled) report?.({ state: 'error', message: String(cause) }); });
-    return () => { cancelled = true; if (view) view.dispatch({ effects: intelligence.reconfigure([]) }); release?.(); };
+    return () => { cancelled = true; if (view === current) current.dispatch({ effects: intelligence.reconfigure([]) }); release?.(); };
   });
 </script>
 

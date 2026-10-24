@@ -47,10 +47,10 @@ def resources(data):
             'pssKiB': sum(row['pssKiB'] or 0 for row in rows), 'time': time.monotonic()}
 
 
-def run(app, output):
+def run(app, output, retention_rounds=0, performance_mode=False):
     smoke.assert_ports_available()
     output.mkdir(parents=True, exist_ok=True)
-    report = {'checks': {}, 'measurements': {}, 'resources': {}}
+    report = {'checks': {}, 'measurements': {}, 'resources': {}, 'performanceMode': performance_mode}
     driver = None
     client = smoke.Client(smoke.BASE_URL)
     with tempfile.TemporaryDirectory(prefix='nt-light-stress-') as temporary:
@@ -82,6 +82,10 @@ def run(app, output):
         def launch(paths):
             result = subprocess.run([str(app), *map(str, paths)], env=child_env, capture_output=True, text=True, timeout=30)
             smoke.require(result.returncode == 0, 'File handoff failed: ' + result.stderr)
+        def close_active():
+            before = client.execute('return document.querySelectorAll(".document-tab").length')
+            client.element_command(client.find('.document-tab.active .tab-close'), '/click')
+            smoke.wait_for(client, f'document.querySelectorAll(".document-tab").length === {max(1, before - 1)}', 'tab close')
         def no_servers():
             smoke.require(invoke(client, 'lsp_status', {}) == [], 'Language servers started without opt-in')
             snapshot = resources(data)
@@ -100,6 +104,12 @@ def run(app, output):
                 smoke.wait_for_driver(driver, output / 'driver.log')
                 client.create_session(app)
                 smoke.wait_for(client, "document.querySelector('main.app')", 'packaged app')
+                if performance_mode:
+                    command(client, 'Settings')
+                    client.element_command(client.find('//*[@role="tab" and normalize-space(.)="Editor"]', using='xpath'), '/click')
+                    client.element_command(client.find('//label[contains(.,"Performance mode")]/input', using='xpath'), '/click')
+                    client.element_command(client.find('button[aria-label="Close settings"]'), '/click')
+                    smoke.wait_for(client, 'document.querySelector("main.app").dataset.performanceMode === "true"', 'performance mode')
                 report['resources']['startup'] = no_servers()
                 started = time.monotonic()
                 launch(paths)
@@ -143,14 +153,14 @@ def run(app, output):
                 client.screenshot(output / '64-tabs.png')
                 started = time.monotonic()
                 for _ in range(63):
-                    command(client, 'Close tab')
+                    close_active()
                 wait_until(lambda: len(rpc(data, 'list_tabs')['tabs']) == 1, 'all stress files closed')
                 report['measurements']['close63TabsSeconds'] = time.monotonic() - started
                 report['resources']['afterClosing'] = no_servers()
                 for _ in range(12):
                     launch([paths[1]])
                     smoke.wait_for_active_tab(client, paths[1].name)
-                    command(client, 'Close tab')
+                    close_active()
                 report['checks']['12OpenCloseCycles'] = True
                 report['resources']['afterCycles'] = no_servers()
                 markdown = files / 'large.md'
@@ -158,12 +168,15 @@ def run(app, output):
                 started = time.monotonic()
                 launch([markdown])
                 smoke.wait_for_active_tab(client, markdown.name)
-                smoke.wait_for(client, 'document.querySelector(".preview-pane h2")', 'large Markdown preview')
+                if performance_mode:
+                    smoke.require(client.execute('return document.querySelector(".preview-pane").hidden'), 'Performance mode rendered Markdown')
+                else:
+                    smoke.wait_for(client, 'document.querySelector(".preview-pane h2")', 'large Markdown preview')
                 report['measurements']['markdownBytes'] = markdown.stat().st_size
                 report['measurements']['markdownOpenAndPreviewSeconds'] = time.monotonic() - started
                 report['resources']['markdownPreview'] = no_servers()
                 client.screenshot(output / 'markdown.png')
-                command(client, 'Close tab')
+                close_active()
                 near_limit = files / 'near-limit.txt'
                 line = 'Plain text stays editable without language servers.\n'
                 near_limit.write_text((line * ((4 * 1024 * 1024 - 128) // len(line))))
@@ -179,9 +192,22 @@ def run(app, output):
                 smoke.require(len(rpc(data, 'list_tabs')['tabs']) == 2, 'Oversize file created a tab')
                 report['checks']['fileSizeBoundary'] = True
                 report['resources']['nearLimit'] = no_servers()
-                command(client, 'Close tab')
+                close_active()
                 time.sleep(10)
                 report['resources']['settledAfterClosingAllStressFiles'] = no_servers()
+                # Repeat heavy workloads in the same process, retaining per-round measurements.
+                for round_index in range(retention_rounds):
+                    launch([large, markdown, near_limit])
+                    smoke.wait_for_active_tab(client, near_limit.name)
+                    smoke.require(client.execute('return document.querySelectorAll(".cm-editor").length') <= 1,
+                                  'Inactive editor views remain mounted with intelligence disabled')
+                    report['resources'][f'retentionLoaded{round_index}'] = no_servers()
+                    for _ in range(3):
+                        close_active()
+                    wait_until(lambda: len(rpc(data, 'list_tabs')['tabs']) == 1, 'retention files closed')
+                    time.sleep(3)
+                    report['resources'][f'retentionClosed{round_index}'] = no_servers()
+                report['checks']['heavyRetentionRounds'] = retention_rounds
                 # Enabling without acquiring the optional pack must remain actionable and safe.
                 launch([paths[1]])
                 smoke.wait_for_active_tab(client, paths[1].name)
@@ -189,6 +215,8 @@ def run(app, output):
                 client.element_command(client.find('//*[@role="tab" and normalize-space(.)="Editor"]', using='xpath'), '/click')
                 checkbox = client.find('//label[contains(.,"Language intelligence")]/input', using='xpath')
                 smoke.require(not client.execute('return document.querySelector(".language-setup").previousElementSibling.previousElementSibling.querySelector("input").checked'), 'Default intelligence is enabled')
+                if performance_mode:
+                    client.element_command(client.find('//label[contains(.,"Performance mode")]/input', using='xpath'), '/click')
                 client.element_command(checkbox, '/click')
                 client.element_command(client.find('button[aria-label="Close settings"]'), '/click')
                 smoke.wait_for(client, 'document.querySelector(".intelligence-status")?.textContent.includes("Tools unavailable")', 'missing package feedback')
@@ -239,5 +267,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--app', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--retention-rounds', type=int, choices=range(0, 21), default=0)
+    parser.add_argument('--performance-mode', action='store_true')
     args = parser.parse_args()
-    run(args.app.resolve(), args.output.resolve())
+    run(args.app.resolve(), args.output.resolve(), args.retention_rounds, args.performance_mode)

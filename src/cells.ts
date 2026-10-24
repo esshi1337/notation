@@ -5,6 +5,8 @@ import type { ScriptResult } from './script-runner';
 export type CodeCell = {id:string;code:string;from:number;to:number;codeFrom:number;codeTo:number};
 export type CellOutput = {state:'running'|'done'|'error';result?:unknown;logs?:ScriptResult['logs'];error?:string;stale:boolean};
 export function codeCells(text:string):CodeCell[]{
+  // Most notes have no executable cells; avoid building another full parse tree.
+  if(!text.includes('cell:'))return [];
   const cells:CodeCell[]=[];
   featureParser.parse(markdownSource(text)).iterate({enter(node){
     if(node.name==='Blockquote'||node.name==='ListItem'||node.name==='NotationMathBlock')return false;
@@ -24,7 +26,7 @@ export class CellSession {
   subscribe(listener:()=>void){this.listeners.add(listener);return()=>this.listeners.delete(listener);}
   private emit(){for(const listener of this.listeners)listener();}
   async stop(){const active=this.active;this.serial++;this.active=null;this.running=false;for(const value of this.outputs.values())if(value.state==='running'){value.state='error';value.error='Cell stopped.';value.stale=true;}this.emit();if(active){try{await active.stop();}catch{/* Process may have already completed. */}}}
-  dispose(){void this.stop();this.listeners.clear();}
+  dispose(){this.listeners.clear();void this.stop();this.outputs.clear();this.document={text:'',name:'',path:null};}
   async run(id:string,through=false){
     if(this.running)return;
     const cells=codeCells(this.document.text),target=cells.findIndex(cell=>cell.id===id);
