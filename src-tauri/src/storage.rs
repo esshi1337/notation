@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const MAX_CONTENT: usize = 4 * 1024 * 1024;
 const REVISION_LIMIT: usize = 50;
 const RUN_LIMIT: usize = 200;
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 pub fn now() -> i64 {
     SystemTime::now()
@@ -70,6 +70,7 @@ pub struct BootstrapState {
     pub script_draft: Option<Value>,
     pub scripts: Vec<SavedScript>,
     pub workspace: Option<String>,
+    pub workspace_catalog: crate::workspace_catalog::WorkspaceCatalog,
     pub recents: Vec<Recent>,
     pub migration_applied: bool,
 }
@@ -214,6 +215,28 @@ PRAGMA user_version=2;
             tx.execute_batch("CREATE TABLE cache_blocks(path TEXT NOT NULL,id TEXT NOT NULL,line INTEGER NOT NULL); CREATE TABLE cache_graph_links(source_path TEXT NOT NULL,line INTEGER NOT NULL,raw_target TEXT NOT NULL,kind TEXT NOT NULL,target_path TEXT,status TEXT NOT NULL,candidates_json TEXT NOT NULL,heading TEXT,alias TEXT); CREATE INDEX cache_graph_source ON cache_graph_links(source_path); INSERT INTO cache_graph_links(source_path,line,raw_target,kind,target_path,status,candidates_json) SELECT source_path,line,target_path,'markdown',target_path,'resolved','[]' FROM cache_links; PRAGMA user_version=5;").map_err(database_error)?;
             tx.commit().map_err(database_error)?;
         }
+        if version < 6 {
+            let tx = connection.transaction().map_err(database_error)?;
+            tx.execute_batch("CREATE TABLE IF NOT EXISTS named_workspaces(id TEXT PRIMARY KEY,name TEXT NOT NULL,legacy_root TEXT UNIQUE); CREATE TABLE IF NOT EXISTS workspace_members(workspace_id TEXT NOT NULL REFERENCES named_workspaces(id) ON DELETE CASCADE,path TEXT NOT NULL,PRIMARY KEY(workspace_id,path)); CREATE TABLE IF NOT EXISTS workspace_selection(id INTEGER PRIMARY KEY CHECK(id=1),active_id TEXT,revision INTEGER NOT NULL DEFAULT 0); INSERT OR IGNORE INTO named_workspaces(id,name,legacy_root) SELECT 'legacy-1','Workspace',path FROM workspaces WHERE id=1; INSERT OR IGNORE INTO workspace_selection(id,active_id) VALUES(1,(SELECT id FROM named_workspaces LIMIT 1)); PRAGMA user_version=6;").map_err(database_error)?;
+            clear_cache(&tx)?;
+            if let Some(root) = tx
+                .query_row(
+                    "SELECT legacy_root FROM named_workspaces WHERE id='legacy-1'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(database_error)?
+            {
+                let label = crate::workspace_catalog::legacy_name(&root);
+                tx.execute(
+                    "UPDATE named_workspaces SET name=?1 WHERE id='legacy-1'",
+                    [label],
+                )
+                .map_err(database_error)?;
+            }
+            tx.commit().map_err(database_error)?;
+        }
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
             path: path.to_path_buf(),
@@ -274,6 +297,7 @@ PRAGMA user_version=2;
             script_draft: self.json_value("script_drafts")?,
             scripts: self.list_scripts()?,
             workspace: self.workspace()?,
+            workspace_catalog: self.list_workspaces()?,
             recents: self.recents()?,
             migration_applied,
         })
@@ -423,19 +447,7 @@ PRAGMA user_version=2;
             return Err("Choose a directory for the workspace.".into());
         }
         let path = path.to_str().ok_or("Workspace path must be valid UTF-8.")?;
-        let mut connection = self.lock()?;
-        let tx = connection.transaction().map_err(database_error)?;
-        let previous: Option<String> = tx
-            .query_row("SELECT path FROM workspaces WHERE id=1", [], |row| {
-                row.get(0)
-            })
-            .optional()
-            .map_err(database_error)?;
-        if previous.as_deref() != Some(path) {
-            clear_cache(&tx)?;
-        }
-        tx.execute("INSERT INTO workspaces(id,path) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET path=excluded.path",[path]).map_err(database_error)?;
-        tx.commit().map_err(database_error)?;
+        self.select_legacy_workspace(path)?;
         Ok(json!({"path":path}))
     }
 }
@@ -801,11 +813,11 @@ pub fn record_run_optional(
 
 pub(crate) fn refresh_after_write(database: &Database, document: &mut crate::documents::Document) {
     let refresh = (|| -> Result<(), String> {
-        let Some(root) = database.workspace()? else {
+        let Ok(scope) = database.active_workspace() else {
             return Ok(());
         };
         let path = Path::new(&document.path);
-        if !path.starts_with(root)
+        if scope.resolve(&document.path).is_err()
             || !matches!(
                 path.extension()
                     .and_then(|value| value.to_str())

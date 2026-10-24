@@ -37,7 +37,7 @@
   }
   function resetAppearance() {
     theme = 'dark'; prefs.darkPreset = DEFAULT_UI_PREFERENCES.darkPreset; prefs.accentColor = DEFAULT_UI_PREFERENCES.accentColor;
-    prefs.density = DEFAULT_UI_PREFERENCES.density; prefs.sidebarWidth = DEFAULT_UI_PREFERENCES.sidebarWidth;
+    prefs.density = DEFAULT_UI_PREFERENCES.density; prefs.sidebarWidth = DEFAULT_UI_PREFERENCES.sidebarWidth; prefs.sidebarPosition = DEFAULT_UI_PREFERENCES.sidebarPosition;
     prefs.showStatusBar = DEFAULT_UI_PREFERENCES.showStatusBar; prefs.focusMode = false;
     accentDraft = prefs.accentColor; appearanceError = '';
   }
@@ -45,6 +45,7 @@
     fontSize = 14; wrap = true; layout = 'split';
     prefs.editorFont = DEFAULT_UI_PREFERENCES.editorFont; prefs.lineHeight = DEFAULT_UI_PREFERENCES.lineHeight;
     prefs.readingWidth = DEFAULT_UI_PREFERENCES.readingWidth; prefs.showLineNumbers = DEFAULT_UI_PREFERENCES.showLineNumbers;
+    prefs.smoothScrolling = DEFAULT_UI_PREFERENCES.smoothScrolling;
   }
   function resetDrafts() { drafts = Object.fromEntries(COMMANDS.map((item) => [item.id, shortcutFor(item.id, shortcuts)])); }
   function commitShortcut(id: CommandId) {
@@ -86,19 +87,20 @@
   onDestroy(() => { if (dialog?.open) dialog.close(); previousFocus?.focus(); });
 </script>
 <dialog class="settings-dialog settings-workbench" aria-label="Settings" bind:this={dialog} onkeydown={trapFocus} oncancel={(event) => { event.preventDefault(); close(); }}>
-  <div class="settings-heading"><strong>Settings</strong><button aria-label="Close settings" onclick={close}>×</button></div>
+  <div class="settings-heading"><strong>Settings</strong><button class="settings-close" aria-label="Close settings" onclick={close}><svg aria-hidden="true" width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="m2 2 6 6M8 2 2 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" /></svg></button></div>
   <div class="settings-body">
     <div class="settings-sections" role="tablist" aria-label="Settings sections" aria-orientation="vertical">{#each sections as item, index}<button role="tab" data-section={item} aria-selected={section === item} tabindex={section === item ? 0 : -1} onclick={() => section = item} onkeydown={(event) => sectionKey(event, index)}>{item}</button>{/each}</div>
-    <div class="settings-content" role="tabpanel" aria-label={section} tabindex="-1">
+    <div class="settings-content" class:settings-shortcuts={section === 'Shortcuts'} role="tabpanel" aria-label={section} tabindex="-1">
       {#if section === 'Appearance'}
         <div class="settings-fields">
           <label>Theme<select aria-label="Theme" bind:value={theme}><option value="dark">Dark</option><option value="light">Light</option></select></label>
           <label>Dark preset<select aria-label="Dark preset" disabled={theme !== 'dark'} bind:value={prefs.darkPreset}><option value="midnight">Midnight</option><option value="charcoal">Charcoal</option></select></label>
           <label>Accent color<div class="accent-control"><input type="color" aria-label="Pick accent color" value={prefs.accentColor} oninput={(event) => { prefs.accentColor = event.currentTarget.value; accentDraft = prefs.accentColor; appearanceError = ''; }} /><input aria-label="Accent color" bind:value={accentDraft} oninput={accent} spellcheck="false" /></div></label>
           <label>Density<select aria-label="Density" bind:value={prefs.density}><option value="compact">Compact</option><option value="comfortable">Comfortable</option></select></label>
+          <label>Sidebar position<select aria-label="Sidebar position" bind:value={prefs.sidebarPosition}><option value="left">Left</option><option value="right">Right</option></select></label>
           <label>Sidebar width (px)<input type="number" aria-label="Sidebar width" min="180" max="420" step="10" value={prefs.sidebarWidth} oninput={(event) => numeric('sidebarWidth', event)} onchange={(event) => numeric('sidebarWidth', event, true)} /></label>
-          <div class="settings-toggle-group"><label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.showStatusBar} /> Show status bar</label>
-          <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.focusMode} /> Focus mode</label></div>
+          <div class="settings-toggle-group"><label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.showStatusBar} /><span class="settings-checkbox-mark" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="m2 6 2.5 2.5L10 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg></span> Show status bar</label>
+          <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.focusMode} /><span class="settings-checkbox-mark" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="m2 6 2.5 2.5L10 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg></span> Focus mode</label></div>
         </div>
         {#if appearanceError}<div role="alert" class="script-error">{appearanceError}</div>{/if}
         <button class="settings-reset" onclick={resetAppearance}>Reset appearance</button>
@@ -109,18 +111,21 @@
           <label>Line height<input aria-label="Line height" type="number" min="1.3" max="2.2" step=".1" value={prefs.lineHeight} oninput={(event) => numeric('lineHeight', event)} onchange={(event) => numeric('lineHeight', event, true)} /></label>
           <label>Reading width (px)<input aria-label="Reading width" type="number" min="480" max="1200" step="20" value={prefs.readingWidth} oninput={(event) => numeric('readingWidth', event)} onchange={(event) => numeric('readingWidth', event, true)} /></label>
           <label>Layout<select aria-label="Layout" bind:value={layout}><option value="source">Source</option><option value="split">Split</option><option value="preview">Preview</option><option value="live">Live Preview</option></select></label>
-          <div class="settings-toggle-group"><label class="settings-checkbox"><input type="checkbox" bind:checked={wrap} /> Word wrap</label>
-          <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.showLineNumbers} /> Show line numbers</label></div>
+          <div class="settings-toggle-group"><label class="settings-checkbox"><input type="checkbox" bind:checked={wrap} /><span class="settings-checkbox-mark" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="m2 6 2.5 2.5L10 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg></span> Word wrap</label>
+          <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.showLineNumbers} /><span class="settings-checkbox-mark" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="m2 6 2.5 2.5L10 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg></span> Show line numbers</label></div>
+          <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.smoothScrolling} /><span class="settings-checkbox-mark" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="m2 6 2.5 2.5L10 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg></span> Smooth scrolling</label>
         </div>
+        <p class="settings-help settings-scroll-help">Smooth mouse-wheel scrolling in documents and panels. Turn off for immediate scrolling. Your system’s reduced-motion preference takes priority.</p>
         <button class="settings-reset" onclick={resetEditor}>Reset editor</button>
       {:else if section === 'Shortcuts'}
         <p class="settings-help">Focus a field and press a shortcut, or type Ctrl/Cmd with a key. Clear a field to remove its app shortcut. Standard text-editing shortcuts still work in text fields. Desktop shortcuts may take precedence; change those in your system settings.</p>
         {#if shortcutError}<div class="script-error shortcut-error" role="alert">{shortcutError}</div>{/if}
         <input class="shortcut-search" type="search" aria-label="Search shortcuts" placeholder="Search commands or groups…" bind:value={shortcutQuery} />
-        <div class="shortcut-list">{#each filteredCommands as item}<div class="shortcut-row"><label for={'shortcut-' + item.id}>{item.label}<span>{item.group}</span></label><input id={'shortcut-' + item.id} data-shortcut-capture aria-label={'Shortcut for ' + item.label} bind:value={drafts[item.id]} placeholder="Unassigned" spellcheck="false" onkeydown={(event) => capture(item.id, event)} onchange={() => commitShortcut(item.id)} /><button aria-label={'Reset shortcut: ' + item.label} title={'Default: ' + formatShortcut(item.defaultShortcut, mac)} onclick={() => resetShortcut(item.id)}>↺</button></div>{/each}{#if !filteredCommands.length}<p class="panel-note">No matching shortcuts.</p>{/if}</div>
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable list needs keyboard access.) -->
+        <div class="shortcut-list" role="region" aria-label="Keyboard shortcuts" tabindex="0">{#each filteredCommands as item}<div class="shortcut-row"><label for={'shortcut-' + item.id}>{item.label}<span>{item.group}</span></label><input id={'shortcut-' + item.id} data-shortcut-capture aria-label={'Shortcut for ' + item.label} bind:value={drafts[item.id]} placeholder="Unassigned" spellcheck="false" onkeydown={(event) => capture(item.id, event)} onchange={() => commitShortcut(item.id)} /><button aria-label={'Reset shortcut: ' + item.label} title={'Default: ' + formatShortcut(item.defaultShortcut, mac)} onclick={() => resetShortcut(item.id)}>↺</button></div>{/each}{#if !filteredCommands.length}<p class="panel-note">No matching shortcuts.</p>{/if}</div>
         <button class="settings-reset" onclick={() => { shortcuts = {}; resetDrafts(); shortcutError = ''; }}>Reset shortcuts</button>
       {:else}
-        <div class="settings-mcp"><h3>MCP for agents</h3><p class="panel-note">Read open documents and apply guarded, undoable edits. Agent edits stay in the editor until you save.</p><label class="settings-checkbox"><input type="checkbox" bind:checked={agentEditsEnabled} /> Agent edits enabled</label>
+        <div class="settings-mcp"><h3>MCP for agents</h3><p class="panel-note">Read open documents and apply guarded, undoable edits. Agent edits stay in the editor until you save.</p><label class="settings-checkbox"><input type="checkbox" bind:checked={agentEditsEnabled} /><span class="settings-checkbox-mark" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="m2 6 2.5 2.5L10 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg></span> Agent edits enabled</label>
           {#if !nativeStore}<p class="panel-note">MCP connections require the desktop app.</p>{:else}<div class="panel-status" role="status">{status?.ready ? 'MCP ready' : status?.available ? 'MCP connecting…' : 'MCP unavailable'}</div>{#if command}<label>MCP command<input aria-label="MCP command" readonly value={command} /></label><button onclick={copy}>{copied ? 'Copied command' : 'Copy MCP command'}</button>{/if}{#if status?.socketPath}<div class="result-path">{status.socketPath}</div>{/if}<button onclick={refresh}>Refresh MCP status</button>{/if}
           {#if error || status?.error}<div class="script-error" role="alert">{error || status?.error}</div>{/if}
         </div>

@@ -92,7 +92,10 @@ impl Bindings {
 
 // Revalidate index identities against the active workspace. A stale symlink,
 // deleted file, old workspace, or injected outside-cache row is never returned.
-fn safe_paths(connection: &Connection, root: &Path) -> Result<Vec<String>, String> {
+fn safe_paths(
+    connection: &Connection,
+    scope: &crate::workspace_catalog::WorkspaceRecord,
+) -> Result<Vec<String>, String> {
     let mut statement = connection
         .prepare("SELECT path FROM cache_files ORDER BY path LIMIT 10000")
         .map_err(|error| error.to_string())?;
@@ -103,24 +106,27 @@ fn safe_paths(connection: &Connection, root: &Path) -> Result<Vec<String>, Strin
     for row in rows {
         let path = row.map_err(|error| error.to_string())?;
         let candidate = Path::new(&path);
-        let Ok(relative) = candidate.strip_prefix(root) else {
-            continue;
-        };
-        if relative.components().any(|component| {
-            component.as_os_str().to_string_lossy().starts_with('.')
-                || matches!(
-                    component.as_os_str().to_str(),
-                    Some(
-                        "node_modules"
-                            | "target"
-                            | "dist"
-                            | "build"
-                            | "vendor"
-                            | "coverage"
-                            | "__pycache__"
+        let relative = candidate
+            .strip_prefix(scope.legacy_root.as_deref().unwrap_or("/"))
+            .unwrap_or(candidate);
+        if !scope.files.contains(&path)
+            && scope.legacy_root.is_some()
+            && relative.components().any(|component| {
+                component.as_os_str().to_string_lossy().starts_with('.')
+                    || matches!(
+                        component.as_os_str().to_str(),
+                        Some(
+                            "node_modules"
+                                | "target"
+                                | "dist"
+                                | "build"
+                                | "vendor"
+                                | "coverage"
+                                | "__pycache__"
+                        )
                     )
-                )
-        }) {
+            })
+        {
             continue;
         }
         if !matches!(
@@ -133,7 +139,8 @@ fn safe_paths(connection: &Connection, root: &Path) -> Result<Vec<String>, Strin
         ) {
             continue;
         }
-        if explorer::resolve(root, &path)
+        if scope
+            .resolve(&path)
             .is_ok_and(|canonical| canonical == candidate && canonical.is_file())
         {
             paths.push(path);
@@ -223,17 +230,24 @@ impl Database {
         if request.offset > MAX_FILES {
             return Err("Search offset exceeds the workspace index limit.".into());
         }
-        let root = explorer::workspace_root(self)?;
+        let scope = self.active_workspace()?;
+        let root = scope.link_root();
         let folder = request
             .folder
             .as_ref()
-            .map(|folder| explorer::resolve(&root, folder))
+            .map(|folder| {
+                if scope.legacy_root.is_none() {
+                    crate::workspace_catalog::normalize_reference(folder)
+                } else {
+                    explorer::resolve(&root, folder)
+                }
+            })
             .transpose()?;
-        if folder.as_ref().is_some_and(|folder| !folder.is_dir()) {
+        if scope.legacy_root.is_some() && folder.as_ref().is_some_and(|folder| !folder.is_dir()) {
             return Err("Search folder must be a workspace directory.".into());
         }
         let connection = self.lock()?;
-        let paths = safe_paths(&connection, &root)?;
+        let paths = safe_paths(&connection, &scope)?;
         let mut bindings = Bindings(vec![]);
         let scope =
             bindings.text(serde_json::to_string(&paths).map_err(|error| error.to_string())?);
@@ -263,7 +277,10 @@ impl Database {
             ("0.0", "substr(f.content,1,160)")
         };
         if let Some(folder) = folder {
-            let prefix = bindings.text(format!("{}/", folder.to_string_lossy()));
+            let prefix = bindings.text(format!(
+                "{}/",
+                folder.to_string_lossy().trim_end_matches('/')
+            ));
             conditions.push(format!("instr(f.path,{prefix})=1"));
         }
         let mut tag_conditions = Vec::new();
@@ -433,16 +450,19 @@ pub struct GraphSnapshot {
 }
 impl Database {
     pub fn graph_workspace(&self, request: GraphRequest) -> Result<GraphSnapshot, String> {
-        let root = explorer::workspace_root(self)?;
+        let scope = self.active_workspace()?;
+        let root = scope.link_root();
         let focus = request
             .focus
             .as_ref()
             .map(|path| {
-                explorer::resolve(&root, path).map(|path| path.to_string_lossy().into_owned())
+                scope
+                    .resolve(path)
+                    .map(|path| path.to_string_lossy().into_owned())
             })
             .transpose()?;
         let connection = self.lock()?;
-        let paths = safe_paths(&connection, &root)?
+        let paths = safe_paths(&connection, &scope)?
             .into_iter()
             .collect::<HashSet<_>>();
         if focus.as_ref().is_some_and(|focus| !paths.contains(focus)) {
@@ -548,9 +568,7 @@ impl Database {
         let total_nodes = selected_paths.len();
         let max_nodes = request.max_nodes.unwrap_or(500).clamp(1, 2000);
         if let Some(focus) = request.focus.as_ref() {
-            let focus = explorer::resolve(&root, focus)?
-                .to_string_lossy()
-                .into_owned();
+            let focus = scope.resolve(focus)?.to_string_lossy().into_owned();
             if let Some(index) = selected_paths.iter().position(|path| path == &focus) {
                 selected_paths.swap(0, index);
             }
@@ -636,7 +654,7 @@ impl Database {
         }
         let unresolved = budgeted_unresolved;
         Ok(GraphSnapshot {
-            root: root.to_string_lossy().into_owned(),
+            root: scope.legacy_root.clone().unwrap_or(scope.id),
             truncated: GraphTruncated {
                 nodes: total_nodes > nodes.len(),
                 edges: total_edges > edges.len(),

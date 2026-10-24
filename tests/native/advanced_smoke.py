@@ -151,10 +151,7 @@ def run(app: Path) -> None:
 
             print("Indexing temporary typed-property workspace", flush=True)
             open_workspace_panel(client)
-            folder = client.find("[aria-label='Workspace folder']")
-            client.element_command(folder, "/clear")
-            client.send_keys(folder, str(workspace))
-            click(client, smoke.button(client, "Open workspace"))
+            smoke.open_legacy_workspace(client, workspace)
             smoke.wait_for(
                 client,
                 "document.querySelector('[aria-label=\\\"Workspace\\\"] .panel-status')?.innerText.includes('indexed')",

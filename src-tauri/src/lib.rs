@@ -11,6 +11,7 @@ pub mod search_graph;
 pub mod storage;
 pub mod wiki;
 pub mod workspace;
+pub mod workspace_catalog;
 
 #[cfg(feature = "desktop")]
 mod desktop {
@@ -156,6 +157,75 @@ mod desktop {
         database: State<'_, DatabaseState>,
     ) -> Result<storage::Revision, String> {
         database_work(database.get()?, move |database| database.get_revision(id)).await
+    }
+    #[tauri::command]
+    async fn list_workspaces(
+        database: State<'_, DatabaseState>,
+    ) -> Result<crate::workspace_catalog::WorkspaceCatalog, String> {
+        database_work(database.get()?, move |database| database.list_workspaces()).await
+    }
+    #[tauri::command]
+    async fn create_workspace(
+        name: String,
+        database: State<'_, DatabaseState>,
+    ) -> Result<crate::workspace_catalog::WorkspaceCatalog, String> {
+        database_work(database.get()?, move |database| {
+            database.create_workspace(&name)
+        })
+        .await
+    }
+    #[tauri::command]
+    async fn select_workspace(
+        id: String,
+        database: State<'_, DatabaseState>,
+    ) -> Result<crate::workspace_catalog::WorkspaceCatalog, String> {
+        database_work(database.get()?, move |database| {
+            database.select_workspace(&id)
+        })
+        .await
+    }
+    #[tauri::command]
+    async fn rename_workspace(
+        id: String,
+        name: String,
+        database: State<'_, DatabaseState>,
+    ) -> Result<crate::workspace_catalog::WorkspaceCatalog, String> {
+        database_work(database.get()?, move |database| {
+            database.rename_workspace(&id, &name)
+        })
+        .await
+    }
+    #[tauri::command]
+    async fn delete_workspace(
+        id: String,
+        database: State<'_, DatabaseState>,
+    ) -> Result<crate::workspace_catalog::WorkspaceCatalog, String> {
+        database_work(database.get()?, move |database| {
+            database.delete_workspace(&id)
+        })
+        .await
+    }
+    #[tauri::command]
+    async fn add_workspace_files(
+        id: String,
+        paths: Vec<String>,
+        database: State<'_, DatabaseState>,
+    ) -> Result<crate::workspace_catalog::WorkspaceCatalog, String> {
+        database_work(database.get()?, move |database| {
+            database.add_workspace_files(&id, &paths)
+        })
+        .await
+    }
+    #[tauri::command]
+    async fn remove_workspace_file(
+        id: String,
+        path: String,
+        database: State<'_, DatabaseState>,
+    ) -> Result<crate::workspace_catalog::WorkspaceCatalog, String> {
+        database_work(database.get()?, move |database| {
+            database.remove_workspace_file(&id, &path)
+        })
+        .await
     }
     #[tauri::command]
     async fn set_workspace(
@@ -493,6 +563,13 @@ mod desktop {
                 list_revisions,
                 get_revision,
                 set_workspace,
+                list_workspaces,
+                create_workspace,
+                select_workspace,
+                rename_workspace,
+                delete_workspace,
+                add_workspace_files,
+                remove_workspace_file,
                 index_workspace,
                 search_workspace,
                 search_workspace_advanced,

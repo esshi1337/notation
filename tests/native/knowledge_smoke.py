@@ -96,10 +96,7 @@ def run(app: Path) -> None:
 
             print("Indexing isolated wiki workspace", flush=True)
             ensure_workspace_panel(client)
-            folder = client.find("[aria-label='Workspace folder']")
-            client.element_command(folder, "/clear")
-            client.send_keys(folder, str(workspace))
-            client.element_command(smoke.button(client, "Open workspace"), "/click")
+            smoke.open_legacy_workspace(client, workspace)
             smoke.wait_for(client, "document.querySelector('[aria-label=\"Workspace\"] .panel-status')?.innerText.includes('indexed')",
                            "workspace index")
             search = client.find("[aria-label='Search notes']")

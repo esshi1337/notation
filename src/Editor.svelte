@@ -42,6 +42,12 @@
       snapshot: request.snapshot?.replace(/\r\n?/gu, '\n'),
     });
   }
+  export function restoreSelection(selection: DocumentSelection) {
+    if (!view) return;
+    const raw = sourceText(view.state);
+    const clamp = (position: number) => rawToEditor(raw, Math.max(0, Math.min(raw.length, position)));
+    view.dispatch({ selection: { anchor: clamp(selection.anchor), head: clamp(selection.head) }, scrollIntoView: true });
+  }
   export function focus() { view?.focus(); }
   export function fold(action: FoldAction) { if (!view || standalone || hemingway) return false; const changed = performFold(view, action); view.focus(); return changed; }
   export function undoEdit() { if (!view || hemingway) return false; view.focus(); return undo(view); }

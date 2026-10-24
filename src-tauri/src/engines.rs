@@ -3,7 +3,7 @@
 use crate::{
     assets,
     engine_process::{self, JobSpec},
-    explorer, frontmatter,
+    frontmatter,
     storage::Database,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -1064,28 +1064,99 @@ fn copy_local_resource(
     }
     let database =
         database.ok_or("Choose a workspace before loading bibliography or CSL files.")?;
-    let root = explorer::workspace_root(database)?;
-    let folder = if let Some(source) = source {
-        let source = explorer::resolve_allow_missing(&root, source)?;
-        source
-            .parent()
-            .ok_or("Source note needs a parent folder.")?
-            .to_path_buf()
-    } else {
-        root.clone()
-    };
+    let scope = database.active_workspace()?;
+    let folder = scope.source_folder(source)?;
     let candidate = if Path::new(file).is_absolute() {
         PathBuf::from(file)
     } else {
         folder.join(file)
     };
-    let path = explorer::resolve(&root, &candidate.to_string_lossy())?;
-    let bytes = read_bounded(&path, 20 * 1024 * 1024)?;
+    let path = scope.resolve(&candidate.to_string_lossy())?;
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    crate::explorer::open_regular(&path)?
+        .take((20 * 1024 * 1024 + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
     *total += bytes.len();
     if *total > 20 * 1024 * 1024 {
         return Err("Bibliography/style files exceed the 20 MiB total limit.".into());
     }
     fs::write(temp.join(name), bytes).map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod workspace_resource_tests {
+    use super::*;
+    #[test]
+    fn virtual_bibliography_and_style_require_membership_and_support_source_relative_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join("notes")).unwrap();
+        fs::create_dir(temp.path().join("refs")).unwrap();
+        fs::create_dir(temp.path().join("output")).unwrap();
+        let source = temp.path().join("notes/Note.md");
+        let bib = temp.path().join("refs/library.bib");
+        let csl = temp.path().join("refs/style.csl");
+        fs::write(&source, "note").unwrap();
+        fs::write(&bib, "@book{test,title={Test}}").unwrap();
+        fs::write(&csl, "<style/>").unwrap();
+        let db = Database::open(&temp.path().join("app/db.sqlite")).unwrap();
+        let id = db.create_workspace("Citations").unwrap().active_id.unwrap();
+        db.add_workspace_files(&id, &[source.to_str().unwrap().into()])
+            .unwrap();
+        let output = temp.path().join("output");
+        let mut total = 0;
+        assert!(copy_local_resource(
+            "../refs/library.bib",
+            Some(&db),
+            source.to_str(),
+            &output,
+            "library.bib",
+            &mut total
+        )
+        .is_err());
+        db.add_workspace_files(
+            &id,
+            &[bib.to_str().unwrap().into(), csl.to_str().unwrap().into()],
+        )
+        .unwrap();
+        copy_local_resource(
+            "../refs/library.bib",
+            Some(&db),
+            source.to_str(),
+            &output,
+            "library.bib",
+            &mut total,
+        )
+        .unwrap();
+        copy_local_resource(
+            csl.to_str().unwrap(),
+            Some(&db),
+            None,
+            &output,
+            "style.csl",
+            &mut total,
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(output.join("library.bib")).unwrap(),
+            fs::read(&bib).unwrap()
+        );
+        #[cfg(unix)]
+        {
+            let link = temp.path().join("notes/link");
+            std::os::unix::fs::symlink(temp.path(), &link).unwrap();
+            assert!(copy_local_resource(
+                "link/../../refs/library.bib",
+                Some(&db),
+                source.to_str(),
+                &output,
+                "bad.bib",
+                &mut total
+            )
+            .is_err());
+        }
+    }
 }
 fn meta(value: &Value) -> Value {
     match value {

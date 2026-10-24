@@ -64,17 +64,85 @@ struct IndexedFile {
 
 impl Database {
     pub fn index_workspace(&self) -> Result<IndexReport, String> {
-        let selected = self
-            .workspace()?
-            .ok_or("Choose a workspace directory first.")?;
-        let root = PathBuf::from(&selected);
-        if !root.is_dir() {
+        let (scope, revision) = self.workspace_snapshot()?;
+        let root = scope.link_root();
+        if scope
+            .legacy_root
+            .as_ref()
+            .is_some_and(|root| !Path::new(root).is_dir())
+        {
             return Err("Workspace directory is unavailable. Existing index was kept.".into());
         }
         let mut report = IndexReport::default();
         let mut files = Vec::new();
         let mut total = 0;
-        scan(&root, &root, 0, &mut files, &mut total, &mut report);
+        if let Some(legacy_root) = &scope.legacy_root {
+            let legacy_root = Path::new(legacy_root);
+            scan(
+                legacy_root,
+                legacy_root,
+                0,
+                &mut files,
+                &mut total,
+                &mut report,
+            );
+        }
+        {
+            for path in &scope.files {
+                if files.iter().any(|file| file.path == Path::new(path)) {
+                    continue;
+                }
+                if report.files >= MAX_FILES {
+                    report_error(&mut report, "Workspace exceeds 10,000 file indexing limit.");
+                    break;
+                }
+                if !matches!(
+                    Path::new(path)
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .map(str::to_ascii_lowercase)
+                        .as_deref(),
+                    Some("md" | "markdown" | "mmd")
+                ) {
+                    continue;
+                }
+                report.files += 1;
+                let content = crate::explorer::read_scoped_file(&scope, path).map(|d| d.content);
+                match content {
+                    Ok(content) if total + content.len() <= MAX_TOTAL => {
+                        total += content.len();
+                        let metadata = if Path::new(path)
+                            .extension()
+                            .is_some_and(|s| s.eq_ignore_ascii_case("mmd"))
+                        {
+                            Metadata::default()
+                        } else {
+                            parse_metadata(&content)
+                        };
+                        if let Some(error) = &metadata.frontmatter.error {
+                            report_error(&mut report, format!("{path}: YAML: {}", error.message));
+                        }
+                        files.push(IndexedFile {
+                            path: PathBuf::from(path),
+                            content,
+                            metadata,
+                        });
+                        report.indexed += 1;
+                    }
+                    Ok(_) => {
+                        report.skipped += 1;
+                        report_error(
+                            &mut report,
+                            format!("{path}: Workspace exceeds 64 MiB indexing limit."),
+                        );
+                    }
+                    Err(error) => {
+                        report.skipped += 1;
+                        report_error(&mut report, format!("{path}: {error}"));
+                    }
+                }
+            }
+        }
         let paths: HashSet<PathBuf> = files.iter().map(|file| file.path.clone()).collect();
         let notes = files
             .iter()
@@ -100,14 +168,7 @@ impl Database {
         let tx = connection
             .transaction()
             .map_err(|error| error.to_string())?;
-        let active: String = tx
-            .query_row("SELECT path FROM workspaces WHERE id=1", [], |row| {
-                row.get(0)
-            })
-            .map_err(|error| error.to_string())?;
-        if active != selected {
-            return Err("Workspace changed during indexing. Refresh the new workspace.".into());
-        }
+        crate::workspace_catalog::validate_index_snapshot(&tx, &scope, revision)?;
         clear_cache(&tx)?;
         let mut graph_refs = 0;
         let mut block_refs = 0;
@@ -321,16 +382,8 @@ impl Database {
             .map_err(|error| error.to_string())
     }
     pub fn get_backlinks(&self, path: &str) -> Result<Vec<Backlink>, String> {
-        let root = PathBuf::from(self.workspace()?.ok_or("Choose a workspace first.")?);
-        let path = if Path::new(path).is_absolute() {
-            PathBuf::from(path)
-        } else {
-            root.join(path)
-        };
-        let path = path.canonicalize().unwrap_or_else(|_| normalize(&path));
-        if !path.starts_with(root) {
-            return Err("Backlink target is outside the selected workspace.".into());
-        }
+        let scope = self.active_workspace()?;
+        let path = scope.resolve(path)?;
         let connection = self.lock()?;
         let mut statement=connection.prepare("SELECT DISTINCT source_path,line,text FROM cache_links WHERE target_path=?1 ORDER BY source_path,line LIMIT 2000").map_err(|error|error.to_string())?;
         let rows = statement
@@ -452,14 +505,7 @@ fn scan(
                 continue;
             }
         };
-        let mut options = fs::OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.custom_flags(libc::O_NOFOLLOW);
-        }
-        let file = match options.open(&file_path) {
+        let file = match crate::explorer::open_regular(&file_path) {
             Ok(file) => file,
             Err(error) => {
                 report.skipped += 1;

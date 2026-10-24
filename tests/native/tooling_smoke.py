@@ -166,10 +166,7 @@ def run(app: Path) -> None:
 
             print("Opening temporary workspace", flush=True)
             client.element_command(smoke.button(client, "Workspace"), "/click")
-            folder = client.find("[aria-label='Workspace folder']")
-            client.element_command(folder, "/clear")
-            client.send_keys(folder, str(repo))
-            client.element_command(smoke.button(client, "Open workspace"), "/click")
+            smoke.open_legacy_workspace(client, repo)
             smoke.wait_for(client, "document.querySelector('[aria-label=\\\"Workspace\\\"] .panel-status')?.innerText.includes('indexed')",
                            "workspace index")
 

@@ -1,0 +1,22 @@
+# Notation project-level Codex configuration.
+# Model and context budgets belong to the selected user profile
+# (notation-advisor / notation-scout). Do not add model keys here: Codex 0.164
+# project model keys override the selected profile, which can route the wrong
+# model name to a provider.
+
+# Compaction handoff prompt (see orchestration/compact.md).
+experimental_compact_prompt_file = "/home/esshi/Coding/Notation/orchestration/compact.md"
+
+# One advisor session; workers use OpenCodex via scripts/notation-worker.
+[agents]
+enabled = false
+
+[features]
+multi_agent = false
+multi_agent_v2 = false
+async_compaction = false
+
+[mcp_servers.serena]
+command = "uvx"
+args = ["-p", "3.13", "--from", "serena-agent==1.7.0", "serena", "start-mcp-server", "--context", "codex", "--project-from-cwd", "--open-web-dashboard", "False"]
+startup_timeout_sec = 60

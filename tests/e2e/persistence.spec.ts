@@ -75,7 +75,10 @@ test('workspace tools explain the native requirement in browser mode', async ({ 
   const panel = page.getByRole('region', { name: 'Workspace', exact: true });
   await expect(panel).toBeVisible();
   await expect(panel).toContainText(/desktop/i);
-  await expect(panel.getByRole('button', { name: 'Open workspace', exact: true })).toBeDisabled();
+  await panel.getByRole('textbox', { name: 'Workspace name', exact: true }).fill('Browser views');
+  await panel.getByRole('button', { name: 'Create workspace', exact: true }).click();
+  await expect(panel.getByRole('button', { name: 'Add files', exact: true })).toBeDisabled();
+  await expect(panel.getByRole('button', { name: 'Refresh index', exact: true })).toBeDisabled();
   await expect(source(page)).toContainText('Welcome to Notation');
 });
 

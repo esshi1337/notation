@@ -7,6 +7,7 @@ plugin. Separately deployed application/shared libraries remain unchanged.
 Repair an idle AppDir: --repack-appdir PATH --output PATH.AppImage
 """
 import argparse
+from contextlib import contextmanager
 import hashlib
 import os
 from pathlib import Path
@@ -18,6 +19,67 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 ENGINES = ROOT / 'src-tauri/resources/engines'
+
+
+def pkg_variable(package, variable):
+    return subprocess.check_output(
+        ['pkg-config', '--variable=' + variable, package], text=True).strip()
+
+
+@contextmanager
+def media_environment(environment):
+    """Give linuxdeploy portable scanner paths (Arch colocates helpers/plugins).
+
+    Its default helpers path is Debian-specific. Passing Arch's whole plugin
+    directory as helpers would duplicate every plugin, so stage only the two
+    runtime helpers. Explicit packager overrides remain supported.
+    """
+    environment = environment.copy()
+    environment.setdefault('GSTREAMER_PLUGINS_DIR', pkg_variable('gstreamer-1.0', 'pluginsdir'))
+    scanner_directory = Path(pkg_variable('gstreamer-1.0', 'pluginscannerdir'))
+    with tempfile.TemporaryDirectory(prefix='notation-gstreamer-') as temporary:
+        if not environment.get('GSTREAMER_HELPERS_DIR'):
+            for name in ('gst-plugin-scanner', 'gst-ptp-helper'):
+                source = scanner_directory / name
+                if not source.is_file():
+                    raise RuntimeError(f'GStreamer runtime helper is missing: {source}')
+                shutil.copy2(source, Path(temporary) / name)
+            environment['GSTREAMER_HELPERS_DIR'] = temporary
+        yield environment
+
+
+def verify_media_bundle(appdir):
+    """Fail packaging rather than ship a webview that crashes on local media."""
+    required = [
+        'usr/lib/gstreamer-1.0/libgstapp.so',
+        'usr/lib/gstreamer-1.0/libgstautodetect.so',
+        'usr/lib/gstreamer-1.0/libgstcoreelements.so',
+        'usr/lib/gstreamer-1.0/libgstplayback.so',
+        'usr/lib/gstreamer-1.0/libgstaudioconvert.so',
+        'usr/lib/gstreamer-1.0/libgstaudioresample.so',
+        'usr/lib/gstreamer-1.0/libgstwavparse.so',
+        'usr/lib/gstreamer-1.0/libgstisomp4.so',
+        'usr/lib/gstreamer-1.0/libgstlibav.so',
+        'usr/lib/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner',
+        'apprun-hooks/linuxdeploy-plugin-gstreamer.sh',
+    ]
+    missing = [name for name in required if not (appdir / name).is_file()]
+    if missing:
+        raise RuntimeError('AppImage playback dependencies are missing: ' + ', '.join(missing))
+    if 'linuxdeploy-plugin-gstreamer.sh' not in (appdir / 'AppRun').read_text():
+        raise RuntimeError('AppImage launcher does not activate its bundled GStreamer plugins')
+
+
+def restore_webkit_helpers(appdir):
+    """linuxdeploy may omit helpers when WebKit comes from a staged sysroot."""
+    source = Path(pkg_variable('webkit2gtk-4.1', 'libdir')) / 'webkit2gtk-4.1'
+    target = appdir / 'usr/lib/webkit2gtk-4.1'
+    for name in ('WebKitWebProcess', 'WebKitNetworkProcess'):
+        if not (target / name).is_file():
+            if not (source / name).is_file():
+                raise RuntimeError(f'WebKit runtime helper is missing: {source / name}')
+            target.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source / name, target / name)
 
 
 def digest(path):
@@ -67,6 +129,8 @@ def repackage(appdir, output):
     if not plugin.is_file():
         raise RuntimeError(f'Tauri AppImage output plugin is missing: {plugin}')
     restore_engines(appdir)
+    restore_webkit_helpers(appdir)
+    verify_media_bundle(appdir)
     output.parent.mkdir(parents=True, exist_ok=True)
     # Publish only the successfully regenerated image. Preserve the previous
     # image if packaging fails, and return nonzero to prevent installation.
@@ -107,7 +171,14 @@ def main():
             paths.append(environment['LD_LIBRARY_PATH'])
         environment['LD_LIBRARY_PATH'] = os.pathsep.join(paths)
     started = time.time()
-    result = subprocess.call(['npx', 'tauri', *sys.argv[1:]], cwd=ROOT, env=environment)
+    arguments = sys.argv[1:]
+    if arguments and arguments[0] in ('build', 'bundle') and '--no-bundle' not in arguments:
+        if not shutil.which('patchelf'):
+            raise RuntimeError('AppImage media packaging requires patchelf on PATH')
+        with media_environment(environment) as bundle_environment:
+            result = subprocess.call(['npx', 'tauri', *arguments], cwd=ROOT, env=bundle_environment)
+    else:
+        result = subprocess.call(['npx', 'tauri', *arguments], cwd=ROOT, env=environment)
     if result:
         return result
     arguments = sys.argv[1:]

@@ -82,6 +82,9 @@ function buildMarkdown(text: string, allowCallouts: boolean, offset: number, out
       return `<${tag} class="rendered-math" data-math-index="${index}"></${tag}>`;
     };
     const renderer = new Renderer(), defaultCode = renderer.code.bind(renderer);
+    renderer.table = function (token) {
+      return `<div class="markdown-table-scroll" role="region" aria-label="Markdown table" tabindex="0">${Renderer.prototype.table.call(this, token)}</div>`;
+    };
     let insideLink = false;
     let insideList=false;
     renderer.list=function(token){const previous=insideList;insideList=true;try{return Renderer.prototype.list.call(this,token);}finally{insideList=previous;}};

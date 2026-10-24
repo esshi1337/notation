@@ -1,6 +1,7 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { readStorage, writeStorage } from './storage';
 import type { DocumentSession } from './documents';
+import type { WorkspaceCatalog } from './workspaces';
 
 export type RecoveryDraft = { id: string; name: string; path: string | null; content: string; savedContent?: string; savedName?: string; updatedAt?: number; hemingway?: boolean };
 export type ScriptDraft = { id?: string | null; name: string; code: string; cwd: string | null; updatedAt?: number };
@@ -8,7 +9,7 @@ export type SavedScript = ScriptDraft & { id: string; updatedAt: number };
 export type Recent = { path: string; name?: string; visitedAt?: number };
 export type Metadata = {
   settings: Record<string, unknown>; draft: RecoveryDraft | null; scriptDraft: ScriptDraft | null;
-  scripts: SavedScript[]; workspace: string | null; recents: Recent[]; session?: DocumentSession | null; migrationApplied?: boolean;
+  scripts: SavedScript[]; workspace: string | null; workspaceCatalog?: WorkspaceCatalog; recents: Recent[]; session?: DocumentSession | null; migrationApplied?: boolean;
 };
 type Patch = { settings?: Record<string, unknown>; draft?: RecoveryDraft | null; scriptDraft?: ScriptDraft | null; session?: DocumentSession | null };
 export type PendingRecovery = { draft?: RecoveryDraft | null; scriptDraft?: ScriptDraft | null; session?: DocumentSession | null; failedAt: number };
@@ -36,7 +37,7 @@ function legacyState(): Metadata {
   });
   return {
     settings: settings && typeof settings === 'object' ? settings : {}, draft, scriptDraft,
-    scripts, workspace: null, recents: [], session: validSession(session) ? session : null,
+    scripts, workspace: null, workspaceCatalog: readStorage<WorkspaceCatalog>('notation.workspaces', { activeId: null, workspaces: [] }), recents: [], session: validSession(session) ? session : null,
   };
 }
 
@@ -192,6 +193,7 @@ export async function metadataSummary() {
   if (nativeStore && ready) {
     const loaded = await invoke<Metadata>('bootstrap_state');
     metadata.workspace = loaded.workspace;
+    metadata.workspaceCatalog = loaded.workspaceCatalog;
     metadata.recents = loaded.recents;
   }
   return { workspace: metadata.workspace, recents: metadata.recents };

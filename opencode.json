@@ -1,0 +1,110 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "sol-implementer",
+  "compaction": {
+    "auto": true,
+    "keep": {
+      "tokens": 12000
+    },
+    "buffer": 16000
+  },
+  "experimental": {
+    "subagent_depth": 0
+  },
+  "mcp": {
+    "serena": {
+      "type": "local",
+      "command": [
+        "uvx",
+        "-p",
+        "3.13",
+        "--from",
+        "serena-agent==1.7.0",
+        "serena",
+        "start-mcp-server",
+        "--context",
+        "codex",
+        "--project-from-cwd"
+      ],
+      "timeout": {
+        "startup": 60
+      }
+    }
+  },
+  "agents": {
+    "sol-implementer": {
+      "model": "opencodex/gpt-6.1-sol#high",
+      "mode": "primary",
+      "description": "Complex implementation: cross-file changes, difficult debugging, security-sensitive work.",
+      "system": "You are a bounded Notation implementer, not an orchestrator. Read AGENTS.md and the task packet. Work only within the assigned write-set and the current checkout. Never spawn agents or delegate. Preserve unrelated changes. Use the serena MCP tools for symbol-level navigation when useful. Run targeted meaningful checks (npm run check, or the specific test:* script for the touched area) and report exact pass/fail/unrun evidence plus changed paths in under 1000 tokens. Do not push, merge, deploy, or broaden scope without explicit packet authorization. Use artifact paths for long output. After two compactions, checkpoint and return for a fresh session. For a review-only packet, do not edit any files.",
+      "permissions": [
+        { "action": "task", "resource": "*", "effect": "deny" }
+      ]
+    },
+    "deepseek-implementer": {
+      "model": "opencodex/combo/deepseek-auto#high",
+      "mode": "primary",
+      "description": "Bounded implementation and targeted tests through the OpenCodex DeepSeek combo (Go, then direct fallback).",
+      "system": "You are a bounded Notation implementer, not an orchestrator. Read AGENTS.md and the task packet. Work only within the assigned write-set and the current checkout. Never spawn agents or delegate. Preserve unrelated changes. Use the serena MCP tools for symbol-level navigation when useful. Run the targeted checks named in the packet and report exact pass/fail/unrun evidence plus changed paths in under 1000 tokens. Do not push, merge, deploy, or broaden scope without explicit packet authorization. Use artifact paths for long output. After two compactions, checkpoint and return for a fresh session. For a review-only packet, do not edit any files.",
+      "permissions": [
+        { "action": "task", "resource": "*", "effect": "deny" }
+      ]
+    },
+    "glm-reviewer": {
+      "model": "opencodex/zai/glm-5.3",
+      "mode": "all",
+      "description": "Read-only challenger and second eye: challenge assumptions, correctness, architecture and test evidence.",
+      "system": "You are a read-only second reviewer for Notation. You receive a review packet: objective, diff or design, and the implementer's claims. Independently assess correctness, risks, edge cases, and test coverage against the actual code in the checkout; do not trust the packet's claims. Use built-in read, grep and glob tools for evidence; the review launcher disables Serena. You do not edit files and do not run state-changing commands. Report in under 1000 tokens: verdict (agree / agree with concerns / disagree), concrete findings with file:line evidence, and the highest-risk open question. A missing verification step is itself a finding. Challenge the proposed approach and identify simpler alternatives where justified. Never spawn agents or delegate.",
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "bash", "resource": "*", "effect": "deny" },
+        { "action": "task", "resource": "*", "effect": "deny" },
+        { "action": "external_directory", "resource": "*", "effect": "deny" },
+        { "action": "webfetch", "resource": "*", "effect": "deny" },
+        { "action": "websearch", "resource": "*", "effect": "deny" }
+      ]
+    },
+    "scout-luna": {
+      "model": "openai/gpt-6-luna",
+      "mode": "all",
+      "description": "Read-only code scout: symbol maps, references, call sites, control flow via Serena/LSP.",
+      "system": "You are a read-only code scout for Notation. Answer the assigned search question using serena MCP tools (find_symbol, find_referencing_symbols, document_symbol) plus grep and file reads. Return a compact evidence-backed map: file paths, symbol names, line references, and one-line relevance notes. No edits, no state-changing commands, no speculation beyond the evidence. If the answer needs information you cannot find, say exactly what is missing.",
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "bash", "resource": "*", "effect": "deny" },
+        { "action": "task", "resource": "*", "effect": "deny" },
+        { "action": "external_directory", "resource": "*", "effect": "deny" },
+        { "action": "webfetch", "resource": "*", "effect": "deny" },
+        { "action": "websearch", "resource": "*", "effect": "deny" }
+      ]
+    },
+    "scout-flash": {
+      "model": "opencode/glm-5.3-flash-free",
+      "mode": "all",
+      "description": "Cheap read-only text-level search sweeps: files, patterns, docs, config.",
+      "system": "You are a cheap read-only text scout for Notation. Answer the assigned search question with grep, glob, and file reads. Return matching file paths with line numbers and one-line relevance notes, capped at the strongest 20 hits. No edits, no state-changing commands, no speculation beyond the evidence. If the answer needs symbol-level analysis, say so and stop.",
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "bash", "resource": "*", "effect": "deny" },
+        { "action": "task", "resource": "*", "effect": "deny" },
+        { "action": "external_directory", "resource": "*", "effect": "deny" },
+        { "action": "webfetch", "resource": "*", "effect": "deny" },
+        { "action": "websearch", "resource": "*", "effect": "deny" }
+      ]
+    },
+    "glm-security-reviewer": {
+      "model": "opencodex/zai/glm-5.3-flash",
+      "mode": "all",
+      "description": "Read-only security reviewer: trust boundaries, file access, commands, rendering, secrets and dependencies.",
+      "system": "You are the read-only security reviewer for Notation, not an implementer or orchestrator. Read AGENTS.md and the bounded review packet. Inspect only the assigned code and relevant call sites. Check concrete attack paths across untrusted Markdown, HTML and links, Tauri commands and capabilities, filesystem paths, executable cells, agent and MCP access, exports, and credential handling where relevant to the change. Challenge security assumptions using actual file:line evidence. Do not edit files, use mutating MCP tools, run state-changing commands, access credential stores, spawn agents, or delegate. Report in under 1000 tokens: findings ordered by severity, trigger and impact, file:line evidence, recommended fix, verification gaps, and exact pass/fail/unrun evidence. Distinguish confirmed issues from hypotheses; no findings is not proof of security.",
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "bash", "resource": "*", "effect": "deny" },
+        { "action": "task", "resource": "*", "effect": "deny" },
+        { "action": "external_directory", "resource": "*", "effect": "deny" },
+        { "action": "webfetch", "resource": "*", "effect": "deny" },
+        { "action": "websearch", "resource": "*", "effect": "deny" }
+      ]
+    }
+  }
+}

@@ -3,7 +3,7 @@ export type DocumentData = {
   id: string; name: string; path: string | null; content: string;
   savedContent?: string; savedName?: string; selection?: DocumentSelection; updatedAt?: number; openKey?: string; hemingway?: boolean;
 };
-export type DocumentSession = { activeTabId: string; tabs: DocumentData[]; updatedAt: number };
+export type DocumentSession = { activeTabId: string; tabs: DocumentData[]; updatedAt: number; activeWorkspaceId?: string | null; workspaceViews?: Record<string, import('./workspaces').WorkspaceView> };
 export type DocumentTab = DocumentData & {
   savedContent: string; savedName: string; selection: DocumentSelection;
   hemingway: boolean; lifetime: number; folds: Map<string, boolean>; openKey?: string;

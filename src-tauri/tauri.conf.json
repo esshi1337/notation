@@ -32,6 +32,11 @@
   },
   "bundle": {
     "active": true,
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": true
+      }
+    },
     "targets": [
       "appimage"
     ],

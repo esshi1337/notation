@@ -19,8 +19,16 @@ try {
     assert.equal(value.showStatusBar, true);
   });
   check('custom appearance survives serialization without losing boolean settings', () => {
-    const custom = { darkPreset: 'charcoal', density: 'comfortable', accentColor: '#AABBCC', editorFont: 'sans', lineHeight: 2, readingWidth: 700, sidebarWidth: 320, showStatusBar: false, showLineNumbers: false, focusMode: true };
+    const custom = { darkPreset: 'charcoal', density: 'comfortable', accentColor: '#AABBCC', editorFont: 'sans', lineHeight: 2, readingWidth: 700, sidebarWidth: 320, sidebarPosition: 'right', showStatusBar: false, showLineNumbers: false, focusMode: true, smoothScrolling: false };
     assert.deepEqual(preferences.readUIPreferences(JSON.parse(JSON.stringify(custom))), { ...custom, accentColor: '#aabbcc' });
+  });
+  check('sidebar position defaults safely and restores either side', () => {
+    for (const sidebarPosition of [undefined, null, 'bottom', '', 123]) assert.equal(preferences.readUIPreferences({ sidebarPosition }).sidebarPosition, 'left');
+    for (const sidebarPosition of ['left', 'right']) assert.equal(preferences.readUIPreferences(JSON.parse(JSON.stringify({ sidebarPosition }))).sidebarPosition, sidebarPosition);
+  });
+  check('smooth scrolling defaults on and preserves an explicit off setting', () => {
+    for (const smoothScrolling of [undefined, null, 'false', 0]) assert.equal(preferences.readUIPreferences({ smoothScrolling }).smoothScrolling, true);
+    for (const smoothScrolling of [true, false]) assert.equal(preferences.readUIPreferences({ smoothScrolling }).smoothScrolling, smoothScrolling);
   });
   check('CSS values are constrained even when callers pass malformed preferences', () => {
     const css = preferences.preferencesStyle({ ...preferences.DEFAULT_UI_PREFERENCES, accentColor: 'red;position:fixed', editorFont: 'url(https://example.invalid)' });

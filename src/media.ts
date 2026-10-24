@@ -45,7 +45,14 @@ export async function renderMedia(target:HTMLElement,sourcePath:string|undefined
       }else if(kind==='image'){
         const image=document.createElement('img');image.alt=alt;image.dataset.originalSrc=source;image.referrerPolicy='no-referrer';image.src=url;image.onerror=()=>{if(valid())target.textContent='Could not load image: '+alt;};target.replaceChildren(image);
       }else if(kind==='audio'||kind==='video'){
-        const media=document.createElement(kind);media.controls=true;media.preload='metadata';media.src=url;media.setAttribute('aria-label',alt);target.replaceChildren(media);cleanup=()=>{media.pause();media.removeAttribute('src');media.load();};
+        const media=document.createElement(kind);media.controls=true;
+        // Local assets are already fully read into a bounded data URL. WebKit
+        // leaves metadata-only loads showing a spinner and --:-- until Play.
+        // Finish buffering them without autoplay; keep remote preload limited.
+        media.preload=remote?'metadata':'auto';media.setAttribute('aria-label',alt);
+        media.onerror=()=>{if(valid()){const message=document.createElement('p');message.setAttribute('role','alert');message.className='media-error';message.textContent='Could not play '+alt+'. The file may be damaged or use an unsupported codec.';target.querySelector('.media-error')?.remove();target.append(message);}};
+        cleanup=()=>{media.onerror=null;media.pause();media.removeAttribute('src');media.load();};
+        target.replaceChildren(media);media.src=url;
       }else{
         const frame=document.createElement('iframe');frame.title=alt;frame.sandbox.add('allow-scripts','allow-forms');frame.referrerPolicy='no-referrer';frame.src=url;target.replaceChildren(frame);const link=document.createElement('a');link.textContent='Open external resource';link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.onclick=event=>{if(isTauri()){event.preventDefault();void invoke('open_external',{url}).catch(error=>{if(valid()){const message=document.createElement('span');message.textContent=String(error);target.append(message);}});}};target.append(link);
       }

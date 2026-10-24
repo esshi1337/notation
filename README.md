@@ -133,7 +133,11 @@ Scripts run with your filesystem and command permissions. File/system effects ha
 
 ## Workspace and local data
 
-Open **Workspace**, enter a folder, and choose **Open workspace** to index its Markdown and Mermaid files. Search searches file contents; the panel also lists tags, tasks, and backlinks. Choose **Refresh index** after external edits. Indexing skips symlinks, hidden/build directories, oversized files, and stops at 10,000 files or 64 MiB of source.
+Open **Workspace**, enter a name, and choose **Create workspace**. Use **Add files** to reference existing files from any locations on your machine, or **Add current file** for the saved document you are viewing. A workspace does not create a folder or move your files. The same file can belong to several workspaces. **Referenced files** shows full paths and lets you remove individual references; removing a reference or deleting a workspace leaves files on disk intact.
+
+Switch workspaces using the selector beside your tabs. Each workspace restores its own tabs, selected tab, cursor positions, and layout. A file has one shared editing buffer, so unsaved edits made in one workspace are visible in another. Closing a shared tab only closes that view; deleting a workspace keeps its open tabs in the remaining view. The first workspace keeps your existing tabs.
+
+Search, tags, tasks, links, and graph use the selected workspace’s references. Choose **Refresh index** after external edits. Missing files remain referenced and produce indexing errors. Indexing rejects symlink traversal and oversized files, and stops at 10,000 files or 64 MiB of source. Existing folder workspaces migrate without moving files and keep their folder reference for compatibility.
 
 Your `.md` and `.mmd` files remain authoritative. SQLite holds preferences, recovery drafts, recent files, named scripts, run history, and document revisions. Search and link tables are a separate, rebuildable cache; refreshing them preserves your saved app data.
 
@@ -181,7 +185,7 @@ limit: 50
 
 Use `view: list` for a list. Filters support `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `contains`, and `exists`; filters combine with AND. `tagMode: any` changes tag matching from all to any. Click a result to edit its source note; **Refresh** updates the view. The visible result limit is 200. Queries never execute SQL or JavaScript.
 
-**Note graph** shows resolved connections and lists unresolved links. Filter the visible graph by title/path or tag, zoom, or switch to the current note's neighborhood. Graph limits and omitted results are shown explicitly. Clicking a node opens its note.
+**Note graph** shows resolved connections and lists unresolved links. Its wider sidebar keeps labels at a readable size; drag the graph to pan, use the wheel or +/− to zoom, **Fit** for an overview, and **100%** to return to readable labels. Labels are separated instead of overlapping, and full titles/paths are available on hover and in the Notes list. Tab focuses a note and brings it into view; Enter or Space opens it. Filter by title/path or tag, or switch to the current note's neighborhood. Graph limits and omitted results are shown explicitly.
 
 ## Executable cells, variables, and templates
 
@@ -203,11 +207,13 @@ Write `{{status}}` or `{{project.name}}` in Markdown to display a frontmatter va
 
 ## Media, diagrams, and citations
 
-Use Markdown image syntax or `![[media/file.ext]]` for workspace-local images, audio, video, and PDFs. Local assets are limited to 20 MiB, resolved relative to the note, and confined to the workspace. PDFs use the bundled PDF viewer with page controls. Remote images and resources show **Load external media** before making a request. Remote sites can refuse iframe embedding; use their external link to open them separately.
+Use Markdown image syntax or `![[media/file.ext]]` for workspace-local images, audio, video, and PDFs. Local assets are limited to 20 MiB and resolved relative to the note. Add the asset itself as a workspace file reference (choose All files in the picker); referencing a note does not grant access to its whole directory. Migrated folder workspaces retain their existing folder scope. PDFs use the bundled PDF viewer with page controls. Remote images and resources show **Load external media** before making a request. Remote sites can refuse iframe embedding; use their external link to open them separately.
+
+The Linux AppImage bundles GStreamer's playback plugins and plugin scanner. Packaging checks required playback components before publishing an image. On Arch, the build needs `patchelf`, `gstreamer`, `gst-plugins-base`, `gst-plugins-good`, and `gst-libav`; the packaging wrapper stages the scanner from pkg-config's platform-specific path. Damaged media or unsupported codecs show an error beside the player.
 
 Alongside `mermaid`, fenced `dot`/`graphviz`, `d2`, and `plantuml`/`puml` blocks render diagrams. Graphviz runs through bundled WebAssembly. The desktop package includes D2 and PlantUML with its own Java runtime. Renderers have source/output limits and timeouts; diagrams cannot import arbitrary host files or access the network.
 
-Footnotes use `[^note]` and `[^note]: Definition`, with indented continuation paragraphs. Citations use Pandoc-style `[@key]` groups and frontmatter `bibliography`, optional `csl`, or inline CSL `references`. Bibliography/style files must be local workspace files. The bundled citation processor formats references in the desktop app; source keys remain in Markdown.
+Footnotes use `[^note]` and `[^note]: Definition`, with indented continuation paragraphs. Citations use Pandoc-style `[@key]` groups and frontmatter `bibliography`, optional `csl`, or inline CSL `references`. Bibliography/style files must be referenced in the selected workspace, or inside its migrated folder scope. The bundled citation processor formats references in the desktop app; source keys remain in Markdown.
 
 ## Canvas and export
 
@@ -236,13 +242,15 @@ The interface uses one compact tab row. Press **Ctrl/Cmd+K** to search commands,
 
 **New** creates a document tab. Opening an already open file selects its tab. Each tab keeps its own draft, cursor, and undo history during the session; closing a tab with unsaved edits asks before discarding it. Open tabs and the selected tab are recovered after restarting. Undo history itself is not restored across restarts.
 
-Choose a workspace folder and open **Explorer** to browse directories and open Markdown, Mermaid, and text files. Directories load as you expand them. Hidden files, build directories, and symlinks are omitted.
+Open **Explorer** to browse the selected workspace’s referenced files. Full file paths appear on hover and in **Workspace → Referenced files**, including when filenames repeat in different locations. Migrated folder workspaces retain expandable directory browsing; hidden/build directories and symlinks are omitted from those listings.
 
-**Settings → Appearance** controls dark presets, accent color, interface density, sidebar width, status bar, and focus mode. **Editor** controls font family/size (bundled Geist and Geist Mono), line height, reading width, wrapping, layout, and line numbers. Each section has its own reset; these resets preserve documents, scripts, and recovery data.
+**Settings → Appearance** controls dark presets, accent color, interface density, sidebar position and width, status bar, and focus mode. The app sidebar opens Explorer, Workspace, Graph, Git, History, Properties, Templates, Table editor, Scripts, and Export; Settings stays at its bottom. Choose **Sidebar position → Left / Right** to move the navigation and its open tool together. The side is saved across restarts. Click the selected tool again to close it, or use Focus mode to hide the sidebar. In narrow windows, the tool overlays the editor to preserve writing width. Arrow Up/Down and Home/End navigate the sidebar buttons. **Editor** controls font family/size (bundled Geist and Geist Mono), line height, reading width, wrapping, layout, line numbers, and smooth scrolling. Smooth scrolling eases mouse-wheel steps, including small and fractional high-resolution mouse input, in documents and panels; turn it off for immediate native scrolling. System reduced-motion preferences disable the animation. If animation misses its frame budget, the rest of that wheel gesture switches to immediate scrolling instead of accumulating delays. Each section has its own reset; these resets preserve documents, scripts, and recovery data.
+
+Settings keeps the same window-relative size across sections. Long sections scroll inside the dialog; the Shortcuts list scrolls independently while its search and close controls stay visible.
 
 **Settings → Shortcuts** lets you search by command or group, record or type bindings, disable a command's shortcut, and restore defaults. Conflicting bindings are rejected, and clipboard/undo shortcuts stay available to the editor. The command menu remains accessible even if its shortcut is disabled. Your window manager's global shortcuts take precedence over application bindings.
 
-Open **Git** for the selected workspace's branch, changed files, commit graph, and diffs. Git must be installed. These views read local repository state; they do not stage, commit, fetch, or push. Save editor changes to include them in Git's working-tree diff.
+Open **Git** for the selected workspace's branch, changed files, commit graph, and diffs. Git must be installed. Git currently requires a migrated folder workspace with a repository root; a collection of unrelated file references has no single repository. These views read local repository state; they do not stage, commit, fetch, or push. Save editor changes to include them in Git's working-tree diff.
 
 ## Agent MCP connection
 

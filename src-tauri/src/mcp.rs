@@ -105,7 +105,7 @@ impl Backend {
         }
         match name {
             "workspace_info" => Ok(
-                json!({"workspace":self.database()?.workspace()?,"editsEnabled":self.edits_enabled()?}),
+                json!({"workspace":self.database()?.workspace()?,"workspaceCatalog":self.database()?.list_workspaces()?,"editsEnabled":self.edits_enabled()?}),
             ),
             "list_directory" => to_value(explorer::list_directory(
                 self.database()?,
@@ -183,12 +183,12 @@ fn tool(
 }
 pub fn tools() -> Vec<Value> {
     let text = json!({"type":"string"});
-    let path = json!({"type":"string","description":"Absolute path or path relative to the selected workspace."});
+    let path = json!({"type":"string","description":"Absolute explicit member file path. Legacy folder workspaces also accept paths relative to their root."});
     vec![
-        tool("workspace_info","Read the selected workspace and whether guarded agent edits are enabled.",json!({}),&[],true),
-        tool("list_directory","List immediate workspace children. Symlinks and hidden/build directories are excluded.",json!({"path":path}),&[],true),
+        tool("workspace_info","Read the named workspace catalog, selection and guarded agent edit setting. Workspaces reference files without moving them; one file can belong to multiple workspaces.",json!({}),&[],true),
+        tool("list_directory","List flat explicit file references in the active named workspace (omit path). No ancestor or sibling access. Legacy folder workspaces list immediate children excluding symlinks and hidden/build directories.",json!({"path":path}),&[],true),
         tool("search_documents","Search the rebuildable workspace index. An empty query lists notes; refresh the index in the app after external edits.",json!({"query":text,"limit":{"type":"integer","minimum":1,"maximum":500}}),&["query"],true),
-        tool("read_file","Read bounded UTF-8 text from disk inside the workspace. Use read_tab for an unsaved open buffer.",json!({"path":path}),&["path"],true),
+        tool("read_file","Read bounded UTF-8 text from an explicit active workspace member (or a legacy-root descendant). Use read_tab for an unsaved open buffer.",json!({"path":path}),&["path"],true),
         tool("list_tabs","Read metadata for all currently open tabs. Use read_tab to obtain exact text and selection.",json!({}),&[],true),
         tool("read_tab","Read one live tab, including exact unsaved content and selection for guarded edits.",json!({"tabId":text}),&["tabId"],true),
         tool("open_document","Open or focus a workspace document in the editor without replacing dirty tabs or saving files.",json!({"path":path}),&["path"],true),

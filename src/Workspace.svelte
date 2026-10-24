@@ -1,18 +1,20 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { open } from '@tauri-apps/plugin-dialog';
+  import { ask, open } from '@tauri-apps/plugin-dialog';
   import { currentMetadata, metadataSummary, nativeStore } from './store';
   import type { SearchRequest, QueryResult } from './database-query';
   import type { Recent } from './store';
+  import type { WorkspaceCatalog } from './workspaces';
 
   type Note = { path: string; name: string; title: string; snippet: string; score: number };
   type Task = { path: string; line: number; text: string; checked: boolean };
   type Tag = { tag: string; count: number };
   type Backlink = { path: string; line: number; text: string };
-  let { currentPath, openDocument, close }: { currentPath: string | null; openDocument: (path: string, line?: number) => Promise<boolean>; close: () => void } = $props();
-  let folder = $state(currentMetadata().workspace || '');
-  let workspace = $state(currentMetadata().workspace);
+  let { currentPath, openDocument, close, catalog, action, changing }: { currentPath: string | null; openDocument: (path: string, line?: number) => Promise<boolean>; close: () => void; catalog: WorkspaceCatalog; action: (command: string, args?: Record<string, unknown>) => Promise<void>; changing: boolean } = $props();
+  let workspace = $derived(catalog.workspaces.find(item => item.id === catalog.activeId));
+  let workspaceName = $state('');
+  let filePath = $state('');
   let recents = $state<Recent[]>(currentMetadata().recents);
   let tab = $state<'Notes' | 'Tasks' | 'Tags' | 'Backlinks'>('Notes');
   let query = $state('');
@@ -23,10 +25,12 @@
   let tags = $state<Tag[]>([]);
   let backlinks = $state<Backlink[]>([]);
   let busy = $state(false);
-  let message = $state(currentMetadata().workspace ? 'Workspace ready' : 'Choose a folder to index Markdown notes.');
+  let message = $state('Add references to files wherever they live.');
   let error = $state('');
   let indexErrors = $state<string[]>([]);
   let serial = 0;
+
+  $effect(() => { const identity = workspace?.id; notes = []; tasks = []; tags = []; backlinks = []; indexErrors = []; message = identity ? 'Workspace ready' : 'Add references to files wherever they live.'; });
 
   async function load(term: string, mode: typeof tab, selected: string | null, ticket: number, filters = filterState) {
     if (!nativeStore || !workspace) return;
@@ -53,9 +57,28 @@
     const timer = setTimeout(() => { if (selectedWorkspace) void load(term, mode, selected, ticket, filters); }, 180);
     return () => clearTimeout(timer);
   });
+  async function change(command: string, args: Record<string, unknown> = {}) {
+    error = '';
+    try { await action(command, args); notes = []; tasks = []; tags = []; backlinks = []; await load(query, tab, currentPath, ++serial); return true; }
+    catch (cause) { error = String(cause); return false; }
+  }
+  async function createWorkspace() {
+    if (await change('create_workspace', { name: workspaceName.trim() })) workspaceName = '';
+  }
+  async function deleteWorkspace() {
+    if (!workspace) return;
+    const message = 'Delete workspace “' + workspace.name + '”? Files on disk will stay intact. Open tabs will be kept in the remaining view.';
+    const approved = nativeStore ? await ask(message, { title: 'Delete workspace', kind: 'warning', okLabel: 'Delete workspace' }) : window.confirm(message);
+    if (approved) await change('delete_workspace', { id: workspace.id });
+  }
+  async function addFiles(paths: string[]) {
+    return workspace && paths.length ? await change('add_workspace_files', { id: workspace.id, paths }) : false;
+  }
   async function browse() {
-    try { const selected = await open({ directory: true, multiple: false, title: 'Choose workspace folder' }); if (typeof selected === 'string') folder = selected; }
-    catch (cause) { error = 'Could not choose folder: ' + String(cause); }
+    try {
+      const selected = await open({ directory: false, multiple: true, title: 'Add files to workspace', filters: [{ name: 'Notes', extensions: ['md','markdown','mmd','txt','canvas'] }, { name: 'All files', extensions: ['*'] }] });
+      if (selected) await addFiles(typeof selected === 'string' ? [selected] : selected);
+    } catch (cause) { error = 'Could not add files: ' + String(cause); }
   }
   async function refresh() {
     if (!nativeStore || !workspace) return;
@@ -65,14 +88,7 @@
       indexErrors = result.errors;
       message = result.files + ' files · ' + result.indexed + ' indexed · ' + result.skipped + ' skipped';
       await load(query, tab, currentPath, ++serial);
-    } catch (cause) { error = 'Could not refresh index. Check the folder path and permissions. ' + String(cause); }
-    finally { busy = false; }
-  }
-  async function openWorkspace() {
-    if (!nativeStore || !folder.trim()) return;
-    busy = true; error = '';
-    try { const result = await invoke<{ path: string }>('set_workspace', { path: folder.trim() }); workspace = result.path; folder = result.path; currentMetadata().workspace = result.path; await refresh(); }
-    catch (cause) { error = 'Could not open workspace: ' + String(cause); }
+    } catch (cause) { error = 'Could not refresh index. Check the referenced files and permissions. ' + String(cause); }
     finally { busy = false; }
   }
   async function openNote(path: string, line?: number) {
@@ -87,9 +103,22 @@
 
 <section class="utility-panel workspace-panel" aria-label="Workspace">
   <div class="scripts-heading"><strong>Workspace</strong><button aria-label="Close workspace" onclick={close}>×</button></div>
-  {#if !nativeStore}<p class="panel-note">Workspace files and indexing require the desktop app. Notes remain plain Markdown files.</p>{/if}
-  <label>Workspace folder<input aria-label="Workspace folder" bind:value={folder} placeholder="Choose a folder" spellcheck="false" /></label>
-  <div class="panel-actions"><button onclick={browse} disabled={!nativeStore || busy}>Browse workspace</button><button onclick={openWorkspace} disabled={!nativeStore || busy || !folder.trim()}>Open workspace</button><button onclick={refresh} disabled={!nativeStore || busy || !workspace}>Refresh index</button></div>
+  <p class="panel-note">A workspace is a collection of file references. Files stay in their original locations and can belong to several workspaces.</p>
+  {#if !nativeStore}<p class="panel-note">Adding file references and indexing require the desktop app. Imported browser documents keep their tabs in a workspace.</p>{/if}
+  <label>Workspace name<input aria-label="Workspace name" bind:value={workspaceName} placeholder="Research, writing, daily notes…" maxlength="120" /></label>
+  <div class="panel-actions"><button onclick={createWorkspace} disabled={changing || busy || !workspaceName.trim()}>Create workspace</button>{#if workspace}<button onclick={() => change('rename_workspace', { id: workspace.id, name: workspaceName.trim() })} disabled={changing || busy || !workspaceName.trim()}>Rename workspace</button>{/if}</div>
+  {#if workspace}
+    <strong class="workspace-name">{workspace.name}</strong>
+    {#if workspace.legacyRoot}<p class="panel-note">Existing folder reference: <span class="result-path">{workspace.legacyRoot}</span></p>{/if}
+    <div class="panel-actions"><button onclick={browse} disabled={!nativeStore || changing || busy}>Add files</button><button onclick={() => currentPath && addFiles([currentPath])} disabled={!nativeStore || !currentPath || changing || busy}>Add current file</button><button onclick={refresh} disabled={!nativeStore || changing || busy}>Refresh index</button></div>
+    <details><summary>Referenced files ({workspace.files.length})</summary>
+      <label>File path<input aria-label="File reference path" bind:value={filePath} placeholder="/path/to/note.md" disabled={!nativeStore || changing} /></label>
+      <button onclick={async () => { if (await addFiles([filePath.trim()])) filePath = ''; }} disabled={!nativeStore || changing || !filePath.trim()}>Add file reference</button>
+      {#each workspace.files as path}<div class="workspace-reference"><button class="note-result" title={path} onclick={() => openNote(path)}><strong>{path.split('/').pop()}</strong><span class="result-path">{path}</span></button><button aria-label={'Remove reference: ' + path} title="Remove reference; keep file on disk" disabled={changing} onclick={() => change('remove_workspace_file', { id: workspace.id, path })}>×</button></div>{/each}
+      <p class="panel-note">Removing a reference leaves the file and any open tabs intact.</p>
+    </details>
+    <button class="delete-workspace" onclick={deleteWorkspace} disabled={changing || busy}>Delete workspace</button>
+  {/if}
   <div class="panel-status" role="status">{message}</div>
   {#if error}<div class="script-error" role="alert">{error}</div>{/if}
   {#if indexErrors.length}<div class="script-error" role="alert">Some files could not be indexed:<ul>{#each indexErrors as item}<li>{item}</li>{/each}</ul></div>{/if}
@@ -97,7 +126,7 @@
   {#if tab === 'Notes'}
   <label>Search notes<input aria-label="Search notes" bind:value={query} disabled={!nativeStore || !workspace} placeholder="Text, title, or #tag" /></label>
   <details class="search-filters"><summary>Search filters</summary>
-    <label>Folder<input aria-label="Search folder filter" bind:value={filterFolder} placeholder="Relative workspace folder" /></label>
+    <label>Folder<input aria-label="Search folder filter" bind:value={filterFolder} placeholder="Filter by file location" /></label>
     <label>Tags<input aria-label="Search tags filter" bind:value={filterTags} placeholder="work, planning (all)" /></label>
     <label>Property<input aria-label="Search property key" bind:value={filterKey} placeholder="status" /></label>
     <label>Condition<select aria-label="Search property operator" bind:value={filterOp}>{#each ['eq','ne','gt','gte','lt','lte','contains','exists'] as op}<option value={op}>{{eq:'Equals',ne:'Does not equal',gt:'Greater than',gte:'At least',lt:'Less than',lte:'At most',contains:'Contains',exists:'Exists'}[op]}</option>{/each}</select></label>
@@ -127,6 +156,10 @@
 </section>
 
 <style>
+  .workspace-reference { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .workspace-reference .note-result { min-width: 0; flex: 1; }
+  .workspace-name { overflow-wrap: anywhere; }
+  .delete-workspace { align-self: start; color: var(--muted); }
   .workspace-panel .panel-tabs { flex-wrap: wrap; }
   .search-filters { margin: 0; }
   .search-filters summary { cursor: pointer; color: var(--muted); padding: 3px 0; }

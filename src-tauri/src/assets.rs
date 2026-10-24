@@ -1,7 +1,7 @@
-use crate::{explorer, storage::Database};
+use crate::storage::Database;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Serialize;
-use std::{fs::OpenOptions, io::Read, path::Path};
+use std::{io::Read, path::Path};
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Asset {
@@ -13,32 +13,15 @@ pub fn read(database: &Database, path: &str, source: Option<&str>) -> Result<Ass
     if path.is_empty() || path.len() > 4096 || path.contains(':') {
         return Err("Choose a workspace-local media path. Remote media is loaded only after an explicit click.".into());
     }
-    let root = explorer::workspace_root(database)?;
-    let folder = if let Some(source) = source {
-        let source = explorer::resolve_allow_missing(&root, source)?;
-        source
-            .parent()
-            .ok_or("Source document has no parent folder.")?
-            .to_path_buf()
-    } else {
-        root.clone()
-    };
+    let scope = database.active_workspace()?;
+    let folder = scope.source_folder(source)?;
     let requested = if Path::new(path).is_absolute() {
         Path::new(path).to_path_buf()
     } else {
         folder.join(path)
     };
-    let path = explorer::resolve(&root, &requested.to_string_lossy())?;
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW);
-    }
-    let file = options
-        .open(&path)
-        .map_err(|error| format!("Could not read media: {error}"))?;
+    let path = scope.resolve(&requested.to_string_lossy())?;
+    let file = crate::explorer::open_regular(&path)?;
     let metadata = file.metadata().map_err(|error| error.to_string())?;
     if !metadata.is_file() {
         return Err("Choose a regular media file.".into());

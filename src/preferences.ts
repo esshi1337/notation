@@ -1,14 +1,14 @@
 export type UIPreferences = {
   darkPreset: 'midnight' | 'charcoal'; density: 'compact' | 'comfortable';
   accentColor: string; editorFont: 'mono' | 'sans'; lineHeight: number;
-  readingWidth: number; sidebarWidth: number; showStatusBar: boolean;
-  showLineNumbers: boolean; focusMode: boolean;
+  readingWidth: number; sidebarWidth: number; sidebarPosition: 'left' | 'right'; showStatusBar: boolean;
+  showLineNumbers: boolean; focusMode: boolean; smoothScrolling: boolean;
 };
 
 export const DEFAULT_UI_PREFERENCES: Readonly<UIPreferences> = {
   darkPreset: 'midnight', density: 'compact', accentColor: '#d8d8df',
-  editorFont: 'mono', lineHeight: 1.7, readingWidth: 800, sidebarWidth: 260,
-  showStatusBar: true, showLineNumbers: true, focusMode: false,
+  editorFont: 'mono', lineHeight: 1.7, readingWidth: 800, sidebarWidth: 260, sidebarPosition: 'left',
+  showStatusBar: true, showLineNumbers: true, focusMode: false, smoothScrolling: true,
 };
 
 function bounded(value: unknown, fallback: number, min: number, max: number) {
@@ -24,10 +24,12 @@ export function readUIPreferences(settings: Record<string, unknown>): UIPreferen
     editorFont: settings.editorFont === 'sans' ? 'sans' : defaults.editorFont,
     lineHeight: bounded(settings.lineHeight, defaults.lineHeight, 1.3, 2.2),
     readingWidth: Math.round(bounded(settings.readingWidth, defaults.readingWidth, 480, 1200)),
+    sidebarPosition: settings.sidebarPosition === 'right' ? 'right' : defaults.sidebarPosition,
     sidebarWidth: Math.round(bounded(settings.sidebarWidth, defaults.sidebarWidth, 180, 420)),
     showStatusBar: typeof settings.showStatusBar === 'boolean' ? settings.showStatusBar : defaults.showStatusBar,
     showLineNumbers: typeof settings.showLineNumbers === 'boolean' ? settings.showLineNumbers : defaults.showLineNumbers,
     focusMode: settings.focusMode === true,
+    smoothScrolling: typeof settings.smoothScrolling === 'boolean' ? settings.smoothScrolling : defaults.smoothScrolling,
   };
 }
 

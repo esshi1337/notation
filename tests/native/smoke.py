@@ -273,6 +273,24 @@ def menuitem(client: Client, name: str) -> str:
     )
 
 
+def open_legacy_workspace(client: Client, path: Path) -> None:
+    """Seed a migrated folder reference; new workspaces use the reference UI.
+
+    Existing knowledge/export/tooling fixtures deliberately exercise the legacy
+    directory contract. Reload to bootstrap its named workspace into the UI.
+    """
+    result = client.execute_async("""
+const done = arguments[arguments.length - 1];
+window.__TAURI_INTERNALS__.invoke('set_workspace', {path: arguments[0]}).then(
+  value => done({value}), error => done({error: String(error)}));
+""", [str(path)])
+    require(isinstance(result, dict) and 'error' not in result, f'Legacy workspace setup failed: {result!r}')
+    client.execute('window.__notationSmokeReloading = true; location.reload()')
+    wait_for(client, "!window.__notationSmokeReloading && document.querySelector('main.app')", 'legacy workspace bootstrap')
+    client.element_command(button(client, 'Workspace'), '/click')
+    client.element_command(button(client, 'Refresh index'), '/click')
+
+
 def attribute(client: Client, element_id: str, name: str) -> Any:
     return client.command("GET", f"/element/{element_id}/attribute/{name}")
 

@@ -26,6 +26,7 @@
   import type { WikiCompletion } from './wiki-links';
   import type { WikiCandidate, WikiResolution } from './wiki-navigation';
   import Explorer from './Explorer.svelte';
+  import Sidebar from './Sidebar.svelte';
   import Git from './Git.svelte';
   import Settings from './Settings.svelte';
   import Tabs from './Tabs.svelte';
@@ -34,11 +35,15 @@
   import CompactMenu from './CompactMenu.svelte';
   import RenameDocument from './RenameDocument.svelte';
   import { preferencesStyle, readUIPreferences } from './preferences';
+  import { smoothScrolling } from './smooth-scroll';
   import { COMMANDS, commandForEvent, formatShortcut, readShortcutOverrides, shortcutFor } from './shortcuts';
   import type { CommandId } from './shortcuts';
   import type { CommandItem } from './ui-commands';
   import { createTab, restoreTabs, serializeTab, tabDirty } from './documents';
   import type { DocumentTab } from './documents';
+  import { captureWorkspaceView, emptyCatalog, restoreWorkspaceView, restoreWorkspaceViews, workspaceKey } from './workspaces';
+  import type { WorkspaceCatalog, WorkspaceView } from './workspaces';
+  import { writeStorage } from './storage';
   import type { BlockAction } from './editor-commands';
   import type { TaskToggle } from './markdown-features';
   import type { ScriptDocument } from './script-runner';
@@ -55,7 +60,15 @@
   const restored = restoreTabs(initial.session, initial.draft, sample);
   const preferences = initial.settings;
   let documents = $state<DocumentTab[]>(restored.tabs);
-  let activeId = $state(restored.activeTabId);
+  let catalog = $state<WorkspaceCatalog>(initial.workspaceCatalog ?? emptyCatalog());
+  let workspaceViews = $state<Record<string, WorkspaceView>>(restoreWorkspaceViews(initial.session?.workspaceViews, restored.tabs));
+  const initialView = restoreWorkspaceView(initial.session?.workspaceViews?.[workspaceKey(initial.workspaceCatalog?.activeId ?? null)], restored.tabs,
+    ['source','preview','live'].includes(String(initial.settings.layout)) ? initial.settings.layout as Layout : 'split');
+  let visibleIds = $state(initialView?.tabIds ?? restored.tabs.map(tab => tab.id));
+  let activeId = $state(initialView?.activeTabId ?? restored.activeTabId);
+  let visibleDocuments = $derived(visibleIds.map(id => documents.find(tab => tab.id === id)).filter((tab): tab is DocumentTab => !!tab));
+  let activeWorkspace = $derived(catalog.workspaces.find(workspace => workspace.id === catalog.activeId));
+  let workspaceBusy = $state(false);
   const cellSessions=new Map<string,CellSession>();
   function cellsFor(tab:DocumentTab){let session=cellSessions.get(tab.id);if(!session){session=new CellSession();session.update(tab.content,tab.name,tab.path);cellSessions.set(tab.id,session);}return session;}
   $effect(()=>{const ids=new Set(documents.map(tab=>tab.id));for(const tab of documents)cellsFor(tab).update(tab.content,tab.name,tab.path);for(const [id,session] of cellSessions)if(!ids.has(id)){session.dispose();cellSessions.delete(id);}});
@@ -65,7 +78,7 @@
   let theme = $state<'dark' | 'light'>(preferences.theme === 'light' ? 'light' : 'dark');
   let fontSize = $state(Math.max(10, Math.min(24, Number(preferences.fontSize) || 14)));
   let wrap = $state(preferences.wrap !== false);
-  let layout = $state<Layout>(['source', 'preview', 'live'].includes(String(preferences.layout)) ? preferences.layout as Layout : 'split');
+  let layout = $state<Layout>(initialView?.layout ?? (['source', 'preview', 'live'].includes(String(preferences.layout)) ? preferences.layout as Layout : 'split'));
   let agentEditsEnabled = $state(preferences.agentEditsEnabled !== false);
   let ui = $state(readUIPreferences(preferences));
   let shortcuts = $state(readShortcutOverrides(preferences.shortcuts));
@@ -96,13 +109,16 @@
   const mac = /Mac|iPhone|iPad/u.test(navigator.platform);
   let commandItems = $derived<CommandItem[]>(COMMANDS.map((command) => ({
     ...command, shortcut: formatShortcut(shortcutFor(command.id, shortcuts), mac),
-    disabled: (active.hemingway && hemingwayCommandBlocked(command.id)) || (busy && ['file.new', 'file.newCanvas', 'file.open', 'file.save', 'file.saveAs', 'tab.close'].includes(command.id)) || (canvasDocument && (['panel.properties','panel.table','panel.templates','panel.export','block.actions'].includes(command.id) || command.id.startsWith('block.') || command.id.startsWith('fold.') || command.id.startsWith('insert.'))),
+    disabled: (active.hemingway && hemingwayCommandBlocked(command.id)) || ((busy || workspaceBusy) && ['file.new', 'file.newCanvas', 'file.open', 'file.save', 'file.saveAs', 'tab.close'].includes(command.id)) || (canvasDocument && (['panel.properties','panel.table','panel.templates','panel.export','block.actions'].includes(command.id) || command.id.startsWith('block.') || command.id.startsWith('fold.') || command.id.startsWith('insert.'))),
     checked: command.id.startsWith('view.') ? command.id === 'view.hemingway' ? active.hemingway : command.id === 'view.focus' ? ui.focusMode : !active.hemingway && command.id === 'view.' + layout : command.id.startsWith('panel.') ? panel === command.id.slice(6) && !ui.focusMode : undefined,
   })));
   let layoutItems = $derived(active.hemingway ? commandItems.filter(command => command.id === 'view.hemingway') : canvasDocument
     ? commandItems.filter(command => ['view.source', 'view.preview'].includes(command.id)).map(command => ({ ...command, label: command.id === 'view.preview' ? 'Canvas' : 'Source', checked: command.id === (canvasVisible ? 'view.preview' : 'view.source') }))
     : commandItems.filter(command => ['view.source', 'view.split', 'view.preview', 'view.live'].includes(command.id)));
   let paletteItems = $derived(paletteScope === 'blocks' ? commandItems.filter((command) => command.group === 'Blocks' && command.id !== 'block.actions') : commandItems);
+  const sidebarCommands: CommandId[] = ['panel.explorer', 'panel.workspace', 'panel.graph', 'panel.git', 'panel.history', 'panel.properties', 'panel.templates', 'panel.table', 'panel.scripts', 'panel.export', 'app.settings'];
+  let sidebarItems = $derived(sidebarCommands.map(id => commandItems.find(item => item.id === id)!));
+  let visiblePanel = $derived(panel !== null && !ui.focusMode && (!['properties', 'templates', 'export', 'table'].includes(panel) || (!canvasDocument && !active.hemingway)));
   let appMenuItems = $derived(['Document', 'Application', 'Panels'].flatMap(group => commandItems.filter(command => command.group === group)));
 
   $effect(() => {
@@ -116,11 +132,12 @@
     persistMetadata({ draft: serializeTab(active) });
   });
   $effect(() => {
-    persistMetadata({ session: { activeTabId: activeId, tabs: documents.map(serializeTab), updatedAt: Date.now() } });
+    persistMetadata({ session: { activeTabId: activeId, tabs: documents.map(serializeTab), updatedAt: Date.now(), activeWorkspaceId: catalog.activeId, workspaceViews: { ...workspaceViews, [workspaceKey(catalog.activeId)]: captureWorkspaceView(documents, visibleIds, activeId, layout) } } });
   });
 
   function selectTab(id: string) {
     if (!documents.some((tab) => tab.id === id)) return;
+    if (!visibleIds.includes(id)) visibleIds = [...visibleIds, id];
     activeId = id;
   }
   async function canDiscard(tab: DocumentTab) {
@@ -131,41 +148,99 @@
     finally { discardDecisions--; }
   }
   async function closeTab(id: string) {
-    if (busy) return;
-    const tab = documents.find((item) => item.id === id);
-    if (!tab || !await canDiscard(tab)) return;
-    const index = documents.indexOf(tab);
-    documents = documents.filter((item) => item.id !== id);
-    if (!documents.length) documents = [createTab()];
-    if (activeId === id) activeId = documents[Math.max(0, Math.min(index - 1, documents.length - 1))].id;
+    if (busy || workspaceBusy) return;
+    const tab = documents.find(item => item.id === id);
+    const shared = Object.entries(workspaceViews).some(([key, view]) => key !== workspaceKey(catalog.activeId) && view.tabIds.includes(id));
+    if (!tab) return;
+    if (shared && visibleIds.length === 1 && documents.length >= 64) { error = 'Close another tab before closing the last view of this shared file (64-tab limit).'; return; }
+    if (!shared && !await canDiscard(tab)) return;
+    const index = visibleIds.indexOf(id);
+    visibleIds = visibleIds.filter(value => value !== id);
+    if (!shared) documents = documents.filter(item => item.id !== id);
+    if (!visibleIds.length) { const blank = createTab(); documents.push(blank); visibleIds = [blank.id]; }
+    if (activeId === id) activeId = visibleIds[Math.max(0, Math.min(index - 1, visibleIds.length - 1))];
     await tick(); await flushPersistence();
   }
-  function newCanvasDocument(){if(busy)return;if(documents.length>=64){error='Close a tab before opening another document (64-tab limit).';return;}const tab=createTab({name:'untitled.canvas',content:emptyCanvas(),savedContent:''});documents.push(tab);activeId=tab.id;layout='live';error='';status='New canvas';}
+  async function workspaceAction(command: string, args: Record<string, unknown> = {}) {
+    if (workspaceBusy || busy) throw new Error('Another operation is in progress.');
+    if (documents.length >= 64 && (command === 'create_workspace' || (command === 'select_workspace' && !workspaceViews[workspaceKey(String(args.id))]))) throw new Error('Close an unused tab before opening a new workspace (64-tab limit).');
+    workspaceBusy = true;
+    workspaceViews[workspaceKey(catalog.activeId)] = captureWorkspaceView(documents, visibleIds, activeId, layout);
+    try {
+      await tick(); await flushPersistence();
+      let next: WorkspaceCatalog;
+      if (desktop) next = await invoke<WorkspaceCatalog>(command, args);
+      else {
+        next = { activeId: catalog.activeId, workspaces: catalog.workspaces.map(workspace => ({ ...workspace, files: [...workspace.files] })) };
+        if (command === 'create_workspace') {
+          const item = { id: crypto.randomUUID(), name: String(args.name).trim(), files: [], legacyRoot: null };
+          if (!item.name) throw new Error('Enter a workspace name.');
+          next.workspaces.push(item); next.activeId = item.id;
+        } else if (command === 'select_workspace') next.activeId = String(args.id);
+        else if (command === 'rename_workspace') { const item = next.workspaces.find(item => item.id === args.id); if (item) item.name = String(args.name).trim(); }
+        else if (command === 'delete_workspace') { next.workspaces = next.workspaces.filter(item => item.id !== args.id); if (next.activeId === args.id) next.activeId = next.workspaces[0]?.id ?? null; }
+        else throw new Error('File references require the desktop app.');
+        if (!writeStorage('notation.workspaces', next)) throw new Error('Could not save workspaces.');
+      }
+      if (desktop && next.activeId) await invoke('index_workspace').catch(cause => { error = 'Workspace selected; indexing failed: ' + String(cause); });
+      workspaceViews[workspaceKey(catalog.activeId)] = captureWorkspaceView(documents, visibleIds, activeId, layout);
+      if (next.activeId !== catalog.activeId) {
+        const previousId = catalog.activeId;
+        const view = restoreWorkspaceView(workspaceViews[workspaceKey(next.activeId)] ?? (previousId === null ? workspaceViews[workspaceKey(null)] : undefined), documents, layout);
+        if (previousId === null && next.activeId !== null) delete workspaceViews[workspaceKey(null)];
+        if (view) {
+          visibleIds = view.tabIds; activeId = view.activeTabId; layout = view.layout;
+          for (const tab of documents) if (view.selections[tab.id]) tab.selection = { ...view.selections[tab.id] };
+        } else {
+          if (documents.length < 64) { const blank = createTab(); documents.push(blank); visibleIds = [blank.id]; activeId = blank.id; }
+          else visibleIds = [activeId];
+        }
+        catalog = next;
+        wikiChoice = null; wikiSerial++;
+        await tick();
+        for (const id of visibleIds) if (view?.selections[id]) editors[id]?.restoreSelection(view.selections[id]);
+      } else catalog = next;
+      // Retain deleted-workspace buffers as recoverable tabs instead of discarding unsaved work.
+      if (command === 'delete_workspace') {
+        const removed = workspaceViews[workspaceKey(String(args.id))];
+        if (removed) visibleIds = [...new Set([...visibleIds, ...removed.tabIds.filter(id => documents.some(tab => tab.id === id))])];
+        delete workspaceViews[workspaceKey(String(args.id))];
+      }
+      status = activeWorkspace ? 'Workspace: ' + activeWorkspace.name : 'Personal tabs';
+      await tick(); await flushPersistence();
+    } finally { workspaceBusy = false; }
+  }
+  async function chooseWorkspace(id: string) {
+    if (id === catalog.activeId) return;
+    try { await workspaceAction('select_workspace', { id }); }
+    catch (cause) { error = 'Could not switch workspace: ' + String(cause); }
+  }
+  function newCanvasDocument(){if(busy||workspaceBusy)return;if(documents.length>=64){error='Close a tab before opening another document (64-tab limit).';return;}const tab=createTab({name:'untitled.canvas',content:emptyCanvas(),savedContent:''});documents.push(tab);selectTab(tab.id);layout='live';error='';status='New canvas';}
   function writingLocked() { if (!active.hemingway) return false; error = HEMINGWAY_MESSAGE; return true; }
   function applyTemplate(text:string,source:{text:string;documentId:number}){return !writingLocked() && source.documentId===active.lifetime&&(editor?.apply(text,source.text,'input.template')??false);}
   function applyCanvas(text:string,source:{text:string;documentId:number}){return !writingLocked() && source.documentId===active.lifetime&&(editor?.apply(text,source.text,'input.canvas')??false);}
   async function renderCanvasCard(host:HTMLElement,markdown:string,sourcePath?:string,current=()=>host.isConnected){await renderContent(host,renderMarkdown(markdown),{theme,folds:new Map(),current,toggle:()=>false,edit:()=>{},loadEmbed:loadEmbedded,sourcePath,openWiki:(target,path)=>void openWiki(target,activeId,path),openPath:path=>void openPath(path)});}
   function newDocument() {
-    if (busy) return;
+    if (busy || workspaceBusy) return;
     if (documents.length >= 64) { error = 'Close a tab before opening another document (64-tab limit).'; return; }
     const tab = createTab();
-    documents.push(tab); activeId = tab.id; error = ''; status = 'New document';
+    documents.push(tab); selectTab(tab.id); error = ''; status = 'New document';
   }
   function receiveDocument(result: DocumentResult, browser = false): DocumentTab {
     const key = browser ? 'browser:' + result.path : result.path;
     const existing = documents.find((tab) => browser ? tab.openKey === key : tab.path === result.path);
-    if (existing) { activeId = existing.id; status = 'Switched to ' + existing.name; error = result.warning || ''; return existing; }
+    if (existing) { selectTab(existing.id); status = 'Switched to ' + existing.name; error = result.warning || ''; return existing; }
     if (documents.length >= 64) throw new Error('Close a tab before opening another document (64-tab limit).');
     if (new TextEncoder().encode(result.content).length > 4 * 1024 * 1024) throw new Error('This document exceeds the 4 MiB editor limit.');
     const tab = createTab({ name: result.path.split(/[\\/]/u).pop() || 'untitled.md', path: browser ? null : result.path, content: result.content, openKey: browser ? key : undefined });
-    documents.push(tab); activeId = tab.id;
+    documents.push(tab); selectTab(tab.id);
     status = 'Opened ' + tab.name; error = result.warning || '';
     return tab;
   }
   async function openPath(selected: string, line?: number, expiresAt?: number): Promise<boolean> {
-    if (busy) return false;
+    if (busy || workspaceBusy) return false;
     const existing = documents.find((tab) => tab.path === selected);
-    if (existing) { activeId = existing.id; if (line) { layout = 'source'; await tick(); editors[existing.id]?.revealLine(line); } return true; }
+    if (existing) { selectTab(existing.id); if (line) { layout = 'source'; await tick(); editors[existing.id]?.revealLine(line); } return true; }
     busy = true; error = '';
     try {
       const result = await invoke<DocumentResult>('read_document', { path: selected });
@@ -177,7 +252,7 @@
     finally { busy = false; }
   }
   async function openDocument() {
-    if (busy) return;
+    if (busy || workspaceBusy) return;
     if (!desktop) { fileInput.value = ''; fileInput.click(); return; }
     try {
       const selected = await open({ multiple: false, directory: false, filters: [{ name: 'Markdown & Mermaid', extensions: ['md', 'markdown', 'mmd', 'canvas'] }, { name: 'Text files', extensions: ['txt'] }] });
@@ -197,7 +272,7 @@
     return clean ? /\.(md|markdown|mmd|txt|canvas)$/iu.test(clean) ? clean : clean + '.md' : 'untitled.md';
   }
   async function saveDocument(saveAs = false) {
-    if (busy) return;
+    if (busy || workspaceBusy) return;
     const tab = active, saveContent = tab.content, originalName = tab.name, saveName = usableName(tab.name);
     busy = true; error = '';
     try {
@@ -232,7 +307,7 @@
   function applyScript(text: string, source: { document: ScriptDocument; documentId: number }) { return !writingLocked() && source.documentId === active.lifetime && (editor?.apply(text, source.document.text) ?? false); }
   function historySnapshot() { return { text: editor?.snapshot().text ?? active.content, documentId: active.lifetime }; }
   function restoreRevision(text: string, source: { text: string; documentId: number }) { return !writingLocked() && source.documentId === active.lifetime && (editor?.apply(text, source.text) ?? false); }
-  function editProperties(id: string) { if (!documents.some((tab) => tab.id === id)) return; activeId = id; ui.focusMode = false; panel = 'properties'; }
+  function editProperties(id: string) { if (!documents.some((tab) => tab.id === id)) return; selectTab(id); ui.focusMode = false; panel = 'properties'; }
   function applyTable(text: string, source: {text:string;documentId:number}) { return !writingLocked() && source.documentId===active.lifetime && (editor?.apply(text,source.text,'input.table')??false); }
   function applyProperties(text: string, source: { text: string; documentId: number }) { return !writingLocked() && source.documentId === active.lifetime && (editor?.apply(text, source.text, 'input.properties') ?? false); }
   async function candidatesFor(tabId: string, context: WikiCompletion): Promise<WikiCandidate[]> {
@@ -246,7 +321,7 @@
     return documents.filter((tab) => !tab.name.endsWith('.mmd') && tab.name.toLowerCase().includes((context.kind === 'heading' ? context.note : context.query).toLowerCase())).map((tab) => ({ path: tab.path || tab.id, name: tab.name, title: tab.name.replace(/\.md$/iu, ''), relativePath: tab.name, link: tab.name.replace(/\.md$/iu, ''), aliases: [], headings: referenceTargets(tab.content) }));
   }
   async function jumpToWiki(tab: DocumentTab, heading: string | null) {
-    activeId = tab.id;
+    selectTab(tab.id);
     if (!heading) { await tick(); if (layout !== 'preview') editors[tab.id]?.focus(); return; }
     const line = findWikiHeadingLine(tab.content, heading);
     if (line === null) { status = 'Heading not found: ' + heading; return; }
@@ -321,7 +396,7 @@
     const recoveredTab = createTab(cached);
     if (old) documents = documents.map((tab) => tab.id === old.id ? recoveredTab : tab);
     else documents.push(recoveredTab);
-    activeId = recoveredTab.id;
+    selectTab(recoveredTab.id);
     status = 'Recovered cached draft'; await tick(); await flushPersistence();
   }
   async function recoverSession() {
@@ -329,7 +404,7 @@
     if (!cached) return;
     for (const tab of documents) if (!await canDiscard(tab)) return;
     const state = restoreTabs(cached, null, sample);
-    documents = state.tabs; activeId = state.activeTabId; status = 'Recovered cached tabs';
+    documents = state.tabs; workspaceViews = restoreWorkspaceViews(cached?.workspaceViews, state.tabs); visibleIds = state.tabs.map(tab => tab.id); activeId = state.activeTabId; status = 'Recovered cached tabs';
     await tick(); await flushPersistence();
   }
   async function recoverScript() {
@@ -351,8 +426,8 @@
     if (id === 'file.save' || id === 'file.saveAs') { await saveDocument(id === 'file.saveAs'); return; }
     if (id === 'tab.close') { await closeTab(activeId); await tick(); editor?.focus(); return; }
     if (id === 'tab.next' || id === 'tab.previous') {
-      const index = documents.findIndex((tab) => tab.id === activeId);
-      selectTab(documents[(index + (id === 'tab.next' ? 1 : documents.length - 1)) % documents.length].id); await tick(); editor?.focus(); return;
+      const index = visibleDocuments.findIndex((tab) => tab.id === activeId);
+      selectTab(visibleDocuments[(index + (id === 'tab.next' ? 1 : visibleDocuments.length - 1)) % visibleDocuments.length].id); await tick(); editor?.focus(); return;
     }
     if (canvasDocument && (['panel.properties','panel.table','panel.templates','panel.export'].includes(id) || id.startsWith('block.') || id.startsWith('fold.') || id.startsWith('insert.'))) { status='This command applies to Markdown notes.'; return; }
     if (id.startsWith('insert.')) { if(layout==='preview')layout='live';await tick();editor?.insert(id.slice(7));return; }
@@ -382,6 +457,7 @@
   }
 
   onMount(() => {
+    if (initialView) for (const id of initialView.tabIds) if (initialView.selections[id]) editors[id]?.restoreSelection(initialView.selections[id]);
     const unobserve = observePersistence((value) => persistence = value);
     const guard = (event: BeforeUnloadEvent) => { if (!desktop && documents.some(tabDirty)) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', guard);
@@ -447,18 +523,27 @@
   });
 </script>
 
-<main class="app" class:focus-mode={ui.focusMode} data-density={ui.density} data-dark-preset={ui.darkPreset} inert={closingWindow} style={preferencesStyle(ui) + ';--editor-font-size:' + fontSize + 'px'}>
+<main class="app" use:smoothScrolling={ui.smoothScrolling} class:focus-mode={ui.focusMode} data-density={ui.density} data-dark-preset={ui.darkPreset} inert={closingWindow} style={preferencesStyle(ui) + ';--editor-font-size:' + fontSize + 'px'}>
   <header class="workspace-bar">
     <CompactMenu label="App menu" text="N" items={appMenuItems} execute={(id) => void runCommand(id)} bind:open={appMenuOpen} />
-    <Tabs {documents} {activeId} select={selectTab} close={(id) => void closeTab(id)} rename={(id) => { selectTab(id); renameId = id; }} />
+    {#if catalog.workspaces.length}<select class="workspace-switcher" aria-label="Active workspace" value={catalog.activeId ?? ''} disabled={workspaceBusy || busy} onchange={event => void chooseWorkspace(event.currentTarget.value)}>{#each catalog.workspaces as workspace}<option value={workspace.id}>{workspace.name}</option>{/each}</select>{/if}
+    <Tabs documents={visibleDocuments} {activeId} select={selectTab} close={(id) => void closeTab(id)} rename={(id) => { selectTab(id); renameId = id; }} />
     <button class="commands-trigger" aria-label="Commands" title={'Commands ' + formatShortcut(shortcutFor('app.commands', shortcuts), mac)} onclick={() => { paletteScope = 'all'; paletteOpen = true; }}><span>Commands</span><kbd aria-hidden="true">{formatShortcut(shortcutFor('app.commands', shortcuts), mac)}</kbd></button>
     <CompactMenu label="Layout" text={active.hemingway ? 'Hemingway' : canvasVisible ? 'Canvas' : layout === 'live' ? 'Live' : layout[0].toUpperCase() + layout.slice(1)} items={layoutItems} execute={(id) => void runCommand(id)} bind:open={layoutMenuOpen} radio />
   </header>
   {#if error}<div class="app-error" role="alert">{error}<button aria-label="Dismiss error" onclick={() => error = ''}>×</button></div>{/if}
   {#if persistence.state === 'error'}<div class="app-error" role="alert">{persistence.error}<button onclick={() => void retryPersistence()}>Retry saving app state</button></div>{/if}
   {#if persistence.recovery?.draft || persistence.recovery?.scriptDraft || persistence.recovery?.session}<div class="recovery-banner" role="status"><span>A cached draft from an incomplete save is available.</span>{#if persistence.recovery.session}<button onclick={recoverSession}>Recover cached tabs</button>{:else if persistence.recovery.draft}<button onclick={recoverDraft}>Recover cached draft</button>{/if}{#if persistence.recovery.scriptDraft}<button onclick={recoverScript}>Recover cached script</button>{/if}<button onclick={dismissRecovery}>Dismiss cached recovery</button></div>{/if}
-  <div class="content-area">
-    {#if panel === 'explorer' && !ui.focusMode}<Explorer currentPath={active.path} openFile={(path) => void openPath(path)} configure={() => panel = 'workspace'} close={() => panel = null} />{/if}
+  <div class="content-area" data-sidebar-position={ui.sidebarPosition}>
+    {#if !ui.focusMode}
+      <aside class="app-sidebar" aria-label="Application tools">
+        <Sidebar items={sidebarItems} execute={(id) => void runCommand(id)} />
+        {#if visiblePanel}<div class="sidebar-panel" class:sidebar-graph={panel === 'graph'}>
+          {#if panel === 'explorer' && !ui.focusMode}<Explorer workspace={activeWorkspace} currentPath={active.path} openFile={(path) => void openPath(path)} configure={() => panel = 'workspace'} close={() => panel = null} />{/if}
+          {#if panel === 'scripts' && !ui.focusMode}<Scripts lockedReason={active.hemingway ? HEMINGWAY_MESSAGE : ''} snapshot={scriptSnapshot} apply={applyScript} close={() => panel = null} />{:else if panel === 'workspace' && !ui.focusMode}<Workspace {catalog} action={workspaceAction} changing={workspaceBusy} currentPath={active.path} openDocument={openPath} close={() => panel = null} />{:else if panel === 'history' && !ui.focusMode}<History lockedReason={active.hemingway ? HEMINGWAY_MESSAGE : ''} currentContent={active.content} documentKey={active.path ?? active.id} snapshot={historySnapshot} restore={restoreRevision} close={() => panel = null} />{:else if panel === 'properties' && !ui.focusMode && !canvasDocument && !active.hemingway}<Properties content={active.content} documentId={active.lifetime} {standalone} apply={applyProperties} editSource={() => { layout = 'source'; void tick().then(() => editor?.reveal(0)); }} close={() => panel = null} />{:else if panel === 'templates' && !ui.focusMode && !canvasDocument && !active.hemingway}<Templates snapshot={scriptSnapshot} apply={applyTemplate} close={()=>panel=null} />{:else if panel === 'export' && !ui.focusMode && !canvasDocument && !active.hemingway}<Export snapshot={()=>({name:active.name,text:active.content,documentId:active.lifetime,path:active.path,sourcePath:active.path??active.id,standalone})} {theme} loadEmbed={loadEmbedded} close={()=>panel=null} />{:else if panel === 'table' && !ui.focusMode && !canvasDocument && !active.hemingway}<SmartTable content={active.content} documentId={active.lifetime} cursor={active.selection?.head ?? 0} {standalone} apply={applyTable} close={()=>panel=null} />{:else if panel === 'graph' && !ui.focusMode}{#key catalog.activeId}<Graph currentPath={active.path} open={(path)=>void openPath(path)} close={()=>panel=null} />{/key}{:else if panel === 'git' && !ui.focusMode}{#key catalog.activeId}<Git close={() => panel = null} />{/key}{/if}
+        </div>{/if}
+      </aside>
+    {/if}
     <div class="workspace" class:only-source={layout === 'source' || layout === 'live' || canvasVisible || active.hemingway} class:only-preview={!active.hemingway && layout === 'preview'}>
       <section class="pane source-pane" aria-label="Source editor" hidden={!active.hemingway && (layout === 'preview' || canvasVisible)}>
         {#if active.hemingway}<div class="pane-heading" role="status" aria-label="Hemingway mode"><span>HEMINGWAY MODE</span><span class="pane-hint">Deletion blocked · Commands → Hemingway mode</span></div>{:else if layout === 'split'}<div class="pane-heading"><span>SOURCE</span><span class="pane-hint">{standalone ? '.mmd' : '.md'}</span></div>{/if}
@@ -467,7 +552,7 @@
       <section class="pane preview-pane" aria-label="Preview pane" hidden={layout === 'source' || layout === 'live' || canvasVisible || active.hemingway}>{#if layout === 'split'}<div class="pane-heading"><span>PREVIEW</span></div>{/if}{#if !active.hemingway && !canvasVisible && (layout === 'split' || layout === 'preview')}<Preview documentId={active.lifetime} content={active.content} {standalone} {theme} folds={active.folds} onToggleTask={togglePreviewTask} onEditSource={(from) => void editSource(from)} cells={cellsFor(active)} sourcePath={active.path ?? active.id} loadEmbed={loadEmbedded} onOpenPath={(path) => void openPath(path)} onOpenWiki={wikiHandler(activeId)} onEditProperties={propertiesHandler(activeId)} />{/if}</section>
       {#if canvasVisible}<Canvas content={active.content} documentId={active.lifetime} path={active.path} apply={applyCanvas} openNote={(file,subpath)=>void openWiki(file+(subpath||''),activeId,'')} renderCard={renderCanvasCard} undo={()=>editor?.undoEdit()} redo={()=>editor?.redoEdit()} />{/if}
     </div>
-    {#if panel === 'scripts' && !ui.focusMode}<Scripts lockedReason={active.hemingway ? HEMINGWAY_MESSAGE : ''} snapshot={scriptSnapshot} apply={applyScript} close={() => panel = null} />{:else if panel === 'workspace' && !ui.focusMode}<Workspace currentPath={active.path} openDocument={openPath} close={() => panel = null} />{:else if panel === 'history' && !ui.focusMode}<History lockedReason={active.hemingway ? HEMINGWAY_MESSAGE : ''} currentContent={active.content} documentKey={active.path ?? active.id} snapshot={historySnapshot} restore={restoreRevision} close={() => panel = null} />{:else if panel === 'properties' && !ui.focusMode && !canvasDocument && !active.hemingway}<Properties content={active.content} documentId={active.lifetime} {standalone} apply={applyProperties} editSource={() => { layout = 'source'; void tick().then(() => editor?.reveal(0)); }} close={() => panel = null} />{:else if panel === 'templates' && !ui.focusMode && !canvasDocument && !active.hemingway}<Templates snapshot={scriptSnapshot} apply={applyTemplate} close={()=>panel=null} />{:else if panel === 'export' && !ui.focusMode && !canvasDocument && !active.hemingway}<Export snapshot={()=>({name:active.name,text:active.content,documentId:active.lifetime,path:active.path,sourcePath:active.path??active.id,standalone})} {theme} loadEmbed={loadEmbedded} close={()=>panel=null} />{:else if panel === 'table' && !ui.focusMode && !canvasDocument && !active.hemingway}<SmartTable content={active.content} documentId={active.lifetime} cursor={active.selection?.head ?? 0} {standalone} apply={applyTable} close={()=>panel=null} />{:else if panel === 'graph' && !ui.focusMode}<Graph currentPath={active.path} open={(path)=>void openPath(path)} close={()=>panel=null} />{:else if panel === 'git' && !ui.focusMode}<Git close={() => panel = null} />{/if}
+
   </div>
   {#if ui.showStatusBar && !ui.focusMode}<footer class="statusbar"><span class="status-message" role="status">{busy ? 'Working…' : status}</span>{#if !canvasVisible}<span class="status-detail">{lineCount} {lineCount === 1 ? 'line' : 'lines'}<span class="status-divider">·</span>{wordCount} {wordCount === 1 ? 'word' : 'words'}</span>{/if}<span class="save-state">{dirty ? 'Unsaved changes' : 'Saved'}</span>{#if nativeStore}<span class="database-state" data-state={persistence.state} hidden={persistence.state !== 'saving' && persistence.state !== 'error'} role="status">{persistence.state === 'saving' ? 'Saving app state…' : persistence.state === 'error' ? 'Recovery cache active' : ''}</span>{/if}{#if !desktop}<span class="browser-mode">Browser mode</span>{/if}</footer>{/if}
   {#if paletteOpen}<CommandPalette commands={paletteItems} execute={(id) => void runCommand(id)} close={() => paletteOpen = false} />{/if}

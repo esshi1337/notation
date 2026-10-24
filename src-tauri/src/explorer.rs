@@ -24,7 +24,7 @@ pub struct Directory {
 pub fn workspace_root(database: &Database) -> Result<PathBuf, String> {
     let root = database
         .workspace()?
-        .ok_or("Choose a workspace directory first.")?;
+        .ok_or("This virtual workspace has no repository root. Select a file/repository or a legacy folder workspace for Git operations.")?;
     let root = PathBuf::from(root)
         .canonicalize()
         .map_err(|error| format!("Workspace is unavailable: {error}"))?;
@@ -32,6 +32,69 @@ pub fn workspace_root(database: &Database) -> Result<PathBuf, String> {
         return Err("Workspace is not a directory.".into());
     }
     Ok(root)
+}
+/// Pin each directory while opening: a concurrent ancestor swap must not turn a
+/// previously validated member into a symlink traversal at the actual read.
+pub(crate) fn open_regular(path: &Path) -> Result<fs::File, String> {
+    #[cfg(unix)]
+    let file = {
+        use std::{
+            ffi::CString,
+            os::{
+                fd::{AsRawFd, FromRawFd},
+                unix::ffi::OsStrExt,
+            },
+        };
+        if !path.is_absolute() {
+            return Err("Workspace reads require an absolute path.".into());
+        }
+        let mut directory = fs::File::open("/").map_err(|e| e.to_string())?;
+        let components = path
+            .components()
+            .filter_map(|part| match part {
+                Component::Normal(name) => Some(Ok(name)),
+                Component::RootDir => None,
+                _ => Some(Err("Workspace reads require a normalized path.")),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut result = None;
+        for (index, component) in components.iter().enumerate() {
+            let name =
+                CString::new(component.as_bytes()).map_err(|_| "File paths cannot contain NUL.")?;
+            let last = index + 1 == components.len();
+            let flags = libc::O_RDONLY
+                | libc::O_NOFOLLOW
+                | libc::O_CLOEXEC
+                | if last {
+                    libc::O_NONBLOCK
+                } else {
+                    libc::O_DIRECTORY
+                };
+            // SAFETY: live pinned directory fd and a NUL-terminated component;
+            // ownership of each successful fd is transferred exactly once.
+            let fd = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), flags) };
+            if fd < 0 {
+                return Err(format!(
+                    "Could not read {} without symbolic links: {}",
+                    path.display(),
+                    std::io::Error::last_os_error()
+                ));
+            }
+            let opened = unsafe { fs::File::from_raw_fd(fd) };
+            if last {
+                result = Some(opened);
+            } else {
+                directory = opened;
+            }
+        }
+        result.ok_or("Choose a regular file, not a filesystem root.")?
+    };
+    #[cfg(not(unix))]
+    let file = fs::File::open(path).map_err(|e| e.to_string())?;
+    if !file.metadata().map_err(|e| e.to_string())?.is_file() {
+        return Err("Choose a regular file.".into());
+    }
+    Ok(file)
 }
 pub fn resolve(root: &Path, path: &str) -> Result<PathBuf, String> {
     let requested = if Path::new(path).is_absolute() {
@@ -112,7 +175,40 @@ pub fn resolve_allow_missing(root: &Path, path: &str) -> Result<PathBuf, String>
     Ok(normalized)
 }
 pub fn list_directory(database: &Database, path: Option<&str>) -> Result<Directory, String> {
+    let scope = database.active_workspace()?;
+    if scope.legacy_root.is_none() {
+        if path.is_some_and(|path| path != scope.id && path != scope.name && path != ".") {
+            return Err("Virtual workspaces list explicit file references only; directory traversal is not permitted.".into());
+        }
+        let entries = scope
+            .files
+            .iter()
+            .map(|path| Entry {
+                name: Path::new(path)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+                path: path.clone(),
+                is_dir: false,
+                is_file: true,
+                editable: matches!(
+                    Path::new(path).extension().and_then(|s| s.to_str()),
+                    Some("md" | "markdown" | "mmd" | "txt" | "canvas")
+                ),
+            })
+            .collect();
+        return Ok(Directory {
+            root: scope.id.clone(),
+            path: scope.id,
+            parent: None,
+            entries,
+            truncated: false,
+        });
+    }
     let root = workspace_root(database)?;
+    let at_root =
+        path.is_none() || path == Some(".") || path == Some(root.to_string_lossy().as_ref());
     let path = resolve(&root, path.unwrap_or("."))?;
     if !path.is_dir() {
         return Err("Choose a directory to list its children.".into());
@@ -166,6 +262,27 @@ pub fn list_directory(database: &Database, path: Option<&str>) -> Result<Directo
             editable,
         });
     }
+    if at_root {
+        for file in &scope.files {
+            if entries.iter().any(|entry| entry.path == *file) {
+                continue;
+            }
+            entries.push(Entry {
+                name: Path::new(file)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+                path: file.clone(),
+                is_dir: false,
+                is_file: true,
+                editable: matches!(
+                    Path::new(file).extension().and_then(|s| s.to_str()),
+                    Some("md" | "markdown" | "mmd" | "txt" | "canvas")
+                ),
+            });
+        }
+    }
     entries.sort_by(|a, b| {
         b.is_dir
             .cmp(&a.is_dir)
@@ -187,19 +304,16 @@ pub fn read_workspace_file(
     database: &Database,
     path: &str,
 ) -> Result<crate::documents::Document, String> {
+    let scope = database.active_workspace()?;
+    read_scoped_file(&scope, path)
+}
+pub(crate) fn read_scoped_file(
+    scope: &crate::workspace_catalog::WorkspaceRecord,
+    path: &str,
+) -> Result<crate::documents::Document, String> {
     use std::io::Read;
-    let root = workspace_root(database)?;
-    let path = resolve(&root, path)?;
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW);
-    }
-    let file = options
-        .open(&path)
-        .map_err(|error| format!("Could not read file: {error}"))?;
+    let path = scope.resolve(path)?;
+    let file = open_regular(&path)?;
     if !file
         .metadata()
         .map_err(|error| error.to_string())?

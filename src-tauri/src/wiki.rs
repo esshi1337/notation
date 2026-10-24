@@ -117,18 +117,6 @@ pub fn parse_target(raw: &str) -> Result<Target, String> {
         heading,
     })
 }
-fn source_folder(root: &Path, source: Option<&str>) -> Result<PathBuf, String> {
-    match source {
-        Some(source) => {
-            let source = explorer::resolve_allow_missing(root, source)?;
-            let parent = source
-                .parent()
-                .ok_or("Source note needs a parent folder.")?;
-            explorer::resolve(root, &parent.to_string_lossy())
-        }
-        None => Ok(root.to_path_buf()),
-    }
-}
 fn editable(path: &Path) -> bool {
     matches!(
         path.extension()
@@ -138,8 +126,13 @@ fn editable(path: &Path) -> bool {
         Some("md" | "markdown" | "mmd")
     )
 }
-fn safe_candidate(root: &Path, candidate: &Candidate) -> bool {
-    explorer::resolve(root, &candidate.path).is_ok_and(|path| path.is_file() && editable(&path))
+fn safe_candidate(
+    scope: &crate::workspace_catalog::WorkspaceRecord,
+    candidate: &Candidate,
+) -> bool {
+    scope
+        .resolve(&candidate.path)
+        .is_ok_and(|path| path.is_file() && editable(&path))
 }
 fn normalize(path: &Path) -> PathBuf {
     let mut result = PathBuf::new();
@@ -168,7 +161,11 @@ fn suggestions(root: &Path, folder: &Path, mut candidates: Vec<Candidate>) -> Ve
     for candidate in &mut candidates {
         let path = Path::new(&candidate.path);
         candidate.relative_path = path
-            .strip_prefix(root)
+            .strip_prefix(if root == Path::new("/") {
+                Path::new("")
+            } else {
+                root
+            })
             .unwrap_or(path)
             .to_string_lossy()
             .replace('\\', "/");
@@ -273,8 +270,14 @@ impl Database {
     }
     pub fn resolve_wiki_link(&self, raw: &str, source: Option<&str>) -> Result<Resolution, String> {
         let target = parse_target(raw)?;
-        let root = explorer::workspace_root(self)?;
-        let folder = source_folder(&root, source)?;
+        let scope = self.active_workspace()?;
+        if scope.legacy_root.is_none() {
+            if let Some(source) = source {
+                scope.resolve(source)?;
+            }
+        }
+        let root = scope.link_root();
+        let folder = scope.source_folder(source)?;
         let notes = self.indexed_notes()?;
         let mut matches = if target.note.is_empty() {
             let source =
@@ -340,14 +343,18 @@ impl Database {
                 }
             }
         };
-        matches.retain(|candidate| safe_candidate(&root, candidate));
+        matches.retain(|candidate| safe_candidate(&scope, candidate));
         let matches = suggestions(&root, &folder, matches);
         let status = match matches.len() {
             0 => "missing",
             1 => "resolved",
             _ => "ambiguous",
         };
-        let create_path = if matches.is_empty() {
+        let create_path = if matches.is_empty()
+            && (scope.legacy_root.is_some()
+                || source.is_some()
+                || Path::new(&target.note).is_absolute())
+        {
             creation_path(&root, &folder, &target.note)
                 .ok()
                 .map(|path| path.to_string_lossy().into_owned())
@@ -377,8 +384,14 @@ impl Database {
         if query.len() > 2048 {
             return Err("Wiki completion query exceeds 2 KiB.".into());
         }
-        let root = explorer::workspace_root(self)?;
-        let folder = source_folder(&root, source)?;
+        let scope = self.active_workspace()?;
+        if scope.legacy_root.is_none() {
+            if let Some(source) = source {
+                scope.resolve(source)?;
+            }
+        }
+        let root = scope.link_root();
+        let folder = scope.source_folder(source)?;
         let query = query.trim().trim_start_matches("[[");
         let query = match separator(query, b'|') {
             Some(index) => &query[..index],
@@ -408,7 +421,7 @@ impl Database {
                         .iter()
                         .any(|alias| alias.to_lowercase().contains(&note))
             })
-            .filter(|candidate| safe_candidate(&root, candidate))
+            .filter(|candidate| safe_candidate(&scope, candidate))
             .collect::<Vec<_>>();
         if let Some(heading) = heading {
             for candidate in &mut candidates {
@@ -439,8 +452,16 @@ impl Database {
         if resolution.status != "missing" {
             return Err("This wiki target already resolves to existing notes. Open or choose an existing note instead.".into());
         }
-        let root = explorer::workspace_root(self)?;
-        let folder = source_folder(&root, source)?;
+        let scope = self.active_workspace()?;
+        if scope.legacy_root.is_none() {
+            if let Some(source) = source {
+                scope.resolve(source)?;
+            } else if !Path::new(&resolution.target).is_absolute() {
+                return Err("Choose an explicit absolute location or a referenced source note before creating a virtual workspace note.".into());
+            }
+        }
+        let root = scope.link_root();
+        let folder = scope.source_folder(source)?;
         let path = creation_path(&root, &folder, &resolution.target)?;
         let content = content.unwrap_or("");
         if content.len() > crate::storage::MAX_CONTENT {
@@ -471,6 +492,11 @@ impl Database {
             content: content.into(),
             warning: None,
         };
+        if let Err(error) = self.add_workspace_files(&scope.id, &[path.into()]) {
+            document.warning = Some(format!(
+                "Note created, but workspace membership could not be saved: {error}"
+            ));
+        }
         if let Err(error) = self.record_document(path, content, true) {
             document.warning = Some(format!(
                 "Note created, but history could not be saved: {error}"
@@ -501,13 +527,15 @@ fn creation_path(root: &Path, folder: &Path, note: &str) -> Result<PathBuf, Stri
     let relative = path
         .strip_prefix(root)
         .map_err(|_| "New note is outside the workspace.")?;
-    if relative.components().any(|part| {
-        part.as_os_str().to_string_lossy().starts_with('.')
-            || matches!(
-                part.as_os_str().to_str(),
-                Some("node_modules" | "target" | "dist" | "build" | "vendor")
-            )
-    }) {
+    if root != Path::new("/")
+        && relative.components().any(|part| {
+            part.as_os_str().to_string_lossy().starts_with('.')
+                || matches!(
+                    part.as_os_str().to_str(),
+                    Some("node_modules" | "target" | "dist" | "build" | "vendor")
+                )
+        })
+    {
         return Err("New notes cannot be created in hidden or build directories.".into());
     }
     let parent = path.parent().ok_or("Choose a note filename.")?;
@@ -576,10 +604,12 @@ fn query_value<'de, D: serde::Deserializer<'de>>(
 }
 impl Database {
     pub fn get_frontmatter(&self, path: Option<&str>) -> Result<Vec<PropertyDocument>, String> {
-        let root = explorer::workspace_root(self)?;
+        let scope = self.active_workspace()?;
         let path = path
             .map(|path| {
-                explorer::resolve(&root, path).map(|path| path.to_string_lossy().into_owned())
+                scope
+                    .resolve(path)
+                    .map(|path| path.to_string_lossy().into_owned())
             })
             .transpose()?;
         let connection = self.lock()?;
