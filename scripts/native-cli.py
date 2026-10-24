@@ -7,11 +7,13 @@ plugin. Separately deployed application/shared libraries remain unchanged.
 Repair an idle AppDir: --repack-appdir PATH --output PATH.AppImage
 """
 import argparse
+import errno
 from contextlib import contextmanager
 import hashlib
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -134,6 +136,44 @@ def preserve_launch_directory(appdir):
     launcher.write_text(''.join(lines))
 
 
+def remove_stale_language_servers(appdir):
+    """Remove stale packs through pinned directory descriptors, never symlinks."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    descriptors = []
+    try:
+        current = os.open(appdir, flags)
+        descriptors.append(current)
+        for name in ('usr', 'lib'):
+            try:
+                current = os.open(name, flags, dir_fd=current)
+            except FileNotFoundError:
+                return
+            descriptors.append(current)
+        for name in os.listdir(current):
+            try:
+                package = os.open(name, flags, dir_fd=current)
+            except OSError as error:
+                if error.errno in (errno.ENOTDIR, errno.ELOOP):
+                    continue
+                raise
+            try:
+                try:
+                    target = os.stat('language-servers', dir_fd=package, follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                if stat.S_ISDIR(target.st_mode):
+                    if not shutil.rmtree.avoids_symlink_attacks:
+                        raise RuntimeError('Safe AppDir cleanup requires descriptor-based rmtree')
+                    shutil.rmtree('language-servers', dir_fd=package)
+                else:
+                    os.unlink('language-servers', dir_fd=package)
+            finally:
+                os.close(package)
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
 def repackage(appdir, output):
     appdir, output = appdir.resolve(), output.resolve()
     if not (appdir / 'AppRun').is_file():
@@ -142,15 +182,8 @@ def repackage(appdir, output):
     plugin = cache / 'linuxdeploy-plugin-appimage.AppImage'
     if not plugin.is_file():
         raise RuntimeError(f'Tauri AppImage output plugin is missing: {plugin}')
+    remove_stale_language_servers(appdir)
     restore_engines(appdir)
-    language_source = ROOT / 'src-tauri/resources/language-servers'
-    language_targets = list((appdir / 'usr/lib').glob('*/language-servers/manifest.json'))
-    if len(language_targets) != 1:
-        raise RuntimeError('Bundled language servers are missing')
-    language_target = language_targets[0].parent
-    shutil.rmtree(language_target)
-    shutil.copytree(language_source, language_target)
-    subprocess.run([str(language_target / 'node'), '--version'], check=True, timeout=15)
     restore_webkit_helpers(appdir)
     verify_media_bundle(appdir)
     preserve_launch_directory(appdir)
@@ -193,8 +226,6 @@ def main():
         if environment.get('LD_LIBRARY_PATH'):
             paths.append(environment['LD_LIBRARY_PATH'])
         environment['LD_LIBRARY_PATH'] = os.pathsep.join(paths)
-    if len(sys.argv)>1 and sys.argv[1] in ('build', 'bundle'):
-        subprocess.run([sys.executable, str(ROOT / 'scripts/bundle-language-servers.py')], check=True)
     started = time.time()
     arguments = sys.argv[1:]
     if arguments and arguments[0] in ('build', 'bundle') and '--no-bundle' not in arguments:

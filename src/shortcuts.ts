@@ -12,6 +12,7 @@ export const COMMANDS = [
   { id: 'edit.replace', label: 'Find and replace', group: 'Editing', defaultShortcut: 'Mod+H' },
   { id: 'edit.gotoLine', label: 'Go to line', group: 'Editing', defaultShortcut: 'Mod+L' },
   { id: 'edit.find', label: 'Find', group: 'Editing', defaultShortcut: 'Mod+F' },
+  { id: 'view.language', label: 'Change document language', group: 'View', defaultShortcut: '' },
   { id: 'code.quickOpen', label: 'Go to file', group: 'Code', defaultShortcut: 'Mod+P' },
   { id: 'code.search', label: 'Search workspace files', group: 'Code', defaultShortcut: 'Mod+Alt+J' },
   { id: 'code.definition', label: 'Go to definition', group: 'Code', defaultShortcut: 'F12' },

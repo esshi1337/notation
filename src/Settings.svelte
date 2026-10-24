@@ -120,7 +120,7 @@
   function resetEditor() {
     fontSize = 14; wrap = true; layout = 'split';
     prefs.editorFont = DEFAULT_UI_PREFERENCES.editorFont; prefs.lineHeight = DEFAULT_UI_PREFERENCES.lineHeight;
-    prefs.tabSize = DEFAULT_UI_PREFERENCES.tabSize; prefs.indentWithTabs = DEFAULT_UI_PREFERENCES.indentWithTabs; prefs.languageIntelligence = DEFAULT_UI_PREFERENCES.languageIntelligence;
+    prefs.tabSize = DEFAULT_UI_PREFERENCES.tabSize; prefs.indentWithTabs = DEFAULT_UI_PREFERENCES.indentWithTabs; prefs.languageIntelligenceEnabled = DEFAULT_UI_PREFERENCES.languageIntelligenceEnabled;
     prefs.readingWidth = DEFAULT_UI_PREFERENCES.readingWidth; prefs.showLineNumbers = DEFAULT_UI_PREFERENCES.showLineNumbers;
     prefs.smoothScrolling = DEFAULT_UI_PREFERENCES.smoothScrolling;
   }
@@ -199,7 +199,9 @@
           <NumberControl label="Line height" bind:value={prefs.lineHeight} min={1.3} max={2.2} step={0.1} precision={1} defaultValue={DEFAULT_UI_PREFERENCES.lineHeight} sliderStep={0.1} />
           <NumberControl label="Indent size" bind:value={prefs.tabSize} min={1} max={8} step={1} defaultValue={2} />
           <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.indentWithTabs} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Indent with tabs</label>
-          <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.languageIntelligence} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Language intelligence</label>
+          <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.languageIntelligenceEnabled} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Language intelligence</label>
+          <p class="settings-help">Off by default. Install the optional TypeScript / Svelte language pack or Rust tooling first, then enable intelligence. Syntax highlighting works without it.</p>
+          <details class="language-setup"><summary>Set up language tools</summary><p>From the Notation source checkout, run <code>npm run desktop:languages</code> to install the optional TypeScript / Svelte pack. This is a separate download, stored in your Notation data directory.</p><p>For Rust, install <code>rust-analyzer</code> and <code>rustfmt</code> with your Rust toolchain. After installation, turn intelligence on. No tools are downloaded automatically.</p></details>
           <NumberControl label="Reading width" bind:value={prefs.readingWidth} min={480} max={1200} step={10} sliderStep={1} defaultValue={DEFAULT_UI_PREFERENCES.readingWidth} unit="px" />
           <SelectControl label="Layout" options={layoutOptions} value={layout} onchange={(value) => layout = value as Layout} {theme} />
           <div class="settings-toggle-group">

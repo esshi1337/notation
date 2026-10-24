@@ -2,8 +2,9 @@
   import type { CellSession } from './cells';
   import { onMount, untrack } from 'svelte';
   import { type CodeLanguage, intelligenceLanguage } from './code-languages';
-  import { languageExtensions } from './code-syntax';
-  import { attachIntelligence, intelligenceCommand, formatCode, renameCode, type IntelligenceState } from './language-intelligence';
+  import type { Extension } from '@codemirror/state';
+  import { loadLanguageIntelligence } from './intelligence-loader';
+  import type { IntelligenceState } from './language-intelligence';
   import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
   import { Compartment, EditorState, Transaction } from '@codemirror/state';
   import { EditorView, drawSelection, highlightActiveLine, keymap, lineNumbers } from '@codemirror/view';
@@ -31,6 +32,14 @@
   let host: HTMLDivElement;
   let view: EditorView | undefined;
   let initialized = $state(false);
+  let codeSyntax = $state.raw<Extension>([]);
+  $effect(() => {
+    const id = codeLanguage;
+    let cancelled = false;
+    codeSyntax = [];
+    if (id !== 'markdown' && id !== 'plaintext') void import('./code-syntax').then(module => { if (!cancelled) codeSyntax = module.languageExtensions(id); });
+    return () => { cancelled = true; };
+  });
   const intelligence = new Compartment();
   const indentation = new Compartment();
   const wrapping = new Compartment();
@@ -58,9 +67,9 @@
   export function focus() { view?.focus(); }
   export function getView() { return view ?? null; }
   export function comment() { if (view && !hemingway && codeLanguage !== 'markdown') toggleComment(view); }
-  export function codeAction(action: 'definition' | 'references') { if (view) return intelligenceCommand(view, action); }
-  export function format() { if (view && !hemingway) return formatCode(view, tabSize, !indentWithTabs); }
-  export function renameSymbol(name: string) { if (view && !hemingway) return renameCode(view, name); }
+  export async function codeAction(action: 'definition' | 'references') { const current = view; if (current && intelligenceEnabled) { const module = await loadLanguageIntelligence(); if (view === current && intelligenceEnabled) return module.intelligenceCommand(current, action); } }
+  export async function format() { const current = view; if (current && !hemingway && intelligenceEnabled) { const module = await loadLanguageIntelligence(); if (view === current && !hemingway && intelligenceEnabled) return module.formatCode(current, tabSize, !indentWithTabs); } }
+  export async function renameSymbol(name: string) { const current = view; if (current && !hemingway && intelligenceEnabled) { const module = await loadLanguageIntelligence(); if (view === current && !hemingway && intelligenceEnabled) return module.renameCode(current, name); } }
   export function symbolName() { if (!view) return ''; const word = view.state.wordAt(view.state.selection.main.head); return word ? view.state.sliceDoc(word.from, word.to) : ''; }
 
   export function fold(action: FoldAction) { if (!view || standalone || hemingway) return false; const changed = codeLanguage === 'markdown' ? performFold(view, action) : ({ 'Fold block': foldCode, 'Unfold block': unfoldCode, 'Fold all': foldAll, 'Unfold all': unfoldAll }[action])(view); view.focus(); return changed; }
@@ -103,7 +112,7 @@
     if (hemingway) return [];
     return codeLanguage === 'markdown'
       ? [markdown({ extensions: [mathMarkdown] }), markdownFolding, syntaxHighlighting(highlighting), highlightActiveLine(), wikiCompletion(context => standalone || !wikiCandidates ? Promise.resolve([]) : wikiCandidates(context))]
-      : [languageExtensions(codeLanguage), syntaxHighlighting(highlighting), highlightActiveLine(), bracketMatching(), closeBrackets(), indentOnInput(), keymap.of(closeBracketsKeymap)];
+      : [codeSyntax, syntaxHighlighting(highlighting), highlightActiveLine(), bracketMatching(), closeBrackets(), indentOnInput(), keymap.of(closeBracketsKeymap)];
   }
   onMount(() => {
     view = new EditorView({
@@ -196,7 +205,8 @@
     if (!ready || !view) return;
     if (!enabled || !path?.startsWith('/') || !intelligenceLanguage(id)) { report?.({ state: 'off', message: !enabled ? 'Language intelligence off' : !path?.startsWith('/') ? 'Save this file to enable language intelligence' : 'Syntax highlighting' }); return; }
     let cancelled = false, release: (() => void) | undefined;
-    void attachIntelligence(path, id, value => { if (!cancelled) report?.(value); }).then(connection => {
+    void loadLanguageIntelligence().then(module => cancelled ? null : module.attachIntelligence(path, id, value => { if (!cancelled) report?.(value); })).then(connection => {
+      if (!connection) return;
       if (cancelled || !view) { connection.release(); return; }
       release = connection.release; view.dispatch({ effects: intelligence.reconfigure(connection.extension) });
     }).catch(cause => { if (!cancelled) report?.({ state: 'error', message: String(cause) }); });

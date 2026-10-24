@@ -18,6 +18,12 @@ try {
     assert.equal(value.sidebarWidth, 180);
     assert.equal(value.showStatusBar, true);
   });
+  check('language intelligence requires a new explicit opt-in, including upgrades', () => {
+    for (const settings of [{}, {languageIntelligence: true}, {languageIntelligence: false}, {languageIntelligenceEnabled: 'true'}, {languageIntelligenceEnabled: 1}]) assert.equal(preferences.readUIPreferences(settings).languageIntelligenceEnabled, false);
+    assert.equal(preferences.DEFAULT_UI_PREFERENCES.languageIntelligenceEnabled, false);
+    assert.equal(preferences.readUIPreferences({languageIntelligenceEnabled: true}).languageIntelligenceEnabled, true);
+    assert.equal(preferences.readUIPreferences({languageIntelligenceEnabled: false}).languageIntelligenceEnabled, false);
+  });
   check('custom appearance survives serialization without losing boolean settings', () => {
     const custom = { darkPreset: 'charcoal', density: 'comfortable', accentColor: '#AABBCC', editorFont: 'sans', lineHeight: 2, readingWidth: 700, sidebarWidth: 320, sidebarRailWidth: 'wide', sidebarPosition: 'right', showStatusBar: false, showLineNumbers: false, focusMode: true, smoothScrolling: false };
     assert.deepEqual(preferences.readUIPreferences(JSON.parse(JSON.stringify(custom))), { ...preferences.DEFAULT_UI_PREFERENCES, ...custom, accentColor: '#aabbcc' });

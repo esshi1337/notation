@@ -31,8 +31,7 @@
     "desktop:bundle": "python3 scripts/native-cli.py bundle --features desktop --bundles appimage",
     "test:hemingway": "node --experimental-strip-types tests/hemingway.mjs",
     "test:code": "node tests/code-editor.mjs",
-    "desktop:languages": "python3 scripts/bundle-language-servers.py",
-    "predesktop": "npm run desktop:languages"
+    "desktop:languages": "python3 scripts/bundle-language-servers.py --install"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
@@ -74,9 +73,7 @@
     "@tauri-apps/cli": "^2.8.4",
     "@types/katex": "^0.16.8",
     "svelte-check": "^4.3.2",
-    "svelte-language-server": "^0.18.5",
     "typescript": "^5.9.2",
-    "typescript-language-server": "^6.0.2",
     "vite": "^7.1.7"
   }
 }

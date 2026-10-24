@@ -365,18 +365,34 @@ Build frontend assets with `npm run build`; build the desktop application with `
 
 Text and code files open in source mode without changing a workspace's Markdown
 preview layout. Notation preserves code extensions and extensionless filenames.
-Choose a language from the editor's Language menu when automatic detection is
-insufficient; the override is saved with the document session. Syntax support
+New notes default to Markdown. Files choose their editor from the filename: Markdown
+keeps the selected writing layout, while text and code files use Source. Click the
+small language label in the status bar, or run **Change document language** from
+Commands, to override a document. The override is saved with its session; choose
+Automatic to return to filename detection. Syntax support
 covers JavaScript/TypeScript/JSX/TSX, Svelte, Rust, JSON, HTML, CSS, Python, and YAML.
 Code mode provides bracket matching, automatic bracket closing, indentation,
 line comments, and syntax-aware folding. Settings → Editor controls indent size,
 tabs versus spaces, and language intelligence.
 
-Saved TypeScript/JavaScript, Svelte, and Rust files can use completion, hover,
-signature help, diagnostics, definition/reference navigation, symbol rename, and
-formatting. The Linux AppImage includes Node, TypeScript, and the TypeScript and
-Svelte language servers. Rust uses `rust-analyzer` from the installed Rust
-toolchain; Rust formatting also needs that toolchain's `rustfmt` component.
+Language intelligence is **off by default**, including upgrades from the earlier
+default-on release. Syntax highlighting, folding, comments, and indentation work
+without language servers. The intelligence client loads only when enabled for a
+supported saved file; Markdown sessions do not load code-language grammars.
+
+To opt in, first install the optional tools, then enable **Settings → Editor →
+Language intelligence**. Saved TypeScript/JavaScript, Svelte, and Rust files can
+then use completion, hover, signature help, diagnostics, definition/reference
+navigation, symbol rename, and formatting.
+
+The Linux AppImage does **not** include Node or TypeScript/Svelte language servers.
+From the source checkout, explicitly run `npm run desktop:languages` to download
+and install the pinned TypeScript/Svelte language pack. It lives under
+`$XDG_DATA_HOME/local.notation.app/language-servers` (normally
+`~/.local/share/local.notation.app/language-servers`), separately from the app.
+For Rust, install `rust-analyzer` and `rustfmt` using your Rust toolchain.
+No language tools are downloaded by opening documents, enabling the setting,
+or building the default app.
 Missing servers and initialization failures appear beside the Language menu.
 Servers start on demand, are shared by canonical project root and server kind,
 and stop after their last document closes. At most six servers run per app
@@ -408,12 +424,26 @@ keep editing, or explicitly replace the buffer. Save As can preserve a separate
 copy. The disk comparison is not an operating-system lock on other editors.
 
 Language servers run locally. Svelte project configuration/preprocessors are
-not executed automatically. The bundled Svelte server also bypasses project Prettier configuration and plugins (a pinned packaging patch), and Rust build scripts, procedural macros, and
-automatic cargo checks are disabled. This limits features that depend on those
+not executed automatically. The optional Svelte pack bypasses project Prettier
+configuration and plugins through pinned patches. Rust build scripts, procedural
+macros, and automatic Cargo checks are disabled. This limits features that depend on those
 project hooks. Language intelligence is not a terminal, debugger, build-task
 runner, or full Git client. File size and tab limits remain 4 MiB and 64 tabs.
 
-Desktop packaging stages the server dependency closure from `package-lock.json`
-and a checksum-pinned official Node binary using
-`scripts/bundle-language-servers.py`. Generated resources are ignored by git;
-run `npm ci` before packaging. No CI service is required.
+The optional installer uses a separate lockfile under `tooling/language-servers/`,
+disables npm lifecycle scripts, and verifies a checksum-pinned Node binary.
+Generated packs are ignored by git and excluded from default AppImage packaging.
+No CI service is required.
+
+For a disposable packaged stress run, use:
+
+```sh
+python3 tests/native/lightweight_stress.py --app /path/to/Notation.AppImage --output /tmp/notation-stress
+python3 tests/native/instance_smoke.py --app /path/to/Notation.AppImage --output /tmp/notation-instances
+```
+
+The first run measures 64 mixed tabs, a 60,000-line code file, large Markdown
+preview, near-limit text, repeated tab cycles, and idle CPU/RSS/PSS while asserting
+that no language servers start. The second checks single-profile ownership,
+concurrent launches, separate profiles, and recovery. They use disposable state;
+measurements include WebKit and remain machine- and workload-dependent.

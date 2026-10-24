@@ -3,9 +3,10 @@
   import { invoke, isTauri } from '@tauri-apps/api/core';
   import { ask, open, save } from '@tauri-apps/plugin-dialog';
   import { HEMINGWAY_MESSAGE, hemingwayCommandBlocked } from './hemingway';
-  import { detectLanguage, documentFileName, languageOptions, type CodeLanguage } from './code-languages';
-  import { configureIntelligence, type IntelligenceState } from './language-intelligence';
-  import SelectControl from './SelectControl.svelte';
+  import { detectLanguage, documentFileName, languageOptions } from './code-languages';
+  import type { IntelligenceState } from './language-intelligence';
+  import { configureLanguageIntelligence } from './intelligence-loader';
+  import DocumentLanguage from './DocumentLanguage.svelte';
   import FileNavigator from './FileNavigator.svelte';
   import DiskConflict from './DiskConflict.svelte';
   import Editor from './Editor.svelte';
@@ -92,6 +93,7 @@
   let shortcuts = $state(readShortcutOverrides(preferences.shortcuts));
   let panel = $state<Panel>(null);
   let settingsOpen = $state(false);
+  let languageTarget = $state<string | null>(null);
   let wikiChoice = $state<{ resolution: WikiResolution; sourceId: string; sourcePath?: string | null; ticket: number } | null>(null);
   let wikiBusy = $state(false);
   let wikiSerial = 0;
@@ -130,7 +132,7 @@
   const mac = /Mac|iPhone|iPad/u.test(navigator.platform);
   let commandItems = $derived<CommandItem[]>(COMMANDS.map((command) => ({
     ...command, shortcut: formatShortcut(shortcutFor(command.id, shortcuts), mac),
-    disabled: (codeDocument && (command.id.startsWith('block.') || command.id.startsWith('insert.') || ['panel.properties','panel.templates','panel.table','panel.export','view.split','view.preview','view.live'].includes(command.id))) || (active.hemingway && hemingwayCommandBlocked(command.id)) || ((busy || workspaceBusy) && ['file.new', 'file.newCanvas', 'file.open', 'file.save', 'file.saveAs', 'tab.close'].includes(command.id)) || (canvasDocument && (['panel.properties','panel.table','panel.templates','panel.export','block.actions'].includes(command.id) || command.id.startsWith('block.') || command.id.startsWith('fold.') || command.id.startsWith('insert.'))),
+    disabled: (command.id === 'view.language' && canvasDocument) || (!ui.languageIntelligenceEnabled && ['code.definition','code.references','code.rename','code.format'].includes(command.id)) || (codeDocument && (command.id.startsWith('block.') || command.id.startsWith('insert.') || ['panel.properties','panel.templates','panel.table','panel.export','view.split','view.preview','view.live'].includes(command.id))) || (active.hemingway && hemingwayCommandBlocked(command.id)) || ((busy || workspaceBusy) && ['file.new', 'file.newCanvas', 'file.open', 'file.save', 'file.saveAs', 'tab.close'].includes(command.id)) || (canvasDocument && (['panel.properties','panel.table','panel.templates','panel.export','block.actions'].includes(command.id) || command.id.startsWith('block.') || command.id.startsWith('fold.') || command.id.startsWith('insert.'))),
     checked: command.id.startsWith('view.') ? command.id === 'view.hemingway' ? active.hemingway : command.id === 'view.focus' ? ui.focusMode : !active.hemingway && command.id === 'view.' + effectiveLayout : command.id.startsWith('panel.') ? panel === command.id.slice(6) && !ui.focusMode : undefined,
   })));
   let layoutItems = $derived(codeDocument ? commandItems.filter(command => command.id === 'view.source') : active.hemingway ? commandItems.filter(command => command.id === 'view.hemingway') : canvasDocument
@@ -158,7 +160,7 @@
 
   async function readDiskFile(path: string) { return (await invoke<DocumentResult>('read_document_snapshot', { path })).content; }
   async function readCodeFile(path: string) { return documents.find(tab=>tab.path===path || tab.id===path)?.content ?? await readDiskFile(path); }
-  configureIntelligence({
+  configureLanguageIntelligence({
     read: readCodeFile,
     display: async path => { if (!await openPath(path)) return null; await tick(); return editors[documents.find(tab=>tab.path===path)?.id ?? '']?.getView() ?? null; },
     views: () => new Map(documents.flatMap(tab => { const view=editors[tab.id]?.getView(); return tab.path && view ? [[tab.path,view] as const] : []; })),
@@ -552,16 +554,18 @@
   async function runCommand(id: CommandId) {
     paletteOpen = false; appMenuOpen = false; layoutMenuOpen = false;
     if (id === 'app.commands') { await tick(); paletteScope = 'all'; paletteOpen = true; return; }
+    if (id === 'view.language') { if (!canvasDocument) languageTarget = activeId; return; }
     if (id === 'view.hemingway') { const tab = active; tab.hemingway = !tab.hemingway; tab.updatedAt = Date.now(); if (tab.hemingway) void cellsFor(tab).stop(); status = tab.hemingway ? 'Hemingway mode on — deletion blocked' : 'Hemingway mode off'; error = ''; await tick(); editors[tab.id]?.focus(); return; }
     if (active.hemingway && hemingwayCommandBlocked(id)) { error = HEMINGWAY_MESSAGE; return; }
     if (id === 'code.quickOpen' || id === 'code.search') { fileNavigator = id === 'code.search' ? 'search' : 'files'; return; }
     if (id.startsWith('code.')) {
+      if (id !== 'code.comment' && !ui.languageIntelligenceEnabled) { status = 'Enable language intelligence in Settings → Editor after installing its tools.'; return; }
       if (active.hemingway) { error = HEMINGWAY_MESSAGE; return; }
       try {
         if (id === 'code.rename') symbolTarget = activeId;
         else if (id === 'code.format') { await editor?.format(); status = 'Document formatted'; }
         else if (id === 'code.comment') editor?.comment();
-        else editor?.codeAction(id === 'code.definition' ? 'definition' : 'references');
+        else await editor?.codeAction(id === 'code.definition' ? 'definition' : 'references');
       } catch (cause) { error = String(cause); }
       return;
     }
@@ -730,21 +734,21 @@
       <section class="pane source-pane" class:code-source={codeDocument} aria-label="Source editor" hidden={!active.hemingway && (effectiveLayout === 'preview' || canvasVisible)}>
         {#if active.hemingway}<div class="pane-heading" role="status" aria-label="Hemingway mode"><span>HEMINGWAY MODE</span><span class="pane-hint">Deletion blocked · Commands → Hemingway mode</span></div>{:else if effectiveLayout === 'split'}<div class="pane-heading"><span>SOURCE</span><span class="pane-hint">{standalone ? '.mmd' : '.md'}</span></div>{/if}
         {#if diskConflicts[activeId]}<div class="disk-conflict-banner" role="alert"><span>{diskConflicts[activeId]}</span><button onclick={() => comparingDisk = activeId}>Compare / reload</button><button onclick={() => delete diskConflicts[activeId]}>Keep editing</button></div>{/if}
-        {#if !canvasDocument}<div class="code-heading"><SelectControl label="Language" options={[{value:'auto',label:'Automatic · '+(languageOptions.find(item=>item.value===activeLanguage)?.label ?? activeLanguage)}, ...languageOptions]} value={active.language ?? 'auto'} onchange={(value) => active.language = value === 'auto' ? undefined : value as CodeLanguage} {theme} /><span role="status" title={intelligenceStates[activeId]?.message}>{intelligenceStates[activeId]?.message ?? 'Syntax highlighting'}</span></div>{/if}
-        {#each documents as tab (tab.lifetime)}<div class="editor-tab-host" hidden={tab.id !== activeId}><Editor bind:this={editors[tab.id]} value={tab.content} codeLanguage={detectLanguage(tab.name, tab.language)} intelligenceEnabled={desktop && ui.languageIntelligence} tabSize={ui.tabSize} indentWithTabs={ui.indentWithTabs} onIntelligence={(value) => intelligenceStates[tab.id] = value} hemingway={tab.hemingway} initialSelection={tab.selection} active={tab.id === activeId} {wrap} showLineNumbers={ui.showLineNumbers} appearance={[fontSize, ui.editorFont, ui.lineHeight, ui.readingWidth].join(':')} live={tab.id === activeId && effectiveLayout === 'live' && !canvasDocument} standalone={tab.name.toLowerCase().endsWith('.mmd')} {theme} folds={tab.folds} cells={cellsFor(tab)} sourcePath={tab.path ?? tab.id} loadEmbed={loadEmbedded} onOpenPath={(path) => void openPath(path)} onOpenWiki={(target, path) => void openWiki(target, tab.id, path)} onEditProperties={() => editProperties(tab.id)} wikiCandidates={(context) => candidatesFor(tab.id, context)} onChange={(value) => { tab.content = value; tab.updatedAt = Date.now(); }} onSelection={(selection) => tab.selection = selection} /></div>{/each}
+        {#each documents as tab (tab.lifetime)}<div class="editor-tab-host" hidden={tab.id !== activeId}><Editor bind:this={editors[tab.id]} value={tab.content} codeLanguage={detectLanguage(tab.name, tab.language)} intelligenceEnabled={desktop && ui.languageIntelligenceEnabled} tabSize={ui.tabSize} indentWithTabs={ui.indentWithTabs} onIntelligence={(value) => intelligenceStates[tab.id] = value} hemingway={tab.hemingway} initialSelection={tab.selection} active={tab.id === activeId} {wrap} showLineNumbers={ui.showLineNumbers} appearance={[fontSize, ui.editorFont, ui.lineHeight, ui.readingWidth].join(':')} live={tab.id === activeId && effectiveLayout === 'live' && !canvasDocument} standalone={tab.name.toLowerCase().endsWith('.mmd')} {theme} folds={tab.folds} cells={cellsFor(tab)} sourcePath={tab.path ?? tab.id} loadEmbed={loadEmbedded} onOpenPath={(path) => void openPath(path)} onOpenWiki={(target, path) => void openWiki(target, tab.id, path)} onEditProperties={() => editProperties(tab.id)} wikiCandidates={(context) => candidatesFor(tab.id, context)} onChange={(value) => { tab.content = value; tab.updatedAt = Date.now(); }} onSelection={(selection) => tab.selection = selection} /></div>{/each}
       </section>
       <section class="pane preview-pane" aria-label="Preview pane" hidden={effectiveLayout === 'source' || effectiveLayout === 'live' || canvasVisible || active.hemingway}>{#if effectiveLayout === 'split'}<div class="pane-heading"><span>PREVIEW</span></div>{/if}{#if !active.hemingway && !canvasVisible && (effectiveLayout === 'split' || effectiveLayout === 'preview')}<Preview documentId={active.lifetime} content={active.content} {standalone} {theme} folds={active.folds} onToggleTask={togglePreviewTask} onEditSource={(from) => void editSource(from)} cells={cellsFor(active)} sourcePath={active.path ?? active.id} loadEmbed={loadEmbedded} onOpenPath={(path) => void openPath(path)} onOpenWiki={wikiHandler(activeId)} onEditProperties={propertiesHandler(activeId)} />{/if}</section>
       {#if canvasVisible}<Canvas content={active.content} documentId={active.lifetime} path={active.path} apply={applyCanvas} openNote={(file,subpath)=>void openWiki(file+(subpath||''),activeId,'')} renderCard={renderCanvasCard} undo={()=>editor?.undoEdit()} redo={()=>editor?.redoEdit()} />{/if}
     </div>
 
   </div>
-  {#if ui.showStatusBar && !ui.focusMode}<footer class="statusbar"><span class="status-message" role="status">{busy ? 'Working…' : status}</span>{#if !canvasVisible}<span class="status-detail">{lineCount} {lineCount === 1 ? 'line' : 'lines'}<span class="status-divider">·</span>{wordCount} {wordCount === 1 ? 'word' : 'words'}</span>{/if}<span class="save-state" data-state={saveState}>{#if saveState === 'saved'}<Icon name="check" size={12} {theme} />{/if}{saveState === 'error' ? dirty ? 'Unsaved changes' : 'App state not saved' : dirty ? 'Unsaved changes' : 'Saved'}</span>{#if nativeStore}<span class="database-state" data-state={persistence.state} hidden={persistence.state !== 'saving' && persistence.state !== 'error'} role="status">{persistence.state === 'saving' ? 'Saving app state…' : persistence.state === 'error' ? 'Recovery cache active' : ''}</span>{/if}{#if !desktop}<span class="browser-mode">Browser mode</span>{/if}</footer>{/if}
+  {#if ui.showStatusBar && !ui.focusMode}<footer class="statusbar"><span class="status-message" role="status">{busy ? 'Working…' : status}</span>{#if !canvasVisible}{#if !canvasDocument}<button class="document-language" aria-label="Change document language" title="Document language · automatic by file extension" onclick={() => languageTarget = activeId}>{languageOptions.find(item => item.value === activeLanguage)?.label ?? activeLanguage}{active.language ? ' · override' : ''}</button>{#if ui.languageIntelligenceEnabled && codeDocument}<span class="intelligence-status" role="status" title={intelligenceStates[activeId]?.message}>{intelligenceStates[activeId]?.state === 'error' ? 'Tools unavailable' : intelligenceStates[activeId]?.message ?? ''}</span>{/if}{/if}<span class="status-detail">{lineCount} {lineCount === 1 ? 'line' : 'lines'}<span class="status-divider">·</span>{wordCount} {wordCount === 1 ? 'word' : 'words'}</span>{/if}<span class="save-state" data-state={saveState}>{#if saveState === 'saved'}<Icon name="check" size={12} {theme} />{/if}{saveState === 'error' ? dirty ? 'Unsaved changes' : 'App state not saved' : dirty ? 'Unsaved changes' : 'Saved'}</span>{#if nativeStore}<span class="database-state" data-state={persistence.state} hidden={persistence.state !== 'saving' && persistence.state !== 'error'} role="status">{persistence.state === 'saving' ? 'Saving app state…' : persistence.state === 'error' ? 'Recovery cache active' : ''}</span>{/if}{#if !desktop}<span class="browser-mode">Browser mode</span>{/if}</footer>{/if}
   {#if fileNavigator}<FileNavigator mode={fileNavigator} files={[...new Set([...visibleDocuments.map(tab=>tab.path ?? tab.id), ...(activeWorkspace?.files ?? [])])]} label={(path)=>documents.find(tab=>tab.path===path || tab.id===path)?.name ?? path.split('/').pop() ?? path} read={readCodeFile} open={async (path,line) => { const tab=documents.find(tab=>tab.id===path || tab.path===path); if(tab){selectTab(tab.id); await tick(); if(line)editors[tab.id]?.revealLine(line);}else await openPath(path,line); }} close={()=>fileNavigator=null} />{/if}
   {#if symbolTarget}{@const target=editors[symbolTarget]}<RenameDocument name={target?.symbolName() ?? ''} label="Rename symbol" fieldLabel="Symbol name" rename={(name)=>{void target?.renameSymbol(name)?.then(count=>{status=`Renamed symbol in ${count} files · save each changed file to write to disk`;}).catch(cause=>error=String(cause));}} close={()=>symbolTarget=null} />{/if}
   {#if diskTarget?.path}{@const target=diskTarget}<DiskConflict path={target.path!} content={target.content} read={readDiskFile} reload={(content)=>{if(target.hemingway){error=HEMINGWAY_MESSAGE;return;}target.content=content;target.savedContent=content;target.updatedAt=Date.now();delete diskConflicts[target.id];comparingDisk=null;}} close={()=>comparingDisk=null} />{/if}
   {#if paletteOpen}<CommandPalette commands={paletteItems} execute={(id) => void runCommand(id)} close={() => paletteOpen = false} {theme} />{/if}
   {#if renameTarget}<RenameDocument name={renameTarget.name} rename={(name) => { const target = documents.find((tab) => tab.id === renameId); if (target) { target.name = name; target.updatedAt = Date.now(); } }} close={() => renameId = null} />{/if}
   {#if wikiChoice}<WikiChooser resolution={wikiChoice.resolution} busy={wikiBusy} {error} choose={(path) => void chooseWiki(path)} create={() => void chooseWiki()} close={() => { wikiChoice = null; wikiSerial++; }} />{/if}
+  {#if languageTarget && documents.find(tab => tab.id === languageTarget)}{@const target = documents.find(tab => tab.id === languageTarget)!}<DocumentLanguage name={target.name} language={target.language} {theme} change={(value) => target.language = value} close={() => languageTarget = null} />{/if}
   {#if settingsOpen}<Settings bind:theme bind:fontSize bind:wrap bind:layout bind:agentEditsEnabled bind:prefs={ui} bind:shortcuts close={() => settingsOpen = false} />{/if}
 </main>
 {#if closeRecoveryDecision}<CloseRecovery decide={(discard) => { const resolve = closeRecoveryDecision; closeRecoveryDecision = null; resolve?.(discard); }} />{/if}

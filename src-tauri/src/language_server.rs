@@ -4,10 +4,10 @@
 //! validates JSON, bounds frames and queues, and supervises local child processes.
 #![cfg_attr(not(any(feature = "desktop", test)), allow(dead_code))]
 // The integration copy omits the desktop launcher, so its production-only
-// resource-discovery path is intentionally unused there.
+// profile-discovery path is intentionally unused there.
 #![cfg_attr(test, allow(dead_code))]
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     ffi::OsString,
@@ -35,6 +35,8 @@ const INCOMPLETE_FRAME_TIMEOUT: Duration = Duration::from_secs(30);
 const TERMINATE_GRACE: Duration = Duration::from_millis(400);
 const STOP_TIMEOUT: Duration = Duration::from_secs(2);
 const START_SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
+const LANGUAGE_PACK_MANIFEST_VERSION: u64 = 1;
+const REQUIRED_LANGUAGE_PACK_PATCH: &str = "svelte-untrusted-prettier-config";
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -145,7 +147,14 @@ struct ServerKey {
     kind: ServerKind,
 }
 
-#[derive(Clone)]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LanguagePackManifest {
+    manifest_version: u64,
+    notation_patches: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct ServerSpec {
     program: PathBuf,
     arguments: Vec<OsString>,
@@ -158,11 +167,22 @@ impl ServerSpec {
             arguments: arguments.iter().map(OsString::from).collect(),
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn program(&self) -> &Path {
+        &self.program
+    }
+
+    #[cfg(test)]
+    pub(crate) fn arguments(&self) -> &[OsString] {
+        &self.arguments
+    }
 }
 
 #[derive(Clone)]
 pub struct Service {
     inner: Arc<ServiceInner>,
+    profile: Option<PathBuf>,
 }
 
 struct ServiceInner {
@@ -227,10 +247,13 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Service {
-    pub(crate) fn new(resource: Option<PathBuf>, events: EventSink) -> Self {
+    pub(crate) fn new(profile: Option<PathBuf>, events: EventSink) -> Self {
+        let resolver_profile = profile.clone();
         let resolver: DescriptorResolver =
-            Arc::new(move |kind| production_descriptor(kind, resource.as_deref()));
-        Self::with_resolver(resolver, events)
+            Arc::new(move |kind| production_descriptor(kind, resolver_profile.as_deref()));
+        let mut service = Self::with_resolver(resolver, events);
+        service.profile = profile;
+        service
     }
 
     fn with_resolver(resolver: DescriptorResolver, events: EventSink) -> Self {
@@ -242,6 +265,7 @@ impl Service {
                 closing: AtomicBool::new(false),
                 sequence: AtomicU64::new(0),
             }),
+            profile: None,
         }
     }
 
@@ -251,10 +275,10 @@ impl Service {
     }
 
     #[cfg(feature = "desktop")]
-    pub(crate) fn discover(resource: Option<PathBuf>, handle: tauri::AppHandle) -> Self {
+    pub(crate) fn discover(profile: Option<PathBuf>, handle: tauri::AppHandle) -> Self {
         use tauri::Emitter;
         Self::new(
-            resource,
+            profile,
             Arc::new(move |event| {
                 let result = match event {
                     Event::Message { id, message } => handle.emit_to(
@@ -273,6 +297,14 @@ impl Service {
                 let _ = result;
             }),
         )
+    }
+
+    pub(crate) fn typescript_path(&self) -> Result<String, String> {
+        typescript_path(self.profile.as_deref()).and_then(|path| {
+            path.into_os_string()
+                .into_string()
+                .map_err(|_| "The optional TypeScript runtime path is not UTF-8.".into())
+        })
     }
 
     pub(crate) fn start(&self, path: String, language: String) -> Result<StartInfo, String> {
@@ -593,7 +625,76 @@ fn directory_uri(path: &Path) -> Result<String, String> {
         .map_err(|_| "Could not encode the project path as a file URI.".into())
 }
 
-fn production_descriptor(kind: ServerKind, resource: Option<&Path>) -> Result<ServerSpec, String> {
+fn language_pack_install_help() -> &'static str {
+    "From a Notation source checkout, run `npm run desktop:languages` to explicitly obtain and install a compatible pack. Notation never downloads language servers automatically."
+}
+
+fn validated_language_pack(profile: Option<&Path>) -> Result<PathBuf, String> {
+    let profile = profile.ok_or_else(|| {
+        format!(
+            "The application profile is unavailable, so the optional language pack cannot be resolved. {}",
+            language_pack_install_help()
+        )
+    })?;
+    let base = profile.join("language-servers");
+    let manifest_path = base.join("manifest.json");
+    let source = fs::read_to_string(&manifest_path).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            format!(
+                "The optional language pack is not installed at {}. {}",
+                base.display(),
+                language_pack_install_help()
+            )
+        } else {
+            format!(
+                "Could not read the optional language-pack manifest at {}: {error}. Reinstall it with `npm run desktop:languages`.",
+                manifest_path.display()
+            )
+        }
+    })?;
+    let manifest: LanguagePackManifest = serde_json::from_str(&source).map_err(|error| {
+        format!(
+            "The optional language-pack manifest at {} is unsupported or damaged: {error}. Reinstall it with `npm run desktop:languages`.",
+            manifest_path.display()
+        )
+    })?;
+    if manifest.manifest_version != LANGUAGE_PACK_MANIFEST_VERSION {
+        return Err(format!(
+            "The optional language pack at {} has unsupported manifest version {} (expected {}). Reinstall it with `npm run desktop:languages`.",
+            base.display(),
+            manifest.manifest_version,
+            LANGUAGE_PACK_MANIFEST_VERSION
+        ));
+    }
+    if !manifest
+        .notation_patches
+        .iter()
+        .any(|patch| patch == REQUIRED_LANGUAGE_PACK_PATCH)
+    {
+        return Err(format!(
+            "The optional language pack at {} does not declare the required safety patch `{REQUIRED_LANGUAGE_PACK_PATCH}`. Refusing to start an unpatched pack; reinstall it with `npm run desktop:languages`.",
+            base.display()
+        ));
+    }
+    Ok(base)
+}
+
+pub(crate) fn typescript_path(profile: Option<&Path>) -> Result<PathBuf, String> {
+    let base = validated_language_pack(profile)?;
+    let path = base.join("node_modules/typescript/lib/tsserver.js");
+    if !path.is_file() {
+        return Err(format!(
+            "The optional language pack at {} is incomplete: the pinned TypeScript runtime is missing. Reinstall it with `npm run desktop:languages`.",
+            base.display()
+        ));
+    }
+    Ok(path)
+}
+
+pub(crate) fn production_descriptor(
+    kind: ServerKind,
+    profile: Option<&Path>,
+) -> Result<ServerSpec, String> {
     if kind == ServerKind::Rust {
         let executable = trusted_path_executable("rust-analyzer").ok_or(
             "Rust language intelligence requires rust-analyzer in an absolute directory on the inherited PATH. Install it with your Rust toolchain and reopen the document.",
@@ -601,47 +702,25 @@ fn production_descriptor(kind: ServerKind, resource: Option<&Path>) -> Result<Se
         return Ok(ServerSpec::new(executable, &[]));
     }
 
-    let (module, _development_binary) = match kind {
-        ServerKind::TypeScript => (
-            "typescript-language-server/lib/cli.mjs",
-            "typescript-language-server",
-        ),
-        ServerKind::Svelte => ("svelte-language-server/bin/server.js", "svelteserver"),
+    let module = match kind {
+        ServerKind::TypeScript => "typescript-language-server/lib/cli.mjs",
+        ServerKind::Svelte => "svelte-language-server/bin/server.js",
         ServerKind::Rust => unreachable!(),
     };
-    if let Some(resource) = resource {
-        let base = resource.join("language-servers");
-        let node = base.join("node");
-        let script = base.join("node_modules").join(module);
-        if node.is_file() && script.is_file() {
-            return Ok(ServerSpec::new(
-                node,
-                &[script.to_string_lossy().as_ref(), "--stdio"],
-            ));
-        }
+    let base = validated_language_pack(profile)?;
+    let node = base.join("node");
+    let script = base.join("node_modules").join(module);
+    if !node.is_file() || !script.is_file() {
+        return Err(format!(
+            "The optional language pack at {} is incomplete for {}. Reinstall it with `npm run desktop:languages`.",
+            base.display(),
+            kind.name()
+        ));
     }
-
-    #[cfg(debug_assertions)]
-    {
-        let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("."));
-        let base = repository.join("src-tauri/resources/language-servers");
-        let node = base.join("node");
-        let script = base.join("node_modules").join(module);
-        if node.is_file() && script.is_file() {
-            return Ok(ServerSpec::new(
-                node,
-                &[script.to_string_lossy().as_ref(), "--stdio"],
-            ));
-        }
-    }
-
-    let name = kind.name();
-    Err(format!(
-        "{name} is unavailable. Use a Notation build with bundled language servers, or run npm run desktop:languages after npm ci. Notation does not download language servers automatically."
-    ))
+    Ok(ServerSpec {
+        program: node,
+        arguments: vec![script.into_os_string(), OsString::from("--stdio")],
+    })
 }
 
 fn trusted_path_executable(name: &str) -> Option<PathBuf> {

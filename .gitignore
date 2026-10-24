@@ -15,3 +15,5 @@ public/pdfjs/
 src-tauri/resources/engines/
 src-tauri/resources/language-servers/
 src-tauri/resources/language-stage-*/
+tooling/language-servers/node_modules/
+tooling/language-servers/.cache/

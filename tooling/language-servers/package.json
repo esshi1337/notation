@@ -1,0 +1,15 @@
+{
+  "name": "notation-language-servers",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Explicitly installed optional language intelligence for Notation",
+  "engines": {
+    "node": ">=22.22.2"
+  },
+  "dependencies": {
+    "svelte": "5.57.2",
+    "svelte-language-server": "0.18.5",
+    "typescript": "5.9.3",
+    "typescript-language-server": "6.0.2"
+  }
+}

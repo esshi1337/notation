@@ -6,7 +6,8 @@ test('code files preserve filenames, source layout, highlighting, comments, fold
   await page.locator('input[type=file]').setInputFiles({name:'main.ts',mimeType:'text/plain',buffer:Buffer.from('function greet(name: string) {\n  return "Hi " + name;\n}\n')});
   await expect(page.getByRole('tab',{name:'main.ts',exact:true})).toHaveAttribute('aria-selected','true');
   await expect(page.getByRole('region',{name:'Preview pane'})).toBeHidden();
-  await expect(page.getByRole('combobox',{name:'Language',exact:true})).toContainText('TypeScript');
+  await expect(page.getByRole('button',{name:'Change document language',exact:true})).toHaveText('TypeScript');
+  await expect(page.getByRole('combobox',{name:'Language',exact:true})).toHaveCount(0);
   await expect(source(page).locator('span').filter({hasText:/^function$/})).toBeVisible();
   await source(page).click();await page.keyboard.press('Control+Home');
   await runCommand(page,'Toggle line comment');await expect(source(page)).toContainText('// function greet');
@@ -14,8 +15,10 @@ test('code files preserve filenames, source layout, highlighting, comments, fold
   await runCommand(page,'Fold all');await expect(page.locator('.cm-foldPlaceholder:visible')).toHaveCount(1);
   await runCommand(page,'Unfold all');await expect(page.locator('.cm-foldPlaceholder:visible')).toHaveCount(0);
   const download=page.waitForEvent('download');await runCommand(page,'Save As');expect((await download).suggestedFilename()).toBe('main.ts');
+  await runCommand(page,'Change document language');
   await page.getByRole('combobox',{name:'Language',exact:true}).click();await page.getByRole('option',{name:'Rust',exact:true}).click();
-  await page.reload();await expect(page.getByRole('combobox',{name:'Language',exact:true})).toContainText('Rust');
+  await page.getByRole('button',{name:'Done',exact:true}).click();
+  await page.reload();await expect(page.getByRole('button',{name:'Change document language',exact:true})).toHaveText('Rust · override');
 });
 test('file navigation and search find unsaved code buffers; indentation preferences persist',async({page})=>{
   await page.goto('/');
@@ -45,4 +48,31 @@ test('code buffers stay usable with many tabs and a large source file',async({pa
   await testInfo.attach('code-performance-baseline',{body:JSON.stringify(measurements,null,2),contentType:'application/json'});
   console.log('CODE_PERFORMANCE '+JSON.stringify(measurements));
   await page.screenshot({path:testInfo.outputPath('code-editor.png')});
+});
+
+test('Markdown defaults and extension routing do not load language intelligence; overrides remain secondary',async({page})=>{
+  const requested:string[]=[];page.on('request',request=>requested.push(request.url()));
+  await page.goto('/');
+  await expect(page.getByRole('button',{name:'Change document language',exact:true})).toHaveText('Markdown');
+  expect(requested.some(url=>url.includes('/src/code-syntax') || url.includes('/src/language-intelligence'))).toBe(false);
+  await page.evaluate(()=>localStorage.setItem('notation.settings',JSON.stringify({languageIntelligence:true,layout:'preview'})));
+  await page.reload();
+  await openSettings(page);await page.getByRole('tab',{name:'Editor',exact:true}).click();
+  const intelligence=page.getByRole('checkbox',{name:'Language intelligence',exact:true});
+  await expect(intelligence).not.toBeChecked();
+  await intelligence.check();await page.reload();await openSettings(page);await page.getByRole('tab',{name:'Editor',exact:true}).click();
+  await expect(intelligence).toBeChecked();await intelligence.uncheck();await page.keyboard.press('Escape');
+  for (const [name,language] of [['notes.md','Markdown'],['readme.txt','Plain text'],['main.ts','TypeScript'],['App.svelte','Svelte'],['main.rs','Rust']]) {
+    await page.locator('input[type=file]').setInputFiles({name,mimeType:'text/plain',buffer:Buffer.from('# test\n')});
+    await expect(page.getByRole('button',{name:'Change document language',exact:true})).toHaveText(language);
+    if(name.endsWith('.md'))await expect(page.getByRole('region',{name:'Preview pane'})).toBeVisible();
+    else await expect(page.getByRole('region',{name:'Preview pane'})).toBeHidden();
+  }
+  expect(requested.some(url=>url.includes('/src/language-intelligence'))).toBe(false);
+  await page.getByRole('button',{name:'Change document language',exact:true}).click();
+  await page.getByRole('combobox',{name:'Language',exact:true}).click();await page.getByRole('option',{name:'Markdown',exact:true}).click();
+  await page.getByRole('button',{name:'Done',exact:true}).click();await expect(page.getByRole('region',{name:'Preview pane'})).toBeVisible();
+  await runCommand(page,'Change document language');await page.getByRole('combobox',{name:'Language',exact:true}).click();await page.getByRole('option',{name:'Automatic · Rust',exact:true}).click();
+  await page.keyboard.press('Escape');await expect(page.getByRole('region',{name:'Preview pane'})).toBeHidden();
+  await runCommand(page,'New');await expect(page.getByRole('button',{name:'Change document language',exact:true})).toHaveText('Markdown');
 });

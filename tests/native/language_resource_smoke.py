@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify packaged Svelte completion/formatting bypass executable project config."""
+"""Verify an explicit optional pack's Svelte trust patches with real LSP."""
 import argparse
 import json
 import os
@@ -12,6 +12,9 @@ import time
 
 
 def run(resources):
+    manifest=json.loads((resources/'manifest.json').read_text())
+    assert manifest.get('manifestVersion')==1,'Unsupported optional language-pack manifest'
+    assert 'svelte-untrusted-prettier-config' in manifest.get('notationPatches',[]),'Refusing unpatched optional language pack'
     for configuration in ['javascript', 'plugin']:
         with tempfile.TemporaryDirectory(prefix='nt-lsp-trust-') as temporary:
             root=Path(temporary);marker=root/'executed';component=root/'App.svelte'
@@ -66,4 +69,4 @@ def run(resources):
                     except subprocess.TimeoutExpired:os.killpg(process.pid,signal.SIGKILL);process.wait()
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--resources',type=Path,default=Path('src-tauri/resources/language-servers'));args=parser.parse_args();run(args.resources.resolve())
+    parser=argparse.ArgumentParser();parser.add_argument('--resources',type=Path,required=True,help='Explicit pack prepared with desktop:languages -- --output DIR');args=parser.parse_args();run(args.resources.resolve())

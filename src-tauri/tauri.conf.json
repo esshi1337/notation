@@ -46,8 +46,7 @@
       "icons/icon.png"
     ],
     "resources": {
-      "resources/engines/": "engines/",
-      "resources/language-servers/": "language-servers/"
+      "resources/engines/": "engines/"
     }
   }
 }

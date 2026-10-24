@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import tempfile
 import time
@@ -15,7 +16,7 @@ from tooling_smoke import invoke
 from instance_smoke import rpc, owners
 
 
-def run(app, output):
+def run(app, output, language_pack):
     smoke.assert_ports_available(); output.mkdir(parents=True, exist_ok=True)
     client=smoke.Client(smoke.BASE_URL); driver=None
     with tempfile.TemporaryDirectory(prefix='nt-code-') as temporary:
@@ -36,6 +37,7 @@ def run(app, output):
         env={**os.environ,'TAURI_WEBVIEW_AUTOMATION':'true'}
         for key,name in [('XDG_DATA_HOME','data'),('XDG_CONFIG_HOME','config'),('XDG_CACHE_HOME','cache')]:
             (root/name).mkdir();env[key]=str(root/name)
+        shutil.copytree(language_pack, root/'data/local.notation.app/language-servers')
         child_env=dict(env);child_env.pop('TAURI_WEBVIEW_AUTOMATION',None)
         logpath=output/'driver.log'
         with logpath.open('wb') as log:
@@ -43,13 +45,17 @@ def run(app, output):
                 driver=subprocess.Popen([str(smoke.DRIVER),'--port',str(smoke.DRIVER_PORT),'--native-port',str(smoke.NATIVE_PORT),'--native-driver',str(smoke.WEBDRIVER)],env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
                 smoke.wait_for_driver(driver,logpath);client.create_session(app)
                 smoke.wait_for(client,"document.querySelector('main.app')",'packaged UI')
+                command(client,'Settings')
+                client.element_command(client.find('//*[@role="tab" and normalize-space(.)="Editor"]',using='xpath'),'/click')
+                client.element_command(client.find('//label[contains(.,"Language intelligence")]/input',using='xpath'),'/click')
+                client.element_command(client.find('button[aria-label="Close settings"]'),'/click')
                 client.execute_async("const done=arguments[arguments.length-1];window.lspMessages=[];window.__TAURI_INTERNALS__.invoke('plugin:event|listen',{event:'notation:lsp-message',target:{kind:'Any'},handler:window.__TAURI_INTERNALS__.transformCallback(event=>window.lspMessages.push(event.payload))}).then(done)")
                 def open_file(path):
                     result=subprocess.run([str(app),str(path)],env=child_env,capture_output=True,text=True,timeout=30)
                     smoke.require(result.returncode==0,'File launch failed: '+result.stderr)
                     smoke.wait_for(client,'document.querySelector("[role=tab][aria-selected=true]")?.textContent.includes('+json.dumps(path.name)+')','code file opened')
                 def ready(server):
-                    smoke.wait_for(client,'document.querySelector(".code-heading [role=status]")?.textContent.includes('+json.dumps(server+' ready')+')',server+' ready')
+                    smoke.wait_for(client,'document.querySelector(".intelligence-status")?.textContent.includes('+json.dumps(server+' ready')+')',server+' ready')
                 def diagnostics():
                     smoke.wait_for(client,'document.querySelector(".editor-tab-host:not([hidden]) .cm-lintRange-error")','live diagnostic')
                 open_file(main);ready('typescript-language-server');diagnostics()
@@ -102,6 +108,13 @@ def run(app, output):
                 deadline=time.time()+8
                 while time.time()<deadline and len([item for item in invoke(client,'lsp_status',{}) if item['running']])!=2: time.sleep(.1)
                 smoke.require(len([item for item in invoke(client,'lsp_status',{}) if item['running']])==2,'Last document did not release its Svelte server')
+                command(client,'Settings')
+                client.element_command(client.find('//*[@role="tab" and normalize-space(.)="Editor"]',using='xpath'),'/click')
+                client.element_command(client.find('//label[contains(.,"Language intelligence")]/input',using='xpath'),'/click')
+                client.element_command(client.find('button[aria-label="Close settings"]'),'/click')
+                deadline=time.time()+8
+                while time.time()<deadline and any(item['running'] for item in invoke(client,'lsp_status',{})):time.sleep(.1)
+                smoke.require(not any(item['running'] for item in invoke(client,'lsp_status',{})), 'Disabling intelligence did not stop all servers')
                 client.execute("setTimeout(() => window.__TAURI_INTERNALS__.invoke('plugin:window|close',{label:'main'}),50);return true")
                 time.sleep(2)
                 print('PASS: packaged TS/Svelte/Rust startup, diagnostics, format, definitions/references, cross-file unsaved rename, shared sessions, guarded save',flush=True)
@@ -124,4 +137,4 @@ def run(app, output):
                     except subprocess.TimeoutExpired:os.killpg(driver.pid,signal.SIGKILL);driver.wait(timeout=5)
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--app',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);args=parser.parse_args();run(args.app.resolve(),args.output.resolve())
+    parser=argparse.ArgumentParser();parser.add_argument('--app',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--language-pack',type=Path,required=True);args=parser.parse_args();run(args.app.resolve(),args.output.resolve(),args.language_pack.resolve())

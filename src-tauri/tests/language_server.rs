@@ -3,7 +3,10 @@
 #[path = "../src/language_server.rs"]
 mod language_server;
 
-use language_server::{Event, ServerSpec, Service, MAX_FRAME_BYTES, OUTGOING_QUEUE};
+use language_server::{
+    production_descriptor, typescript_path, Event, ServerKind, ServerSpec, Service,
+    MAX_FRAME_BYTES, OUTGOING_QUEUE,
+};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -67,6 +70,29 @@ fn typescript_document(root: &Path) -> PathBuf {
     file
 }
 
+fn optional_pack(profile: &Path, manifest_version: u64, patches: &[&str]) -> PathBuf {
+    let base = profile.join("language-servers");
+    fs::create_dir_all(&base).unwrap();
+    fs::write(
+        base.join("manifest.json"),
+        serde_json::json!({
+            "manifestVersion": manifest_version,
+            "notationPatches": patches,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    for relative in [
+        "node",
+        "node_modules/typescript-language-server/lib/cli.mjs",
+        "node_modules/svelte-language-server/bin/server.js",
+        "node_modules/typescript/lib/tsserver.js",
+    ] {
+        saved_file(&base.join(relative));
+    }
+    base
+}
+
 fn start(service: &Service, file: &Path) -> language_server::StartInfo {
     service
         .start(file.to_string_lossy().into_owned(), "typescript".into())
@@ -95,6 +121,75 @@ fn wait_message(receiver: &mpsc::Receiver<Event>) -> (String, String) {
             Event::Exit { error, .. } => panic!("language server exited before replying: {error}"),
         }
     }
+}
+
+#[test]
+fn absent_optional_pack_has_an_actionable_error_and_no_fallback() {
+    let directory = tempfile::tempdir().unwrap();
+    for kind in [ServerKind::TypeScript, ServerKind::Svelte] {
+        let error = production_descriptor(kind, Some(directory.path())).unwrap_err();
+        assert!(error.contains("not installed"), "{error}");
+        assert!(error.contains("npm run desktop:languages"), "{error}");
+        assert!(error.contains("language-servers"), "{error}");
+    }
+    let error = typescript_path(Some(directory.path())).unwrap_err();
+    assert!(error.contains("not installed"), "{error}");
+    assert!(!error.contains("resources"), "{error}");
+}
+
+#[test]
+fn explicit_valid_pack_drives_server_and_typescript_resolution() {
+    let directory = tempfile::tempdir().unwrap();
+    let base = optional_pack(directory.path(), 1, &["svelte-untrusted-prettier-config"]);
+    for (kind, module) in [
+        (
+            ServerKind::TypeScript,
+            "typescript-language-server/lib/cli.mjs",
+        ),
+        (ServerKind::Svelte, "svelte-language-server/bin/server.js"),
+    ] {
+        let spec = production_descriptor(kind, Some(directory.path())).unwrap();
+        let script = base.join("node_modules").join(module);
+        assert_eq!(spec.program(), base.join("node"));
+        assert_eq!(spec.arguments()[0], script.as_os_str());
+        assert_eq!(spec.arguments()[1], "--stdio");
+    }
+    let expected = base.join("node_modules/typescript/lib/tsserver.js");
+    assert_eq!(typescript_path(Some(directory.path())).unwrap(), expected);
+    let service = Service::new(Some(directory.path().to_path_buf()), Arc::new(|_| {}));
+    assert_eq!(
+        service.typescript_path().unwrap(),
+        expected.to_string_lossy()
+    );
+}
+
+#[test]
+fn unsupported_manifest_version_is_rejected_before_resolution() {
+    let directory = tempfile::tempdir().unwrap();
+    optional_pack(directory.path(), 2, &["svelte-untrusted-prettier-config"]);
+    let error = production_descriptor(ServerKind::TypeScript, Some(directory.path())).unwrap_err();
+    assert!(error.contains("unsupported manifest version 2"), "{error}");
+    assert!(error.contains("Reinstall"), "{error}");
+    assert!(typescript_path(Some(directory.path()))
+        .unwrap_err()
+        .contains("unsupported manifest version 2"));
+}
+
+#[test]
+fn unpatched_pack_is_rejected_before_resolution() {
+    let directory = tempfile::tempdir().unwrap();
+    optional_pack(directory.path(), 1, &[]);
+    for kind in [ServerKind::TypeScript, ServerKind::Svelte] {
+        let error = production_descriptor(kind, Some(directory.path())).unwrap_err();
+        assert!(error.contains("unpatched pack"), "{error}");
+        assert!(
+            error.contains("svelte-untrusted-prettier-config"),
+            "{error}"
+        );
+    }
+    assert!(typescript_path(Some(directory.path()))
+        .unwrap_err()
+        .contains("unpatched pack"));
 }
 
 #[test]

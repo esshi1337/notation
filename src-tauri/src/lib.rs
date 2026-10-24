@@ -122,32 +122,10 @@ mod desktop {
         .map_err(|error| error.to_string())?
     }
     #[tauri::command]
-    fn lsp_typescript_path(app: tauri::AppHandle) -> Result<String, String> {
-        let bundled = app
-            .path()
-            .resource_dir()
-            .map_err(|error| error.to_string())?
-            .join("language-servers/node_modules/typescript/lib/tsserver.js");
-        if bundled.is_file() {
-            return bundled
-                .into_os_string()
-                .into_string()
-                .map_err(|_| "TypeScript path is not UTF-8".into());
-        }
-        #[cfg(debug_assertions)]
-        {
-            let development = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../node_modules/typescript/lib/tsserver.js");
-            if development.is_file() {
-                return development
-                    .canonicalize()
-                    .map_err(|error| error.to_string())?
-                    .into_os_string()
-                    .into_string()
-                    .map_err(|_| "TypeScript path is not UTF-8".into());
-            }
-        }
-        Err("The bundled TypeScript runtime is unavailable. Reinstall Notation.".into())
+    fn lsp_typescript_path(
+        service: State<'_, language_server::Service>,
+    ) -> Result<String, String> {
+        service.typescript_path()
     }
     #[tauri::command]
     async fn write_document(
@@ -694,7 +672,7 @@ mod desktop {
                     .map_err(|error| format!("Could not locate local data directory: {error}"));
                 app.manage(engines::Runtime::discover(app.path().resource_dir().ok()));
                 app.manage(language_server::Service::discover(
-                    app.path().resource_dir().ok(),
+                    data_directory.clone().ok(),
                     app.handle().clone(),
                 ));
                 let database = data_directory
