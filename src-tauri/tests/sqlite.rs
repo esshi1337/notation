@@ -109,6 +109,7 @@ fn legacy_migration_skips_oversized_scripts_and_still_commits_the_marker() {
         }))
         .unwrap();
     assert!(state.migration_applied);
+    assert_eq!(state.skipped_legacy_items, vec!["scripts"]);
     assert_eq!(state.scripts.len(), 1);
     assert_eq!(state.scripts[0].id, "script-1");
     let scripts = database.list_scripts().unwrap();
@@ -130,7 +131,86 @@ fn legacy_migration_skips_oversized_scripts_and_still_commits_the_marker() {
         !state.migration_applied,
         "committed migration marker must survive the skipped script"
     );
+    assert!(state.skipped_legacy_items.is_empty());
     assert_eq!(state.scripts.len(), 1);
+}
+
+#[test]
+fn legacy_migration_skips_invalid_fields_and_reports_them_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db/state.sqlite3");
+    let database = Database::open(&path).unwrap();
+    let legacy = || LegacyState {
+        session: Some(json!({
+            "activeTabId": "draft-1",
+            "tabs": [{"id": "draft-1", "name": "draft.md", "content": "ok", "savedContent": "ok"}],
+            "updatedAt": 1
+        })),
+        settings: Some(json!({"theme": "light"})),
+        draft: Some(draft("original")),
+        script_draft: Some(json!({
+            "name": "working",
+            "code": "x".repeat(128 * 1024 + 1),
+            "cwd": null
+        })),
+        scripts: vec![script()],
+        recents: vec![],
+    };
+    let state = database.bootstrap(Some(legacy())).unwrap();
+    assert!(state.migration_applied);
+    assert_eq!(state.skipped_legacy_items, vec!["script draft"]);
+    assert_eq!(state.scripts.len(), 1);
+    assert_eq!(state.scripts[0].id, "script-1");
+    assert_eq!(state.draft.unwrap()["content"], "original");
+    assert_eq!(state.settings["theme"], "light");
+    assert_eq!(state.session.unwrap()["activeTabId"], "draft-1");
+    assert!(
+        state.script_draft.is_none(),
+        "only the oversized script draft is skipped"
+    );
+    drop(database);
+
+    let database = Database::open(&path).unwrap();
+    let state = database.bootstrap(Some(legacy())).unwrap();
+    assert!(
+        !state.migration_applied,
+        "committed migration marker must survive skipped fields"
+    );
+    assert!(
+        state.skipped_legacy_items.is_empty(),
+        "a committed migration must not re-report skips on reopen"
+    );
+    assert_eq!(database.list_scripts().unwrap().len(), 1);
+}
+
+#[test]
+fn legacy_migration_reports_each_skipped_field_and_keeps_valid_ones() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db/state.sqlite3");
+    let database = Database::open(&path).unwrap();
+    let state = database
+        .bootstrap(Some(LegacyState {
+            session: Some(json!({"tabs": "not-an-array"})),
+            settings: Some(json!({"blob": "x".repeat(64 * 1024)})),
+            draft: Some(draft("kept")),
+            script_draft: Some(json!({"name": "working", "code": "return 1;", "cwd": null})),
+            scripts: vec![],
+            recents: vec![],
+        }))
+        .unwrap();
+    assert_eq!(state.skipped_legacy_items, vec!["session", "settings"]);
+    assert!(state.session.is_none());
+    assert_eq!(state.settings, json!({}));
+    assert_eq!(state.draft.unwrap()["content"], "kept");
+    assert_eq!(state.script_draft.unwrap()["name"], "working");
+    assert!(state.migration_applied);
+    drop(database);
+
+    let database = Database::open(&path).unwrap();
+    let state = database.bootstrap(Some(LegacyState::default())).unwrap();
+    assert!(!state.migration_applied);
+    assert!(state.skipped_legacy_items.is_empty());
+    assert_eq!(state.draft.unwrap()["content"], "kept");
 }
 
 #[test]

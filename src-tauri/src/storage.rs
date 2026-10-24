@@ -21,8 +21,9 @@ pub fn now() -> i64 {
         .as_millis() as i64
 }
 fn database_error(error: impl std::fmt::Display) -> String {
-    format!("Local database: {error}")
+    format!("{DATABASE_ERROR_PREFIX}{error}")
 }
+const DATABASE_ERROR_PREFIX: &str = "Local database: ";
 
 #[derive(Clone)]
 pub struct Database {
@@ -73,6 +74,8 @@ pub struct BootstrapState {
     pub workspace_catalog: crate::workspace_catalog::WorkspaceCatalog,
     pub recents: Vec<Recent>,
     pub migration_applied: bool,
+    #[serde(default)]
+    pub skipped_legacy_items: Vec<String>,
 }
 
 /// Navigation metadata only: refreshing recent files must not load every draft.
@@ -269,24 +272,57 @@ PRAGMA user_version=2;
             )
             .map_err(database_error)?;
         let mut migration_applied = false;
+        let mut skipped_legacy_items: Vec<String> = Vec::new();
         if !migrated {
             let has_state: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM settings UNION ALL SELECT 1 FROM sessions UNION ALL SELECT 1 FROM drafts UNION ALL SELECT 1 FROM script_drafts UNION ALL SELECT 1 FROM scripts UNION ALL SELECT 1 FROM revisions UNION ALL SELECT 1 FROM script_runs UNION ALL SELECT 1 FROM recents UNION ALL SELECT 1 FROM workspaces)",[],|row|row.get(0)).map_err(database_error)?;
             if !has_state {
                 if let Some(legacy) = legacy {
-                    persist(
+                    persist_legacy_field(
                         &tx,
-                        &StateUpdate {
+                        StateUpdate {
                             session: legacy.session,
-                            settings: legacy.settings,
-                            draft: legacy.draft,
-                            script_draft: legacy.script_draft,
+                            ..Default::default()
                         },
+                        "session",
+                        &mut skipped_legacy_items,
                     )?;
+                    persist_legacy_field(
+                        &tx,
+                        StateUpdate {
+                            settings: legacy.settings,
+                            ..Default::default()
+                        },
+                        "settings",
+                        &mut skipped_legacy_items,
+                    )?;
+                    persist_legacy_field(
+                        &tx,
+                        StateUpdate {
+                            draft: legacy.draft,
+                            ..Default::default()
+                        },
+                        "draft",
+                        &mut skipped_legacy_items,
+                    )?;
+                    persist_legacy_field(
+                        &tx,
+                        StateUpdate {
+                            script_draft: legacy.script_draft,
+                            ..Default::default()
+                        },
+                        "script draft",
+                        &mut skipped_legacy_items,
+                    )?;
+                    let mut skipped_scripts = false;
                     for script in legacy.scripts {
                         if !valid_script(&script) {
+                            skipped_scripts = true;
                             continue;
                         }
                         save_script(&tx, &script)?;
+                    }
+                    if skipped_scripts {
+                        skipped_legacy_items.push("scripts".into());
                     }
                     for recent in legacy.recents.into_iter().take(20) {
                         touch_recent(&tx, &recent.path, &recent.name)?;
@@ -312,6 +348,7 @@ PRAGMA user_version=2;
             workspace_catalog: self.list_workspaces()?,
             recents: self.recents()?,
             migration_applied,
+            skipped_legacy_items,
         })
     }
 
@@ -615,6 +652,24 @@ fn persist(connection: &Connection, state: &StateUpdate) -> Result<(), String> {
         }
     }
     Ok(())
+}
+/// Persist one legacy field independently. Validation failures skip only that
+/// field so one oversized browser payload cannot abort the whole migration;
+/// real database failures still abort and roll back the transaction.
+fn persist_legacy_field(
+    connection: &Connection,
+    state: StateUpdate,
+    label: &str,
+    skipped: &mut Vec<String>,
+) -> Result<(), String> {
+    match persist(connection, &state) {
+        Ok(()) => Ok(()),
+        Err(error) if !error.starts_with(DATABASE_ERROR_PREFIX) => {
+            skipped.push(label.to_string());
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
 }
 fn persist_session(connection: &Connection, session: &Value) -> Result<(), String> {
     if session.is_null() {

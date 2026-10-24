@@ -273,7 +273,40 @@ try {
     assert.deepEqual(JSON.parse(test.data.get('notation.script-library')), existing, 'rejected script is not persisted');
     assert.ok(!test.cacheAttempts.slice(attempts).includes('notation.script-library'), 'rejected script never writes script-library storage');
   }
-  console.log('Store recovery: 17 scenario groups passed (including 9 content comparisons)');
+  {
+    const test = await fixture({ native: false, cachedScript: null });
+    const oversized = { name: 'Too big', code: '😀'.repeat(32_769), cwd: null };
+    const attempts = test.cacheAttempts.length;
+    test.store.persistMetadata({ scriptDraft: oversized });
+    assert.match(test.status().error, /Script draft too large to autosave; shorten the script/, 'browser mode reports an oversized script draft');
+    assert.equal(test.store.currentMetadata().scriptDraft.code, oversized.code, 'oversized draft stays editable in memory');
+    assert.ok(!test.cacheAttempts.slice(attempts).includes('notation.scripts'), 'oversized script draft never writes notation.scripts');
+    assert.equal(JSON.parse(test.data.get('notation.scripts')), null);
+    const boundary = { ...oversized, code: '😀'.repeat(32_768) };
+    test.store.persistMetadata({ scriptDraft: boundary });
+    assert.equal(test.status().state, 'idle');
+    assert.equal(test.status().error, '');
+    assert.equal(JSON.parse(test.data.get('notation.scripts')).code, boundary.code, '128 KiB of UTF-8 bytes is accepted even below 128K UTF-16 units');
+    test.store.persistMetadata({ scriptDraft: oversized });
+    assert.match(test.status().error, /Script draft too large to autosave/, 'one extra UTF-8 byte re-arms the guard');
+    assert.equal(JSON.parse(test.data.get('notation.scripts')).code, boundary.code, 'oversized follow-up leaves the last valid cache intact');
+
+    const nativeTest = await fixture();
+    nativeTest.store.persistMetadata({ scriptDraft: oversized });
+    assert.equal(await nativeTest.store.flushPersistence(), true);
+    assert.ok(nativeTest.commits.every(patch => !('scriptDraft' in patch)), 'oversized script draft is excluded from native state');
+    assert.match(nativeTest.status().error, /Script draft too large to autosave/);
+    nativeTest.store.persistMetadata({ scriptDraft: boundary });
+    assert.equal(await nativeTest.store.flushPersistence(), true);
+    assert.equal(nativeTest.commits.at(-1).scriptDraft.code, boundary.code);
+    assert.equal(nativeTest.status().state, 'saved', 'a later in-limit script draft clears the error');
+    assert.equal(nativeTest.status().error, '');
+
+    const skipped = await fixture({ database: { ...baseState, skippedLegacyItems: ['script draft'] } });
+    assert.equal(skipped.status().state, 'error');
+    assert.match(skipped.status().error, /could not be migrated: script draft/, 'bootstrap exposes skipped legacy fields');
+  }
+  console.log('Store recovery: 18 scenario groups passed (including 9 content comparisons)');
 } finally {
   await server.close();
 }

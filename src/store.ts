@@ -9,7 +9,7 @@ export type SavedScript = ScriptDraft & { id: string; updatedAt: number };
 export type Recent = { path: string; name?: string; visitedAt?: number };
 export type Metadata = {
   settings: Record<string, unknown>; draft: RecoveryDraft | null; scriptDraft: ScriptDraft | null;
-  scripts: SavedScript[]; workspace: string | null; workspaceCatalog?: WorkspaceCatalog; recents: Recent[]; session?: DocumentSession | null; migrationApplied?: boolean;
+  scripts: SavedScript[]; workspace: string | null; workspaceCatalog?: WorkspaceCatalog; recents: Recent[]; session?: DocumentSession | null; migrationApplied?: boolean; skippedLegacyItems?: string[];
 };
 type Patch = { settings?: Record<string, unknown>; draft?: RecoveryDraft | null; scriptDraft?: ScriptDraft | null; session?: DocumentSession | null };
 export type PendingRecovery = { draft?: RecoveryDraft | null; scriptDraft?: ScriptDraft | null; session?: DocumentSession | null; failedAt: number };
@@ -49,14 +49,20 @@ let pending: Patch = {};
 let timer: ReturnType<typeof setTimeout> | undefined;
 let writes = Promise.resolve(true);
 let sessionTooLarge = false;
+let scriptDraftTooLarge = false;
 const sessionSizeError = 'Session too large to autosave; save tabs as files. Keep the app open to preserve unsaved tabs.';
+const scriptDraftSizeError = 'Script draft too large to autosave; shorten the script.';
 function oversizedSession(session: Patch['session']) {
   return new TextEncoder().encode(JSON.stringify(session ?? null)).byteLength > 32 * 1024 * 1024;
+}
+function oversizedScriptDraft(scriptDraft: Patch['scriptDraft']) {
+  return new TextEncoder().encode(scriptDraft?.code ?? '').byteLength > 128 * 1024;
 }
 let status: PersistenceStatus = { state: 'idle', error: '', recovery };
 const listeners = new Set<(value: PersistenceStatus) => void>();
 
 function report(state: PersistenceStatus['state'], error = '') {
+  if (scriptDraftTooLarge) { state = 'error'; error = scriptDraftSizeError + (error ? ' ' + error : ''); }
   if (sessionTooLarge) { state = 'error'; error = sessionSizeError + (error ? ' ' + error : ''); }
   status = { state, error, recovery };
   for (const listener of listeners) listener(status);
@@ -135,7 +141,15 @@ export async function bootstrapMetadata(): Promise<Metadata> {
       scripts: Array.isArray(loaded.scripts) ? loaded.scripts : [],
       recents: Array.isArray(loaded.recents) ? loaded.recents : [],
     };
-    ready = true; report('saved');
+    ready = true;
+    const skippedLegacy = Array.isArray(loaded.skippedLegacyItems)
+      ? loaded.skippedLegacyItems.filter((item) => typeof item === 'string' && item)
+      : [];
+    if (skippedLegacy.length) {
+      report('error', `Some saved browser data could not be migrated: ${skippedLegacy.join(', ')}. Other saved state was kept.`);
+    } else {
+      report('saved');
+    }
   } catch (error) {
     const retained = stashRecovery();
     report('error', 'Database unavailable. ' + (retained ? 'Recovery cache is active. ' : 'Recovery cache could not be saved. Keep the app open and save files. ') + String(error));
@@ -147,17 +161,19 @@ export function persistMetadata(patch: Patch) {
   if (patch.settings) patch = { ...patch, settings: { ...metadata.settings, ...patch.settings } };
   if (patch.scriptDraft) patch = { ...patch, scriptDraft: { ...patch.scriptDraft, updatedAt: sameScript(patch.scriptDraft, metadata.scriptDraft) ? metadata.scriptDraft?.updatedAt ?? patch.scriptDraft.updatedAt : Date.now() } };
   metadata = { ...metadata, ...patch };
+  if ('scriptDraft' in patch) scriptDraftTooLarge = patch.scriptDraft != null && oversizedScriptDraft(patch.scriptDraft);
   if (nativeStore && 'session' in patch) sessionTooLarge = oversizedSession(patch.session);
   if (nativeStore && (recoveryOwned || !ready)) stashRecovery();
   let cached = true;
   if ('settings' in patch) cached = writeStorage('notation.settings', patch.settings) && cached;
   if ('draft' in patch && (!recovery?.draft || recoveryOwned || sameDraft(patch.draft, recovery.draft))) cached = writeStorage('notation.draft', patch.draft) && cached;
-  if ('scriptDraft' in patch && (!recovery?.scriptDraft || recoveryOwned || sameScript(patch.scriptDraft, recovery.scriptDraft))) cached = writeStorage('notation.scripts', patch.scriptDraft) && cached;
+  if ('scriptDraft' in patch && !scriptDraftTooLarge && (!recovery?.scriptDraft || recoveryOwned || sameScript(patch.scriptDraft, recovery.scriptDraft))) cached = writeStorage('notation.scripts', patch.scriptDraft) && cached;
   if ('session' in patch && !sessionTooLarge && (!recovery?.session || recoveryOwned || sameSession(patch.session, recovery.session))) cached = writeStorage('notation.session', patch.session) && cached;
   if (!cached) { stashRecovery(); report('error', 'Recovery cache is unavailable. Keep the app open and save your document.'); }
   if (!nativeStore) { if (cached) { committed(patch); report('idle'); } return; }
   pending = { ...pending, ...patch };
   if (sessionTooLarge) delete pending.session;
+  if (scriptDraftTooLarge) delete pending.scriptDraft;
   if (!ready) { report('error', status.error || 'Database unavailable. Recovery cache is active.'); return; }
   report('saving');
   clearTimeout(timer);
@@ -178,6 +194,7 @@ export function flushPersistence(): Promise<boolean> {
     } catch (error) {
       pending = { ...state, ...pending };
       if (sessionTooLarge) delete pending.session;
+      if (scriptDraftTooLarge) delete pending.scriptDraft;
       const retained = stashRecovery();
       report('error', 'Could not save app state to the database. ' + (retained ? 'Recovery cache is retained. ' : 'Recovery cache could not be saved. Keep the app open and save files or retry. ') + String(error));
       return false;
@@ -193,6 +210,7 @@ export async function retryPersistence() {
   }
   pending = { ...pending, settings: metadata.settings, draft: metadata.draft, scriptDraft: metadata.scriptDraft, session: metadata.session };
   if (sessionTooLarge) delete pending.session;
+  if (scriptDraftTooLarge) delete pending.scriptDraft;
   report('saving'); await flushPersistence();
 }
 
