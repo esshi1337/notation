@@ -6,6 +6,8 @@ pub mod engines;
 pub mod explorer;
 pub mod frontmatter;
 pub mod git;
+#[cfg(target_os = "linux")]
+pub mod instance;
 pub mod mcp;
 pub mod search_graph;
 pub mod storage;
@@ -19,6 +21,8 @@ mod desktop {
         assets, automation, documents, engines, explorer, frontmatter, git, mcp, search_graph,
         storage, wiki, workspace,
     };
+    #[cfg(target_os = "linux")]
+    use super::instance;
     use serde_json::Value;
     use tauri::{Emitter, Manager, State};
 
@@ -515,15 +519,42 @@ mod desktop {
         }).await.map_err(|error|error.to_string())?
     }
 
+    #[cfg(target_os = "linux")]
+    fn activate_main(handle: tauri::AppHandle) -> Result<(), String> {
+        let (response, completed) = std::sync::mpsc::sync_channel(1);
+        handle
+            .clone()
+            .run_on_main_thread(move || {
+                let result = (|| {
+                    let window = handle
+                        .get_webview_window("main")
+                        .ok_or("The existing Notation window is unavailable.")?;
+                    window.show().map_err(|error| error.to_string())?;
+                    window.unminimize().map_err(|error| error.to_string())?;
+                    // Focus is a request to the compositor. Its refusal does not
+                    // turn an acknowledged handoff into a second profile owner.
+                    let _ = window.set_focus();
+                    Ok(())
+                })();
+                let _ = response.send(result);
+            })
+            .map_err(|error| format!("Could not dispatch activation to the main thread: {error}"))?;
+        completed
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .map_err(|error| format!("The existing window did not accept activation: {error}"))?
+    }
+
     pub fn run() {
-        tauri::Builder::default()
+        let app = tauri::Builder::default()
             .manage(automation::ScriptManager::default())
             .setup(|app| {
-                app.manage(engines::Runtime::discover(app.path().resource_dir().ok()));
-                let data_directory = app
-                    .path()
-                    .app_data_dir()
+                #[cfg(target_os = "linux")]
+                let data_directory: Result<std::path::PathBuf, String> =
+                    Ok(app.state::<instance::ProfileOwner>().profile_dir().to_path_buf());
+                #[cfg(not(target_os = "linux"))]
+                let data_directory = app.path().app_data_dir()
                     .map_err(|error| format!("Could not locate local data directory: {error}"));
+                app.manage(engines::Runtime::discover(app.path().resource_dir().ok()));
                 let database = data_directory
                     .clone()
                     .and_then(|path| storage::Database::open(&path.join("state.sqlite3")));
@@ -599,8 +630,25 @@ mod desktop {
                 wiki_candidates,
                 create_wiki_note
             ])
-            .run(tauri::generate_context!())
+            .build(tauri::generate_context!())
             .expect("Notation could not start");
+        // Configured webviews are created on RunEvent::Ready. Claim ownership
+        // before entering the event loop, so secondary launches create none.
+        #[cfg(target_os = "linux")]
+        match app.path().app_data_dir()
+            .map_err(|error| format!("Could not locate local data directory: {error}"))
+            .and_then(|path| {
+                let handle = app.handle().clone();
+                instance::acquire(&path, move || activate_main(handle.clone()))
+            }) {
+            Ok(instance::Acquisition::Owner(owner)) => { app.manage(owner); }
+            Ok(instance::Acquisition::Activated) => return,
+            Err(error) => {
+                eprintln!("Notation could not start: {error}");
+                std::process::exit(1);
+            }
+        }
+        app.run(|_, _| {});
     }
 }
 #[cfg(feature = "desktop")]

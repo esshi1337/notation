@@ -12,6 +12,7 @@ import tempfile
 import smoke
 from sqlite_smoke import invoke
 from responsive_smoke import command
+from instance_smoke import owners, wait_until
 
 
 def click(client: smoke.Client, label: str) -> None:
@@ -104,7 +105,17 @@ def run(app: Path) -> None:
                 client.screenshot(output / 'shared-file.png')
                 # Flush through the native close handler, then reopen the same disposable profile.
                 smoke.wait_for(client, "document.querySelector('.database-state')?.dataset.state === 'saved'", 'session saved')
-                client.quit(); client.create_session(app)
+                smoke.require(len(owners(root / 'data')) == 1, 'Expected one isolated owner before restart')
+                # Ending WebDriver alone can leave the GUI process alive. Ask
+                # Tauri to close so its pending-state handler runs, then prove
+                # that ownership is released before starting the next session.
+                client.execute("setTimeout(() => window.__TAURI_INTERNALS__.invoke('plugin:window|close', {label:'main'}), 50); return true")
+                wait_until(lambda: not owners(root / 'data'), 'graceful workspace owner exit', timeout=15)
+                try:
+                    client.quit()
+                except smoke.WebDriverError:
+                    pass  # The native close may already have ended the session.
+                client.create_session(app)
                 smoke.wait_for(client, "document.querySelector('main.app')", 'restart')
                 smoke.require('Live' in client.execute("return document.querySelector('[aria-label=\"Layout\"]').textContent"), 'Restart lost Writing layout')
                 command(client, 'Source')

@@ -145,6 +145,16 @@ Your `.md` and `.mmd` files remain authoritative. SQLite holds preferences, reco
 
 The database is `state.sqlite3` in Tauri's application-data directory (`$XDG_DATA_HOME/local.notation.app/`, or `~/.local/share/local.notation.app/` on Linux). Existing webview preferences, drafts, and scripts migrate on first startup; the old recovery cache remains available. Failed database writes show an error, and a pending cached draft can be recovered explicitly. Back up the application-data directory with Notation closed, alongside your note folders.
 
+On Linux, each canonical application-data profile has one ordinary GUI owner. A second launch asks the existing window to show, unminimize, and request focus, then exits only after that handoff is acknowledged; compositors may still refuse focus. Profiles under separate `XDG_DATA_HOME` values run independently. Crash recovery does not require deleting lock files, and `--mcp`, `--script-worker`, and `--engine-worker` processes bypass GUI ownership.
+
+Profile coordination applies to releases that implement the ownership lock.
+Close older releases before upgrading and do not run an older AppImage against
+that same profile: old binaries do not honor the lock. Startup refuses a
+detectable live legacy MCP endpoint, but cannot exclude legacy processes with
+an unavailable endpoint or stop an old binary launched later. Profile paths
+must have ancestors protected from replacement by other users; private
+directories and sticky system temporary directories are supported.
+
 ## Linked notes and properties
 
 Use `[[Note]]`, `[[Note#Heading]]`, or `[[Note#Heading|Label]]`. Type `[[` for note completion and `#` for headings. Click a rendered link, or use Ctrl/Cmd+click or Ctrl/Cmd+Enter in source. Heading navigation uses the opened document, including unsaved headings.
@@ -320,6 +330,7 @@ python3 tests/native/knowledge_smoke.py --app "$HOME/.local/bin/notation"
 python3 tests/native/advanced_smoke.py --app "$HOME/.local/bin/notation"
 python3 tests/native/tooling_smoke.py --app "$HOME/.local/bin/notation"
 python3 tests/native/close_smoke.py --app "$HOME/.local/bin/notation"
+python3 tests/native/instance_smoke.py --app "$HOME/.local/bin/notation" --check-windows
 python3 tests/native/checkbox_smoke.py --app "$HOME/.local/bin/notation"
 python3 tests/native/hemingway_smoke.py --app "$HOME/.local/bin/notation"
 ```
@@ -329,6 +340,8 @@ These checks cover the embedded application, rendering, block editing, scripting
 The advanced export smoke uses Python PyGObject and the AT-SPI typelib to operate the real GTK save dialog. It matches the app's isolated data directory before sending input and does not replace the Tauri bridge or clipboard.
 
 The close smoke additionally requires Hyprland's Lua dispatcher. It sends the same close request as Super+Q to a verified test-owned window and checks that the window actually disappears before cleanup.
+
+The instance smoke uses disposable profiles and MCP without WebDriver to check launch handoff, concurrent starts, profile aliases, worker modes, paused-owner refusal, and crash-during-handoff recovery. `--check-windows` requires Hyprland and checks that a paused owner does not produce a secondary window. `--check-focus` also requires focus transfer, so it needs compositor activation permission (for example, Hyprland `misc:focus_on_activate=true`). Omit these flags on other desktops; their checks are then explicitly unrun. An optional `--legacy-app /path/to/older.AppImage` checks refusal while a detectable older release owns the profile.
 
 ## Layout
 
