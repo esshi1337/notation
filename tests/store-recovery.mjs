@@ -14,19 +14,21 @@ const baseState = { settings: {}, draft: baseDraft, scriptDraft: baseScript, scr
 const server = await createServer({ cacheDir: 'node_modules/.vite-store-recovery', optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true }, logLevel: 'error' });
 let sequence = 0;
 
-async function fixture({ cachedDraft = baseDraft, cachedScript = baseScript, cachedSession = null, database = baseState, failWrites = false, failCache = false } = {}) {
+async function fixture({ cachedDraft = baseDraft, cachedScript = baseScript, cachedSession = null, pendingRecovery = null, database = baseState, failWrites = false, failCache = false, cacheLimit = Infinity } = {}) {
   const data = new Map([
     ['notation.draft', JSON.stringify(cachedDraft)],
     ['notation.scripts', JSON.stringify(cachedScript)],
     ['notation.session', JSON.stringify(cachedSession)],
+    ['notation.pending-recovery', JSON.stringify(pendingRecovery)],
   ]);
   const commits = [];
   const commands = [];
+  const cacheAttempts = [];
   let writeGate, writeStarted;
   globalThis.isTauri = true;
   globalThis.localStorage = {
     getItem: (key) => data.get(key) ?? null,
-    setItem: (key, value) => { if (failCache) throw new Error('Simulated recovery cache full'); data.set(key, value); },
+    setItem: (key, value) => { cacheAttempts.push(key); if (failCache || Buffer.byteLength(value) > cacheLimit) throw new Error('Simulated recovery cache full'); data.set(key, value); },
   };
   globalThis.window = { __TAURI_INTERNALS__: {
     invoke: async (command, args) => {
@@ -34,6 +36,7 @@ async function fixture({ cachedDraft = baseDraft, cachedScript = baseScript, cac
       if (command === 'bootstrap_state') return structuredClone(database);
       if (command === 'metadata_summary') return structuredClone({ workspace: database.workspace, workspaceCatalog: database.workspaceCatalog, recents: database.recents });
       if (command === 'persist_state') {
+        if (Buffer.byteLength(JSON.stringify(args.state.session ?? null)) > 32 * 1024 * 1024) throw new Error('Session exceeds the 32 MiB recovery limit. No tabs were dropped or replaced.');
         if (writeGate) { const gate = writeGate; writeGate = null; writeStarted(); await gate; }
         if (failWrites) throw new Error('Simulated database write failure');
         commits.push(structuredClone(args.state)); return null;
@@ -44,7 +47,7 @@ async function fixture({ cachedDraft = baseDraft, cachedScript = baseScript, cac
   const store = await server.ssrLoadModule('/src/store.ts?recovery-test=' + ++sequence);
   const state = await store.bootstrapMetadata();
   const currentStatus = () => { let value; const unsubscribe = store.observePersistence((status) => value = status); unsubscribe(); return value; };
-  return { store, state, data, commits, commands, status: currentStatus, allowWrites: () => { failWrites = false; },
+  return { store, state, data, commits, commands, cacheAttempts, status: currentStatus, allowWrites: () => { failWrites = false; },
     blockNextWrite: () => {
       let release;
       const started = new Promise(resolve => { writeStarted = resolve; });
@@ -208,7 +211,54 @@ try {
     assert.equal(test.store.currentMetadata().session, sessionBefore, 'summary does not reload document buffers');
     assert.deepEqual(test.store.currentMetadata().workspaceCatalog, database.workspaceCatalog);
   }
-  console.log('Store recovery: 13 scenario groups passed (including 9 content comparisons)');
+  {
+    const test = await fixture({ database: { ...baseState, session: baseSession }, cacheLimit: 4 * 1024 * 1024 });
+    const content = 'é'.repeat(1_100_000);
+    const huge = { activeTabId: 'large-0', updatedAt: 900, tabs: Array.from({ length: 8 }, (_, i) => ({ ...baseDraft, id: `large-${i}`, content, savedContent: content })) };
+    test.store.persistMetadata({ session: huge, settings: { theme: 'dark' } });
+    assert.equal(await test.store.flushPersistence(), true);
+    assert.deepEqual(test.commits.at(-1).settings, { theme: 'dark' });
+    assert.ok(!('session' in test.commits.at(-1)));
+    const attempts = test.cacheAttempts.length;
+    test.store.persistMetadata({ settings: { fontSize: 18 } });
+    await test.store.flushPersistence();
+    await test.store.retryPersistence();
+    assert.ok(test.commits.every(patch => !('session' in patch)), 'retries cannot reintroduce oversized session');
+    assert.deepEqual(test.cacheAttempts.slice(attempts), ['notation.settings'], 'known oversize buffers do not churn recovery quota');
+    assert.match(test.status().error, /Session too large to autosave; save tabs as files/);
+    assert.doesNotMatch(test.status().error, /cache is retained|database/i);
+    assert.equal(test.store.currentMetadata().session, huge, 'all content remains in memory');
+    test.store.persistMetadata({ session: baseSession });
+    assert.equal(await test.store.flushPersistence(), true);
+    assert.deepEqual(test.commits.at(-1).session, baseSession);
+    assert.equal(test.status().state, 'saved');
+  }
+  {
+    for (const failCache of [false, true]) {
+      const older = { ...baseSession, updatedAt: 50 };
+      const test = await fixture({ cachedSession: older, pendingRecovery: { session: older, failedAt: 50 }, database: { ...baseState, session: baseSession }, failWrites: true, failCache });
+      assert.equal(test.status().recovery, null, 'stale inherited recovery is not an offer');
+      const current = structuredClone(baseSession); current.updatedAt = 1000; current.tabs[1].content = 'Current edit after restart';
+      test.store.persistMetadata({ session: current });
+      await test.store.flushPersistence();
+      if (!failCache) {
+        assert.deepEqual(JSON.parse(test.data.get('notation.session')), current);
+        assert.deepEqual(JSON.parse(test.data.get('notation.pending-recovery')).session, current);
+      } else {
+        assert.doesNotMatch(test.status().error, /cache is retained/i);
+        assert.match(test.status().error, /cache could not be saved/i);
+      }
+    }
+  }
+  {
+    const test = await fixture({ failWrites: true });
+    test.store.persistMetadata({ settings: { theme: 'dark' } });
+    assert.equal(await test.store.flushPersistence(), false);
+    test.allowWrites();
+    assert.equal(await test.store.flushPersistence(), true);
+    assert.equal(await test.store.flushPersistence(), true, 'empty flush retains latest outcome');
+  }
+  console.log('Store recovery: 16 scenario groups passed (including 9 content comparisons)');
 } finally {
   await server.close();
 }

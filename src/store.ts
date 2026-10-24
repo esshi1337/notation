@@ -47,11 +47,17 @@ let recoveryOwned = false;
 let ready = !nativeStore;
 let pending: Patch = {};
 let timer: ReturnType<typeof setTimeout> | undefined;
-let writes = Promise.resolve();
+let writes = Promise.resolve(true);
+let sessionTooLarge = false;
+const sessionSizeError = 'Session too large to autosave; save tabs as files. Keep the app open to preserve unsaved tabs.';
+function oversizedSession(session: Patch['session']) {
+  return new TextEncoder().encode(JSON.stringify(session ?? null)).byteLength > 32 * 1024 * 1024;
+}
 let status: PersistenceStatus = { state: 'idle', error: '', recovery };
 const listeners = new Set<(value: PersistenceStatus) => void>();
 
 function report(state: PersistenceStatus['state'], error = '') {
+  if (sessionTooLarge) { state = 'error'; error = sessionSizeError + (error ? ' ' + error : ''); }
   status = { state, error, recovery };
   for (const listener of listeners) listener(status);
 }
@@ -75,7 +81,7 @@ function sameSession(left: DocumentSession | null | undefined, right: DocumentSe
   });
 }
 function stashRecovery() {
-  if (recovery && !recoveryOwned) return !!readStorage<PendingRecovery | null>('notation.pending-recovery', null);
+  if (sessionTooLarge || (recovery && !recoveryOwned)) return false;
   recovery = { draft: metadata.draft, scriptDraft: metadata.scriptDraft, session: metadata.session, failedAt: Date.now() };
   recoveryOwned = true;
   return writeStorage('notation.pending-recovery', recovery);
@@ -114,6 +120,15 @@ export async function bootstrapMetadata(): Promise<Metadata> {
       recovery = { ...recovery, session: cachedSession, failedAt: recovery?.failedAt ?? Date.now() }; foundRecovery = true;
     }
     if (foundRecovery) writeStorage('notation.pending-recovery', recovery);
+    const inheritedOffer = recovery && (
+      (recovery.draft && !sameDraft(recovery.draft, loaded.draft) && (recovery.draft.updatedAt ?? 0) > (loaded.draft?.updatedAt ?? 0)) ||
+      (recovery.scriptDraft && !sameScript(recovery.scriptDraft, loaded.scriptDraft) && (recovery.scriptDraft.updatedAt ?? 0) > (loaded.scriptDraft?.updatedAt ?? 0)) ||
+      (validSession(recovery.session) && !sameSession(recovery.session, loaded.session) && recovery.session.updatedAt > (loaded.session?.updatedAt ?? 0))
+    );
+    if (!foundRecovery && !inheritedOffer) {
+      recovery = null; recoveryOwned = true;
+      writeStorage('notation.pending-recovery', null);
+    }
     metadata = {
       ...metadata, ...loaded,
       settings: loaded.settings && typeof loaded.settings === 'object' ? loaded.settings : {},
@@ -132,35 +147,40 @@ export function persistMetadata(patch: Patch) {
   if (patch.settings) patch = { ...patch, settings: { ...metadata.settings, ...patch.settings } };
   if (patch.scriptDraft) patch = { ...patch, scriptDraft: { ...patch.scriptDraft, updatedAt: sameScript(patch.scriptDraft, metadata.scriptDraft) ? metadata.scriptDraft?.updatedAt ?? patch.scriptDraft.updatedAt : Date.now() } };
   metadata = { ...metadata, ...patch };
+  if (nativeStore && 'session' in patch) sessionTooLarge = oversizedSession(patch.session);
   if (nativeStore && (recoveryOwned || !ready)) stashRecovery();
   let cached = true;
   if ('settings' in patch) cached = writeStorage('notation.settings', patch.settings) && cached;
   if ('draft' in patch && (!recovery?.draft || recoveryOwned || sameDraft(patch.draft, recovery.draft))) cached = writeStorage('notation.draft', patch.draft) && cached;
   if ('scriptDraft' in patch && (!recovery?.scriptDraft || recoveryOwned || sameScript(patch.scriptDraft, recovery.scriptDraft))) cached = writeStorage('notation.scripts', patch.scriptDraft) && cached;
-  if ('session' in patch && (!recovery?.session || recoveryOwned || sameSession(patch.session, recovery.session))) cached = writeStorage('notation.session', patch.session) && cached;
+  if ('session' in patch && !sessionTooLarge && (!recovery?.session || recoveryOwned || sameSession(patch.session, recovery.session))) cached = writeStorage('notation.session', patch.session) && cached;
   if (!cached) { stashRecovery(); report('error', 'Recovery cache is unavailable. Keep the app open and save your document.'); }
   if (!nativeStore) { if (cached) { committed(patch); report('idle'); } return; }
   pending = { ...pending, ...patch };
+  if (sessionTooLarge) delete pending.session;
   if (!ready) { report('error', status.error || 'Database unavailable. Recovery cache is active.'); return; }
   report('saving');
   clearTimeout(timer);
   timer = setTimeout(() => { void flushPersistence(); }, 250);
 }
 
-export function flushPersistence(): Promise<void> {
+export function flushPersistence(): Promise<boolean> {
   clearTimeout(timer);
   if (!nativeStore || !ready || !Object.keys(pending).length) return writes;
-  writes = writes.catch(() => {}).then(async () => {
-    if (!Object.keys(pending).length) return;
+  writes = writes.catch(() => false).then(async (lastOutcome) => {
+    if (!Object.keys(pending).length) return lastOutcome;
     const state = pending; pending = {};
     try {
       await invoke('persist_state', { state });
       committed(state);
       report(Object.keys(pending).length ? 'saving' : 'saved');
+      return true;
     } catch (error) {
       pending = { ...state, ...pending };
+      if (sessionTooLarge) delete pending.session;
       const retained = stashRecovery();
       report('error', 'Could not save app state to the database. ' + (retained ? 'Recovery cache is retained. ' : 'Recovery cache could not be saved. Keep the app open and save files or retry. ') + String(error));
+      return false;
     }
   });
   return writes;
@@ -172,6 +192,7 @@ export async function retryPersistence() {
     catch (error) { report('error', 'Database unavailable. Recovery cache is active. ' + String(error)); return; }
   }
   pending = { ...pending, settings: metadata.settings, draft: metadata.draft, scriptDraft: metadata.scriptDraft, session: metadata.session };
+  if (sessionTooLarge) delete pending.session;
   report('saving'); await flushPersistence();
 }
 
