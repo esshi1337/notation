@@ -58,6 +58,8 @@
   type Layout = 'split' | 'source' | 'preview' | 'live';
   type Panel = 'explorer' | 'workspace' | 'git' | 'history' | 'scripts' | 'properties' | 'graph' | 'table' | 'export' | 'templates' | null;
   type DocumentResult = { path: string; content: string; warning?: string };
+  type LaunchRequest = { id: string; paths: string[] };
+  const MAX_LAUNCH_FILES = 64, MAX_LAUNCH_QUEUE = 16, MAX_LAUNCH_DEDUP = 128;
   const restored = restoreTabs(initial.session, initial.draft, sample);
   const preferences = initial.settings;
   let documents = $state<DocumentTab[]>(restored.tabs);
@@ -95,6 +97,9 @@
   let status = $state(initial.session || initial.draft ? 'Recovered your last session' : 'Ready');
   let error = $state('');
   let busy = $state(false);
+  const launchRequests: LaunchRequest[] = [], launchOrder: string[] = [];
+  const launchSeen = new Set<string>(), launchHandled = new Set<string>();
+  let launchWorker: Promise<void> | null = null, launchDisposed = false;
   let closingWindow = $state(false);
   let closeRecoveryDecision = $state<((discard: boolean) => void) | null>(null);
   let discardDecisions = 0;
@@ -244,19 +249,107 @@
     status = 'Opened ' + tab.name; error = result.warning || '';
     return tab;
   }
-  async function openPath(selected: string, line?: number, expiresAt?: number): Promise<boolean> {
+  async function openPath(selected: string, line?: number, expiresAt?: number, launched = false): Promise<boolean> {
     if (busy || workspaceBusy) return false;
     const existing = documents.find((tab) => tab.path === selected);
     if (existing) { selectTab(existing.id); if (line) { layout = 'source'; await tick(); editors[existing.id]?.revealLine(line); } return true; }
     busy = true; error = '';
     try {
-      const result = await invoke<DocumentResult>('read_document', { path: selected });
+      const result = await invoke<DocumentResult>(launched ? 'read_launch_document' : 'read_document', { path: selected });
       if (expiresAt !== undefined && Date.now() >= expiresAt) throw new Error('Agent request expired before the document opened.');
       const tab = receiveDocument(result);
       if (line) { layout = 'source'; await tick(); editors[tab.id]?.revealLine(line); }
       return true;
     } catch (cause) { error = 'Could not open document: ' + String(cause); return false; }
     finally { busy = false; }
+  }
+  function queueLaunchRequest(request: LaunchRequest) {
+    if (launchDisposed) return;
+    if (!request || typeof request.id !== 'string' || !Array.isArray(request.paths) || !request.paths.length || request.paths.length > MAX_LAUNCH_FILES || request.paths.some(path => typeof path !== 'string')) {
+      error = 'Received a malformed file launch request.'; return;
+    }
+    if (launchSeen.has(request.id)) return;
+    // Native admission bounds this queue to 16. Keep a defensive UI bound too;
+    // an overflow is explicitly surfaced and completed, never silently dropped.
+    if (launchRequests.length >= MAX_LAUNCH_QUEUE) {
+      error = 'Too many documents are waiting to open. Retry the launch after the queue drains.';
+      void invoke('complete_launch_request', { id: request.id }).catch(() => {});
+      return;
+    }
+    launchSeen.add(request.id); launchOrder.push(request.id);
+    if (launchOrder.length > MAX_LAUNCH_DEDUP) {
+      const expired = launchOrder.shift()!;
+      launchSeen.delete(expired); launchHandled.delete(expired);
+    }
+    launchRequests.push(request);
+    void drainLaunchRequests();
+  }
+  function launchDelay(milliseconds: number) { return new Promise<void>(resolve => setTimeout(resolve, milliseconds)); }
+  async function waitForLaunchWindow() {
+    // Polling occurs only while a real launch waits for an operation or user
+    // decision. An orderly close closes native admission, then lets this worker
+    // finish already-accepted requests before persistence and window destruction.
+    while (!launchDisposed && (busy || workspaceBusy || discardDecisions > 0)) await launchDelay(50);
+    return !launchDisposed;
+  }
+  function appendLaunchError(message: string) { error = error ? error + '\n' + message : message; }
+  async function drainLaunchRequests() {
+    if (launchWorker || launchDisposed || !launchRequests.length) return;
+    launchWorker = (async () => {
+      while (launchRequests.length && !launchDisposed) {
+        const request = launchRequests[0];
+        if (!launchHandled.has(request.id)) {
+          for (const path of request.paths) {
+            let finished = false;
+            while (!finished && !launchDisposed) {
+              if (!await waitForLaunchWindow()) return;
+              // Preserve earlier alerts across every request, not just one drain
+              // batch, while capturing this path's result independently.
+              const previousError = error;
+              error = '';
+              const opened = await openPath(path, undefined, undefined, true);
+              const outcomeError = error;
+              error = [previousError, outcomeError].filter(Boolean).join('\n');
+              if (opened || outcomeError) finished = true;
+              else {
+                // A user operation won the race after the idle wait. Retry the
+                // same path rather than treating busyness as an open failure.
+                await launchDelay(25);
+              }
+            }
+          }
+          if (launchDisposed) return;
+          launchHandled.add(request.id);
+        }
+        try {
+          // Completion means every path was attempted and failures were shown;
+          // it is deliberately distinct from the native "accepted" socket ACK.
+          await invoke('complete_launch_request', { id: request.id });
+          launchRequests.shift();
+        } catch (cause) {
+          appendLaunchError('Could not finish the file launch handoff; it will be retried. ' + String(cause));
+          await launchDelay(100);
+        }
+      }
+    })().catch(async (cause) => {
+      appendLaunchError('File launch processing failed; the request will be retried. ' + String(cause));
+      await launchDelay(100);
+    }).finally(() => {
+      launchWorker = null;
+      if (launchRequests.length && !launchDisposed) void drainLaunchRequests();
+    });
+  }
+  async function drainLaunchesForClose() {
+    // Once native admission is closed, this fixed set cannot grow. Reconcile
+    // snapshots as well as events so even a missed warm emission cannot strand
+    // accepted work when the last window is destroyed.
+    while (!launchDisposed) {
+      const pending = await invoke<LaunchRequest[]>('launch_ready', { ready: true });
+      for (const request of pending) queueLaunchRequest(request);
+      void drainLaunchRequests();
+      if (!pending.length && !launchRequests.length && !launchWorker) return;
+      await launchDelay(25);
+    }
   }
   async function openDocument() {
     if (busy || workspaceBusy) return;
@@ -465,12 +558,13 @@
   }
 
   onMount(() => {
+    launchDisposed = false;
     if (initialView) for (const id of initialView.tabIds) if (initialView.selections[id]) editors[id]?.restoreSelection(initialView.selections[id]);
     const unobserve = observePersistence((value) => persistence = value);
     const guard = (event: BeforeUnloadEvent) => { if (!desktop && documents.some(tabDirty)) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', guard);
     window.addEventListener('keydown', handleKeyboard, true);
-    let unclose: (() => void) | undefined, unagent: (() => void) | undefined, disposed = false;
+    let unclose: (() => void) | undefined, unagent: (() => void) | undefined, unlaunch: (() => void) | undefined, disposed = false;
     if (nativeStore) {
       void import('@tauri-apps/api/window').then(async ({ getCurrentWindow }) => {
         const current = getCurrentWindow(); let closing = false;
@@ -478,22 +572,52 @@
           event.preventDefault();
           if (closing) return;
           const previousFocus = document.activeElement as HTMLElement | null;
+          let launchGateClosed = false;
+          const reopenLaunches = async () => {
+            if (!launchGateClosed) return '';
+            try { await invoke('set_launch_closing', { closing: false }); launchGateClosed = false; return ''; }
+            catch (cause) { return 'Could not resume file launch admission after closing was interrupted. ' + String(cause); }
+          };
           closing = true; closingWindow = true;
           try {
+            // Reject new socket work as retryable, then drain the fixed set of
+            // requests accepted before the gate closed. No acknowledgment is
+            // abandoned by an ordinary approved window close.
+            await invoke('set_launch_closing', { closing: true });
+            launchGateClosed = true;
+            await drainLaunchesForClose();
             await tick(); await Promise.all([...cellSessions.values()].map(session=>session.stop())); await flushPersistence();
             if (persistence.state === 'error') {
               discardDecisions++;
               let discard = false;
               try { discard = await new Promise<boolean>((resolve) => closeRecoveryDecision = resolve); }
               finally { discardDecisions--; }
-              if (!discard) { closing = false; closingWindow = false; await tick(); previousFocus?.focus(); return; }
+              if (!discard) {
+                const reopenError = await reopenLaunches();
+                closing = false; closingWindow = false; await tick(); previousFocus?.focus();
+                if (reopenError) persistence = { state: 'error', error: reopenError };
+                return;
+              }
             }
             // Finish this approved request directly. Calling close() here would
             // emit another request and move failures outside this catch block.
             await current.destroy();
-          } catch (cause) { closing = false; closingWindow = false; persistence = { state: 'error', error: 'Could not close the window after saving app state. ' + String(cause) }; }
+          } catch (cause) {
+            const reopenError = await reopenLaunches();
+            closing = false; closingWindow = false;
+            persistence = { state: 'error', error: 'Could not close the window after saving app state. ' + String(cause) + reopenError };
+          }
         });
       }).catch((cause: unknown) => { persistence = { state: 'error', error: 'Close-time database flush unavailable. Recovery cache remains active. ' + String(cause) }; });
+      void import('@tauri-apps/api/event').then(async ({ listen }) => {
+        const stop = await listen<LaunchRequest>('notation:launch-request', ({ payload }) => queueLaunchRequest(payload));
+        if (disposed) { stop(); return; }
+        unlaunch = stop;
+        // main.ts has completed bootstrap and App has restored its session before
+        // this snapshot is requested. Listen first so warm events cannot race it.
+        const pending = await invoke<LaunchRequest[]>('launch_ready', { ready: true });
+        if (!disposed) for (const request of pending) queueLaunchRequest(request);
+      }).catch((cause: unknown) => { error = 'File launch queue unavailable: ' + String(cause); });
       type AgentRequest = { id: string; operation: 'list_tabs' | 'read_tab' | 'open_document' | 'edit_document'; path?: string; tabId?: string; expectedContent?: string; content?: string; expiresAt: number };
       void import('@tauri-apps/api/event').then(async ({ listen }) => {
         unagent = await listen<AgentRequest>('notation:agent-request', async ({ payload: request }) => {
@@ -527,7 +651,7 @@
         await tick(); if (!disposed) await invoke('agent_ready', { ready: true });
       }).catch((cause: unknown) => { error = 'MCP editor bridge unavailable: ' + String(cause); });
     }
-    return () => { disposed = true; window.removeEventListener('beforeunload', guard); window.removeEventListener('keydown', handleKeyboard, true); unobserve(); unclose?.(); unagent?.(); if (nativeStore) void invoke('agent_ready', { ready: false }).catch(() => {}); };
+    return () => { disposed = true; launchDisposed = true; window.removeEventListener('beforeunload', guard); window.removeEventListener('keydown', handleKeyboard, true); unobserve(); unclose?.(); unagent?.(); unlaunch?.(); if (nativeStore) { void invoke('launch_ready', { ready: false }).catch(() => {}); void invoke('agent_ready', { ready: false }).catch(() => {}); } };
   });
 </script>
 

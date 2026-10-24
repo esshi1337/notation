@@ -8,6 +8,7 @@ pub mod frontmatter;
 pub mod git;
 #[cfg(target_os = "linux")]
 pub mod instance;
+pub mod launch;
 pub mod mcp;
 pub mod search_graph;
 pub mod storage;
@@ -17,12 +18,12 @@ pub mod workspace_catalog;
 
 #[cfg(feature = "desktop")]
 mod desktop {
-    use super::{
-        assets, automation, documents, engines, explorer, frontmatter, git, mcp, search_graph,
-        storage, wiki, workspace,
-    };
     #[cfg(target_os = "linux")]
     use super::instance;
+    use super::{
+        assets, automation, documents, engines, explorer, frontmatter, git, launch, mcp,
+        search_graph, storage, wiki, workspace,
+    };
     use serde_json::Value;
     use tauri::{Emitter, Manager, State};
 
@@ -79,6 +80,16 @@ mod desktop {
         tauri::async_runtime::spawn_blocking(move || storage::read_with_metadata(&path, &database))
             .await
             .map_err(|error| format!("Could not open file: {error}"))?
+    }
+    #[tauri::command]
+    async fn read_launch_document(
+        path: String,
+        database: State<'_, DatabaseState>,
+    ) -> Result<documents::Document, String> {
+        let database = database.get();
+        tauri::async_runtime::spawn_blocking(move || launch::read_with_metadata(&path, &database))
+            .await
+            .map_err(|error| format!("Could not open launched file: {error}"))?
     }
     #[tauri::command]
     async fn resolve_document_path(path: String) -> Result<Value, String> {
@@ -497,6 +508,27 @@ mod desktop {
         .await
     }
     #[tauri::command]
+    fn launch_ready(
+        ready: bool,
+        launches: State<'_, launch::LaunchQueue>,
+    ) -> Result<Vec<launch::LaunchRequest>, String> {
+        launches.set_ready(ready)
+    }
+    #[tauri::command]
+    fn set_launch_closing(
+        closing: bool,
+        launches: State<'_, launch::LaunchQueue>,
+    ) -> Result<(), String> {
+        launches.set_closing(closing)
+    }
+    #[tauri::command]
+    fn complete_launch_request(
+        id: String,
+        launches: State<'_, launch::LaunchQueue>,
+    ) -> Result<bool, String> {
+        launches.complete(&id)
+    }
+    #[tauri::command]
     fn agent_ready(ready: bool, agent: State<'_, AgentState>) {
         agent.backend.bridge.set_ready(ready);
     }
@@ -538,21 +570,35 @@ mod desktop {
                 })();
                 let _ = response.send(result);
             })
-            .map_err(|error| format!("Could not dispatch activation to the main thread: {error}"))?;
+            .map_err(|error| {
+                format!("Could not dispatch activation to the main thread: {error}")
+            })?;
         completed
             .recv_timeout(std::time::Duration::from_secs(2))
             .map_err(|error| format!("The existing window did not accept activation: {error}"))?
     }
 
-    pub fn run() {
+    pub fn run(initial_request: Option<launch::LaunchRequest>) {
+        let launches = launch::LaunchQueue::default();
+        if let Some(request) = initial_request.clone() {
+            if let Err(error) = launches.enqueue(request) {
+                eprintln!("Notation could not queue the requested documents: {error}");
+                std::process::exit(1);
+            }
+        }
         let app = tauri::Builder::default()
             .manage(automation::ScriptManager::default())
+            .manage(launches.clone())
             .setup(|app| {
                 #[cfg(target_os = "linux")]
-                let data_directory: Result<std::path::PathBuf, String> =
-                    Ok(app.state::<instance::ProfileOwner>().profile_dir().to_path_buf());
+                let data_directory: Result<std::path::PathBuf, String> = Ok(app
+                    .state::<instance::ProfileOwner>()
+                    .profile_dir()
+                    .to_path_buf());
                 #[cfg(not(target_os = "linux"))]
-                let data_directory = app.path().app_data_dir()
+                let data_directory = app
+                    .path()
+                    .app_data_dir()
                     .map_err(|error| format!("Could not locate local data directory: {error}"));
                 app.manage(engines::Runtime::discover(app.path().resource_dir().ok()));
                 let database = data_directory
@@ -581,6 +627,7 @@ mod desktop {
             .plugin(tauri_plugin_dialog::init())
             .invoke_handler(tauri::generate_handler![
                 read_document,
+                read_launch_document,
                 resolve_document_path,
                 write_document,
                 run_script,
@@ -620,6 +667,9 @@ mod desktop {
                 git_status,
                 git_history,
                 git_diff,
+                launch_ready,
+                set_launch_closing,
+                complete_launch_request,
                 agent_ready,
                 agent_status,
                 complete_agent_request,
@@ -635,13 +685,38 @@ mod desktop {
         // Configured webviews are created on RunEvent::Ready. Claim ownership
         // before entering the event loop, so secondary launches create none.
         #[cfg(target_os = "linux")]
-        match app.path().app_data_dir()
+        match app
+            .path()
+            .app_data_dir()
             .map_err(|error| format!("Could not locate local data directory: {error}"))
             .and_then(|path| {
-                let handle = app.handle().clone();
-                instance::acquire(&path, move || activate_main(handle.clone()))
+                let activation_handle = app.handle().clone();
+                let launch_handle = activation_handle.clone();
+                let launch_queue = launches.clone();
+                instance::acquire_with_launch(
+                    &path,
+                    move || activate_main(activation_handle.clone()),
+                    move |request| {
+                        let outcome = launch_queue.enqueue(request.clone())?;
+                        if outcome == launch::EnqueueOutcome::DuplicateCompleted {
+                            return Ok(());
+                        }
+                        if launch_queue.ready()? {
+                            // Pending duplicates are deliberately re-emitted to
+                            // heal missed events. Failure rejects this handshake
+                            // as retryable; completed IDs are never re-opened.
+                            launch_handle
+                                .emit_to("main", "notation:launch-request", request)
+                                .map_err(|error| format!("Could not deliver launch request: {error}"))?;
+                        }
+                        Ok(())
+                    },
+                    initial_request.clone(),
+                )
             }) {
-            Ok(instance::Acquisition::Owner(owner)) => { app.manage(owner); }
+            Ok(instance::Acquisition::Owner(owner)) => {
+                app.manage(owner);
+            }
             Ok(instance::Acquisition::Activated) => return,
             Err(error) => {
                 eprintln!("Notation could not start: {error}");

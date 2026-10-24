@@ -19,8 +19,24 @@ try {
     assert.equal(value.showStatusBar, true);
   });
   check('custom appearance survives serialization without losing boolean settings', () => {
-    const custom = { darkPreset: 'charcoal', density: 'comfortable', accentColor: '#AABBCC', editorFont: 'sans', lineHeight: 2, readingWidth: 700, sidebarWidth: 320, sidebarPosition: 'right', showStatusBar: false, showLineNumbers: false, focusMode: true, smoothScrolling: false };
+    const custom = { darkPreset: 'charcoal', density: 'comfortable', accentColor: '#AABBCC', editorFont: 'sans', lineHeight: 2, readingWidth: 700, sidebarWidth: 320, sidebarRailWidth: 'wide', sidebarPosition: 'right', showStatusBar: false, showLineNumbers: false, focusMode: true, smoothScrolling: false };
     assert.deepEqual(preferences.readUIPreferences(JSON.parse(JSON.stringify(custom))), { ...custom, accentColor: '#aabbcc' });
+  });
+  check('icon strip presets are independent of legacy tool panel widths and density', () => {
+    const legacy = preferences.readUIPreferences({ sidebarWidth: 310 });
+    assert.equal(legacy.sidebarWidth, 310);
+    assert.equal(legacy.sidebarRailWidth, 'standard');
+    for (const value of [undefined, null, 'huge', 340, 'wide;display:none']) {
+      assert.equal(preferences.readUIPreferences({ sidebarRailWidth: value }).sidebarRailWidth, 'standard');
+    }
+    for (const [sidebarRailWidth, width] of [['narrow', 40], ['standard', 44], ['wide', 60]]) {
+      for (const density of ['compact', 'comfortable']) {
+        const restored = preferences.readUIPreferences(JSON.parse(JSON.stringify({ sidebarRailWidth, sidebarWidth: 310, density })));
+        assert.equal(restored.sidebarRailWidth, sidebarRailWidth);
+        assert.equal(restored.sidebarWidth, 310);
+        assert.ok(preferences.preferencesStyle(restored).includes('--rail-size:' + (width + (density === 'comfortable' ? 4 : 0)) + 'px;'));
+      }
+    }
   });
   check('sidebar position defaults safely and restores either side', () => {
     for (const sidebarPosition of [undefined, null, 'bottom', '', 123]) assert.equal(preferences.readUIPreferences({ sidebarPosition }).sidebarPosition, 'left');

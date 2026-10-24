@@ -749,12 +749,10 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .sidebar-button:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 .sidebar-button:disabled { opacity: .35; cursor: default; }
 .sidebar-panel { display: flex; width: min(var(--sidebar-width, 260px), max(180px, calc(100vw - 380px))); min-width: 0; min-height: 0; border-right: 1px solid var(--border); background: var(--bar); }
-.sidebar-panel.sidebar-graph { width: min(max(var(--sidebar-width, 260px), 520px), calc(100vw - 380px)); }
 .content-area[data-sidebar-position='right'] .sidebar-panel { border-right: 0; border-left: 1px solid var(--border); }
 .sidebar-panel > :is(.utility-panel, .scripts-panel, .explorer-panel) { flex: 1; width: 100%; min-width: 0; max-width: none; border: 0; }
 @media (max-width: 760px) {
   .sidebar-panel { position: absolute; top: 0; bottom: 0; left: var(--rail-size); width: min(var(--sidebar-width, 260px), calc(100% - var(--rail-size))); box-shadow: 5px 0 12px #0003; }
-  .sidebar-panel.sidebar-graph { width: min(520px, calc(100% - var(--rail-size))); }
   .content-area[data-sidebar-position='right'] .sidebar-panel { left: auto; right: var(--rail-size); box-shadow: -5px 0 12px #0003; }
 }
 

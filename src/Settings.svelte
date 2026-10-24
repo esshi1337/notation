@@ -19,11 +19,12 @@
   const sections: Section[] = ['Appearance', 'Editor', 'Shortcuts', 'Agents'];
   const themeOptions = [{ value: 'dark', label: 'Dark' }, { value: 'light', label: 'Light' }];
   const densityOptions = [{ value: 'compact', label: 'Compact' }, { value: 'comfortable', label: 'Comfortable' }];
+  const sidebarRailWidthOptions = [{ value: 'narrow', label: 'Narrow' }, { value: 'standard', label: 'Standard' }, { value: 'wide', label: 'Wide' }];
   const sidebarPositionOptions = [{ value: 'left', label: 'Left' }, { value: 'right', label: 'Right' }];
   const darkPresetOptions = [{ value: 'midnight', label: 'Midnight' }, { value: 'charcoal', label: 'Charcoal' }];
   const editorFontOptions = [{ value: 'mono', label: 'IBM Plex Mono' }, { value: 'sans', label: 'Source Sans 3' }];
   const layoutOptions = [{ value: 'source', label: 'Source' }, { value: 'split', label: 'Split' }, { value: 'preview', label: 'Preview' }, { value: 'live', label: 'Live Preview' }];
-  const sidebarWidthPresets = [
+  const toolPanelWidthPresets = [
     { value: '220', numeric: 220, label: 'Narrow', hint: '220 px' },
     { value: '260', numeric: 260, label: 'Standard', hint: '260 px' },
     { value: '340', numeric: 340, label: 'Wide', hint: '340 px' },
@@ -64,16 +65,16 @@
   let layoutLabel = $derived(layoutOptions.find((option) => option.value === layout)?.label ?? layout);
   let specimenStyle = $derived(`--specimen-font:${prefs.editorFont === 'sans' ? "'Source Sans 3', sans-serif" : "'IBM Plex Mono', monospace"};--specimen-size:${fontSize}px;--specimen-leading:${prefs.lineHeight};--specimen-width:${Math.max(40, Math.min(100, prefs.readingWidth / 12))}%`);
 
-  function sidebarWidthOptions(width: number) {
-    const options: { value: string; label: string; hint?: string }[] = sidebarWidthPresets.map(({ value, label, hint }) => ({ value, label, hint }));
-    if (!sidebarWidthPresets.some((preset) => preset.numeric === width)) options.unshift({ value: 'custom', label: `Custom (${width} px)` });
+  function toolPanelWidthOptions(width: number) {
+    const options: { value: string; label: string; hint?: string }[] = toolPanelWidthPresets.map(({ value, label, hint }) => ({ value, label, hint }));
+    if (!toolPanelWidthPresets.some((preset) => preset.numeric === width)) options.unshift({ value: 'custom', label: `Custom (${width} px)` });
     return options;
   }
-  function sidebarWidthValue(width: number) {
-    return sidebarWidthPresets.some((preset) => preset.numeric === width) ? String(width) : 'custom';
+  function toolPanelWidthValue(width: number) {
+    return toolPanelWidthPresets.some((preset) => preset.numeric === width) ? String(width) : 'custom';
   }
-  function selectSidebarWidth(value: string) {
-    const preset = sidebarWidthPresets.find((option) => option.value === value);
+  function selectToolPanelWidth(value: string) {
+    const preset = toolPanelWidthPresets.find((option) => option.value === value);
     if (preset) prefs.sidebarWidth = preset.numeric;
   }
   async function refresh() {
@@ -111,6 +112,7 @@
     prefs.darkPreset = DEFAULT_UI_PREFERENCES.darkPreset;
     prefs.density = DEFAULT_UI_PREFERENCES.density;
     prefs.sidebarWidth = DEFAULT_UI_PREFERENCES.sidebarWidth;
+    prefs.sidebarRailWidth = DEFAULT_UI_PREFERENCES.sidebarRailWidth;
     prefs.sidebarPosition = DEFAULT_UI_PREFERENCES.sidebarPosition;
     prefs.showStatusBar = DEFAULT_UI_PREFERENCES.showStatusBar;
     prefs.focusMode = DEFAULT_UI_PREFERENCES.focusMode;
@@ -179,7 +181,8 @@
           {/if}
           <SegmentedControl label="Density" options={densityOptions} value={prefs.density} onchange={(value) => prefs.density = value as UIPreferences['density']} />
           <SegmentedControl label="Sidebar position" options={sidebarPositionOptions} value={prefs.sidebarPosition} onchange={(value) => prefs.sidebarPosition = value as UIPreferences['sidebarPosition']} />
-          <SelectControl label="Sidebar width" options={sidebarWidthOptions(prefs.sidebarWidth)} value={sidebarWidthValue(prefs.sidebarWidth)} onchange={selectSidebarWidth} {theme} />
+          <SelectControl label="Sidebar width" options={sidebarRailWidthOptions} value={prefs.sidebarRailWidth} onchange={(value) => prefs.sidebarRailWidth = value as UIPreferences['sidebarRailWidth']} {theme} />
+          <SelectControl label="Tool panel width" options={toolPanelWidthOptions(prefs.sidebarWidth)} value={toolPanelWidthValue(prefs.sidebarWidth)} onchange={selectToolPanelWidth} {theme} />
           <div class="settings-toggle-group">
             <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.showStatusBar} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Show status bar</label>
             <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.focusMode} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Focus mode</label>

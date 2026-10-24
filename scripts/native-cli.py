@@ -120,6 +120,20 @@ def restore_engines(appdir):
     print(f'Restored and verified pinned engines: {destination}', flush=True)
 
 
+def preserve_launch_directory(appdir):
+    """Keep relative CLI paths valid after AppRun.wrapped changes directory."""
+    launcher = appdir / 'AppRun'
+    text = launcher.read_text()
+    marker = '# Notation: preserve the caller directory before AppRun.wrapped.'
+    if marker in text:
+        return
+    lines = text.splitlines(keepends=True)
+    if not lines or not lines[0].startswith('#!'):
+        raise RuntimeError('Expected the linuxdeploy shell launcher')
+    lines.insert(1, marker + '\nexport OWD="${OWD:-$(pwd -P)}"\n')
+    launcher.write_text(''.join(lines))
+
+
 def repackage(appdir, output):
     appdir, output = appdir.resolve(), output.resolve()
     if not (appdir / 'AppRun').is_file():
@@ -131,6 +145,7 @@ def repackage(appdir, output):
     restore_engines(appdir)
     restore_webkit_helpers(appdir)
     verify_media_bundle(appdir)
+    preserve_launch_directory(appdir)
     output.parent.mkdir(parents=True, exist_ok=True)
     # Publish only the successfully regenerated image. Preserve the previous
     # image if packaging fails, and return nonzero to prevent installation.

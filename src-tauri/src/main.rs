@@ -23,7 +23,15 @@ fn main() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
     #[cfg(feature = "desktop")]
-    notation_lib::run();
+    let request = match notation_lib::launch::from_env() {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("Notation could not open the requested documents: {error}");
+            std::process::exit(2);
+        }
+    };
+    #[cfg(feature = "desktop")]
+    notation_lib::run(request);
     #[cfg(not(feature = "desktop"))]
     eprintln!("Build with --features desktop to launch the Notation editor.");
 }

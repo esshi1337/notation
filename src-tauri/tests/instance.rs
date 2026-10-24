@@ -1,6 +1,7 @@
 #![cfg(target_os = "linux")]
 
-use notation_lib::instance::{acquire, Acquisition};
+use notation_lib::instance::{acquire, acquire_with_launch, Acquisition};
+use notation_lib::launch::{LaunchQueue, LaunchRequest};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::ffi::OsStrExt;
@@ -31,6 +32,7 @@ fn raw_lock(profile: &Path) -> File {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .mode(0o600)
         .open(profile.join(".instance.lock"))
         .unwrap();
@@ -511,4 +513,75 @@ fn disconnected_owner_releases_lock_during_handoff() {
         matches!(result, Ok(Acquisition::Owner(_))),
         "waiter must reacquire after owner disappears"
     );
+}
+
+#[test]
+fn warm_launch_delivers_multiple_paths_and_retry_identity_is_deduplicated() {
+    let temporary = tempfile::tempdir().unwrap();
+    let profile = temporary.path().join("profile");
+    let queue = LaunchQueue::default();
+    let owner_queue = queue.clone();
+    let activations = Arc::new(AtomicUsize::new(0));
+    let callback_count = activations.clone();
+    let first = acquire_with_launch(
+        &profile,
+        move || {
+            callback_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        },
+        move |request| owner_queue.enqueue(request).map(|_| ()),
+        None,
+    );
+    assert!(matches!(first, Ok(Acquisition::Owner(_))));
+    let request = LaunchRequest::new(
+        "warm-request",
+        vec!["/tmp/with spaces.txt".into(), "/tmp/日本語.md".into()],
+    )
+    .unwrap();
+    for _ in 0..2 {
+        let second = acquire_with_launch(
+            &profile,
+            || panic!("a secondary must not install an activation callback"),
+            |_| panic!("a secondary must not install a launch callback"),
+            Some(request.clone()),
+        )
+        .unwrap();
+        assert!(matches!(second, Acquisition::Activated));
+    }
+    assert_eq!(activations.load(Ordering::SeqCst), 2);
+    assert_eq!(queue.set_ready(true).unwrap(), vec![request]);
+}
+
+#[test]
+fn malformed_and_oversized_v2_frames_do_not_activate_or_enqueue() {
+    let temporary = tempfile::tempdir().unwrap();
+    let profile = temporary.path().join("profile");
+    let queue = LaunchQueue::default();
+    let owner_queue = queue.clone();
+    let activations = Arc::new(AtomicUsize::new(0));
+    let callback_count = activations.clone();
+    let first = acquire_with_launch(
+        &profile,
+        move || {
+            callback_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        },
+        move |request| owner_queue.enqueue(request).map(|_| ()),
+        None,
+    );
+    assert!(matches!(first, Ok(Acquisition::Owner(_))));
+    let socket = profile.join(".instance.sock");
+    assert_eq!(
+        raw_request(&socket, b"NOTATION_LAUNCH/2 999999999\n"),
+        b"NOTATION_LAUNCH_ERROR/2\n"
+    );
+    let payload = b"not-json";
+    let header = format!("NOTATION_LAUNCH/2 {}\n", payload.len());
+    let mut frame = header.into_bytes();
+    frame.extend_from_slice(payload);
+    assert_eq!(raw_request(&socket, &frame), b"NOTATION_LAUNCH_ERROR/2\n");
+    assert_eq!(activations.load(Ordering::SeqCst), 0);
+    assert!(queue.set_ready(true).unwrap().is_empty());
+    assert!(matches!(owner(&profile), Acquisition::Activated));
+    assert_eq!(activations.load(Ordering::SeqCst), 1);
 }

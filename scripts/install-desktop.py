@@ -3,9 +3,47 @@
 
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
+
+
+SAFE_EXECUTABLE = re.compile(r'^[A-Za-z0-9_./+-]+$')
+
+
+def desktop_exec_argument(path):
+    """Quote one desktop Exec argument without invoking shell semantics."""
+    value = str(path)
+    if not value or any(character in value for character in ('\0', '\n', '\r')):
+        raise ValueError('The launcher path cannot be represented in a desktop entry.')
+    # Keep ordinary paths unquoted: some xdg-mime generic resolvers have
+    # historically misparsed a quoted executable. % is always a field-code
+    # escape, including inside a quoted argument; %F is appended separately.
+    if SAFE_EXECUTABLE.fullmatch(value):
+        return value
+    escaped = (value.replace('\\', '\\\\').replace('"', '\\"')
+               .replace('`', '\\`').replace('$', '\\$').replace('%', '%%'))
+    # Desktop Entry key values decode backslash escapes before Exec is parsed.
+    # Preserve the Exec quoting escapes through that first decoding layer.
+    return '"' + escaped.replace('\\', '\\\\') + '"'
+
+
+def desktop_entry(launcher):
+    command = desktop_exec_argument(launcher)
+    # GIO checks the executable before expanding %% field-code escapes. A
+    # literal percent in the executable path therefore needs a stable runner;
+    # env receives the expanded path as an argument and executes it directly.
+    if '%' in str(launcher):
+        command = '/usr/bin/env ' + command
+    return (
+        '[Desktop Entry]\nType=Application\nName=Notation\n'
+        'Comment=Write Markdown and Mermaid diagrams\n'
+        f'Exec={command} %F\n'
+        'MimeType=text/plain;text/markdown;text/x-markdown;\n'
+        'Icon=local.notation.app\nTerminal=false\nCategories=Utility;TextEditor;\n'
+        'StartupWMClass=notation\nStartupNotify=true\n'
+    )
 
 
 def main():
@@ -34,14 +72,7 @@ def main():
     launcher.write_text('#!/bin/sh\nexec ' + shlex.quote(str(app_dir / 'Notation.AppImage')) + ' "$@"\n')
     launcher.chmod(0o755)
     desktop = desktop_dir / 'local.notation.app.desktop'
-    escaped_launcher = str(launcher).replace('\\', '\\\\').replace('"', '\\"').replace('`', '\\`').replace('$', '\\$')
-    desktop.write_text(
-        '[Desktop Entry]\nType=Application\nName=Notation\n'
-        'Comment=Write Markdown and Mermaid diagrams\n'
-        f'Exec="{escaped_launcher}"\n'
-        'Icon=local.notation.app\nTerminal=false\nCategories=Utility;TextEditor;\n'
-        'StartupWMClass=notation\nStartupNotify=true\n'
-    )
+    desktop.write_text(desktop_entry(launcher))
     for command in ('desktop-file-validate', 'update-desktop-database'):
         if shutil.which(command):
             subprocess.run([command, str(desktop if command == 'desktop-file-validate' else desktop_dir)], check=True)

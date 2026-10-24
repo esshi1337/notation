@@ -20,6 +20,10 @@ The installer copies the AppImage to `~/.local/opt/notation/Notation.AppImage`, 
 
 Rebuild and rerun `npm run desktop:install` to update the installed application. Close the app first. Documents and recovery data are kept outside the installation directory.
 
+Open local text and Markdown files through **Open With → Notation**, or run `notation "notes.txt" "another note.md"`. The installer registers supported text types without changing your default applications. Multiple filenames, spaces, Unicode, and paths relative to the launching directory are supported; use `notation -- --filename.txt` for a name beginning with a dash. Existing canonical paths select their open tab and preserve unsaved edits. Files must be regular UTF-8 text within the 4 MiB editor limit; failures appear in the app.
+
+A running Notation window accepts file requests after restoring its session. The launch acknowledgment means queued, not successfully opened. Requests survive frontend reloads until handled; a closing owner stops accepting new requests and drains accepted work before saving and exiting. A waiting launcher retries the handoff, and can become the next owner after exit. Upgrade and close older releases before relying on file handoff; the older activation-only protocol cannot carry filenames.
+
 On Linux with the NVIDIA kernel module loaded, Notation defaults to WebKit's compatible renderer (`WEBKIT_DISABLE_DMABUF_RENDERER=1`) to avoid the DMA-BUF startup failure observed on this workstation. An explicit environment value is respected. The application still runs as a native Wayland window.
 
 ## Development
@@ -195,7 +199,7 @@ limit: 50
 
 Use `view: list` for a list. Filters support `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `contains`, and `exists`; filters combine with AND. `tagMode: any` changes tag matching from all to any. Click a result to edit its source note; **Refresh** updates the view. The visible result limit is 200. Queries never execute SQL or JavaScript.
 
-**Note graph** shows resolved connections and lists unresolved links. Its wider sidebar keeps labels at a readable size; drag the graph to pan, use the wheel or +/− to zoom, **Fit** for an overview, and **100%** to return to readable labels. Labels are separated instead of overlapping, and full titles/paths are available on hover and in the Notes list. Tab focuses a note and brings it into view; Enter or Space opens it. Filter by title/path or tag, or switch to the current note's neighborhood. Graph limits and omitted results are shown explicitly.
+**Note graph** shows resolved connections and lists unresolved links. It follows the selected tool-panel width preset; drag the graph to pan, use the wheel or +/− to zoom, **Fit** for an overview, and **100%** to return to readable labels. Labels are separated instead of overlapping, and full titles/paths are available on hover and in the Notes list. Tab focuses a note and brings it into view; Enter or Space opens it. Filter by title/path or tag, or switch to the current note's neighborhood. Graph limits and omitted results are shown explicitly.
 
 ## Executable cells, variables, and templates
 
@@ -262,7 +266,7 @@ The interface uses one compact tab row. Press **Ctrl/Cmd+K** or use **Commands**
 
 Open **Explorer** to browse the selected workspace’s referenced files. Full file paths appear on hover and in **Workspace → Referenced files**, including when filenames repeat in different locations. Migrated folder workspaces retain expandable directory browsing; hidden/build directories and symlinks are omitted from those listings.
 
-**Settings → Appearance** controls theme, dark-only presets, interface density, sidebar position and width presets, status bar, and focus mode. Theme, density, and position use segmented controls; Compact and Comfortable change interface spacing and control sizes. Sidebar widths are Narrow, Standard, and Wide; an existing custom width is preserved until a preset is chosen. The app sidebar opens Explorer, Workspace, Note graph, Git, History, Properties, Templates, Table editor, and Scripts. Settings and Export live in the Notation menu, and Git has a distinct branch icon. Choose **Sidebar position → Left / Right** to move the navigation and its open tool together. The side is saved across restarts. Click the selected tool again to close it, or use Focus mode to hide the sidebar. In narrow windows, the tool overlays the editor to preserve writing width. Arrow Up/Down and Home/End navigate the sidebar buttons. **Editor** controls font family/size (bundled Source Sans 3 and IBM Plex Mono), line height, reading width, wrapping, layout, line numbers, and smooth scrolling. Smooth scrolling eases mouse-wheel steps, including small and fractional high-resolution mouse input, in documents and panels; turn it off for immediate native scrolling. System reduced-motion preferences disable the animation. If animation misses its frame budget, the rest of that wheel gesture switches to immediate scrolling instead of accumulating delays. The Editor section includes custom number steppers and a live typography/layout specimen. Each section has its own reset; these resets preserve documents, scripts, and recovery data.
+**Settings → Appearance** controls theme, dark-only presets, interface density, sidebar position and width presets, status bar, and focus mode. Theme, density, and position use segmented controls; Compact and Comfortable change interface spacing and control sizes. Sidebar width changes the narrow icon strip with Narrow, Standard, and Wide presets. Tool panel width separately sizes the open tool beside it, including Note graph; an existing custom panel width is preserved until a panel preset is chosen. Both settings are saved across restarts. The app sidebar opens Explorer, Workspace, Note graph, Git, History, Properties, Templates, Table editor, and Scripts. Settings and Export live in the Notation menu, and Git has a distinct branch icon. Choose **Sidebar position → Left / Right** to move the navigation and its open tool together. The side is saved across restarts. Click the selected tool again to close it, or use Focus mode to hide the sidebar. In narrow windows, the tool overlays the editor to preserve writing width. Arrow Up/Down and Home/End navigate the sidebar buttons. **Editor** controls font family/size (bundled Source Sans 3 and IBM Plex Mono), line height, reading width, wrapping, layout, line numbers, and smooth scrolling. Smooth scrolling eases mouse-wheel steps, including small and fractional high-resolution mouse input, in documents and panels; turn it off for immediate native scrolling. System reduced-motion preferences disable the animation. If animation misses its frame budget, the rest of that wheel gesture switches to immediate scrolling instead of accumulating delays. The Editor section includes custom number steppers and a live typography/layout specimen. Each section has its own reset; these resets preserve documents, scripts, and recovery data.
 
 Settings keeps the same window-relative size across sections. Long sections scroll inside the dialog; the Shortcuts list scrolls independently while its search and close controls stay visible.
 
@@ -331,6 +335,9 @@ python3 tests/native/advanced_smoke.py --app "$HOME/.local/bin/notation"
 python3 tests/native/tooling_smoke.py --app "$HOME/.local/bin/notation"
 python3 tests/native/close_smoke.py --app "$HOME/.local/bin/notation"
 python3 tests/native/instance_smoke.py --app "$HOME/.local/bin/notation" --check-windows
+python3 tests/native/file_launch_smoke.py --app "$HOME/.local/bin/notation"
+python3 tests/native/file_launch_ui_smoke.py --app "$HOME/.local/bin/notation"
+python3 tests/native/sidebar_width_smoke.py --app "$HOME/.local/bin/notation"
 python3 tests/native/checkbox_smoke.py --app "$HOME/.local/bin/notation"
 python3 tests/native/hemingway_smoke.py --app "$HOME/.local/bin/notation"
 ```
@@ -342,6 +349,8 @@ The advanced export smoke uses Python PyGObject and the AT-SPI typelib to operat
 The close smoke additionally requires Hyprland's Lua dispatcher. It sends the same close request as Super+Q to a verified test-owned window and checks that the window actually disappears before cleanup.
 
 The instance smoke uses disposable profiles and MCP without WebDriver to check launch handoff, concurrent starts, profile aliases, worker modes, paused-owner refusal, and crash-during-handoff recovery. `--check-windows` requires Hyprland and checks that a paused owner does not produce a secondary window. `--check-focus` also requires focus transfer, so it needs compositor activation permission (for example, Hyprland `misc:focus_on_activate=true`). Omit these flags on other desktops; their checks are then explicitly unrun. An optional `--legacy-app /path/to/older.AppImage` checks refusal while a detectable older release owns the profile.
+
+The file-launch checks exercise actual CLI and desktop-entry opening, text MIME routing in a disposable home, startup races, unsaved buffers, visible errors, and close-time handoff. The sidebar-width check measures the packaged icon strip and tool panels, including migrated native preferences and restart persistence. `python3 tests/native/desktop_exec_roundtrip_test.py` separately verifies generated Exec arguments through GIO.
 
 ## Layout
 

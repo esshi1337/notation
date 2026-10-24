@@ -15,10 +15,10 @@ test('segmented theme and density are keyboard accessible and visibly affect chr
   await page.keyboard.press('ArrowLeft');
   await expectSetting(page, 'Dark preset', 'charcoal');
   const before = await page.locator('.workspace-bar').boundingBox();
-  const controlBefore = await settings.getByRole('combobox', { name: 'Sidebar width' }).boundingBox();
+  const controlBefore = await settings.getByRole('combobox', { name: 'Tool panel width' }).boundingBox();
   await setSetting(page, 'Density', 'comfortable');
   await expect.poll(async () => (await page.locator('.workspace-bar').boundingBox())!.height).toBeGreaterThan(before!.height);
-  await expect.poll(async () => (await settings.getByRole('combobox', { name: 'Sidebar width' }).boundingBox())!.height).toBeGreaterThan(controlBefore!.height);
+  await expect.poll(async () => (await settings.getByRole('combobox', { name: 'Tool panel width' }).boundingBox())!.height).toBeGreaterThan(controlBefore!.height);
   await settings.getByRole('button', { name: 'Close settings' }).click();
   await page.reload(); await openSettings(page);
   await expectSetting(page, 'Density', 'comfortable');
@@ -64,12 +64,12 @@ test('custom dropdown supports keyboard commit, escape, outside click and narrow
 test('width presets preserve an existing custom width until explicitly changed', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('notation.settings', JSON.stringify({ sidebarWidth: 310 })));
   await page.goto('/'); await openSettings(page);
-  await expect(dialog(page).getByRole('combobox', { name: 'Sidebar width' })).toContainText('310');
+  await expect(dialog(page).getByRole('combobox', { name: 'Tool panel width' })).toContainText('310');
   await setSetting(page, 'Theme', 'light');
   await dialog(page).getByRole('button', { name: 'Close settings' }).click();
   await page.reload(); await openSettings(page);
-  await expect(dialog(page).getByRole('combobox', { name: 'Sidebar width' })).toContainText('310');
-  await setSetting(page, 'Sidebar width', '340');
+  await expect(dialog(page).getByRole('combobox', { name: 'Tool panel width' })).toContainText('310');
+  await setSetting(page, 'Tool panel width', '340');
   await expect(page.locator('main.app')).toHaveCSS('--sidebar-width', '340px');
 });
 

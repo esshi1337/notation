@@ -3,6 +3,7 @@
 //! The lock inode is deliberately never unlinked. An owner holds its flock for
 //! the entire GUI lifetime, so normal exit and process death both release it.
 
+use crate::launch::LaunchRequest;
 use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
@@ -19,7 +20,10 @@ const LOCK_NAME: &str = ".instance.lock";
 const SOCKET_NAME: &str = ".instance.sock";
 const LEGACY_AGENT_NAME: &str = "agent.sock";
 const REQUEST: &[u8] = b"NOTATION_ACTIVATE/1\n";
+const LAUNCH_PREFIX: &[u8] = b"NOTATION_LAUNCH/2 ";
 const ACKNOWLEDGED: &[u8] = b"NOTATION_ACTIVATED/1\n";
+const LAUNCH_ACKNOWLEDGED: &[u8] = b"NOTATION_LAUNCH_ACCEPTED/2\n";
+const LAUNCH_REJECTED: &[u8] = b"NOTATION_LAUNCH_ERROR/2\n";
 const REJECTED: &[u8] = b"NOTATION_ACTIVATION_ERROR/1\n";
 const MAX_FRAME: usize = 64;
 const HANDOFF_TIMEOUT: Duration = Duration::from_secs(6);
@@ -51,16 +55,35 @@ impl ProfileOwner {
 }
 
 /// Claim a profile, or activate its existing owner and return `Activated`.
-///
-/// The callback runs in the activation listener thread. Desktop code uses it to
-/// dispatch window operations to Tauri's main thread and waits for that dispatch
-/// to complete before acknowledging the request.
+/// This compatibility entry point accepts only v1 activation from secondaries.
 pub fn acquire<F>(data_directory: &Path, activate: F) -> Result<Acquisition, String>
 where
     F: Fn() -> Result<(), String> + Send + Sync + 'static,
 {
+    acquire_with_launch(
+        data_directory,
+        activate,
+        |_| Err("This profile owner does not accept file launches.".into()),
+        None,
+    )
+}
+
+/// Claim a profile, or hand `outgoing` to its existing owner. The same request
+/// identity is retained across reconnects, so an uncertain acknowledgment cannot
+/// enqueue it twice. An accepted launch is queued, not necessarily opened yet.
+pub fn acquire_with_launch<F, L>(
+    data_directory: &Path,
+    activate: F,
+    launch: L,
+    outgoing: Option<LaunchRequest>,
+) -> Result<Acquisition, String>
+where
+    F: Fn() -> Result<(), String> + Send + Sync + 'static,
+    L: Fn(LaunchRequest) -> Result<(), String> + Send + Sync + 'static,
+{
     let profile = Profile::open(data_directory)?;
     let activate = Arc::new(activate);
+    let launch = Arc::new(launch);
     let deadline = Instant::now() + HANDOFF_TIMEOUT;
     let mut last_error = "the activation endpoint is not ready".to_string();
 
@@ -75,7 +98,11 @@ where
                         "Another Notation process owns this profile, but activation was not acknowledged: {last_error}. Refusing to open a second writer."
                     ));
                 }
-                match request_activation(&profile) {
+                let handoff = match outgoing.as_ref() {
+                    Some(request) => request_launch(&profile, request, deadline),
+                    None => request_activation(&profile, deadline),
+                };
+                match handoff {
                     Ok(()) => return Ok(Acquisition::Activated),
                     Err(ActivationError::Retry(error)) => last_error = error,
                     Err(ActivationError::Fatal(error)) => {
@@ -90,7 +117,7 @@ where
         };
 
         reject_live_legacy_agent(&profile)?;
-        let server = ActivationServer::start(&profile, activate.clone())?;
+        let server = ActivationServer::start(&profile, activate.clone(), launch.clone())?;
         return Ok(Acquisition::Owner(ProfileOwner {
             _server: server,
             _lock: lock,
@@ -279,9 +306,10 @@ struct ActivationServer {
 }
 
 impl ActivationServer {
-    fn start<F>(profile: &Profile, activate: Arc<F>) -> Result<Self, String>
+    fn start<F, L>(profile: &Profile, activate: Arc<F>, launch: Arc<L>) -> Result<Self, String>
     where
         F: Fn() -> Result<(), String> + Send + Sync + 'static + ?Sized,
+        L: Fn(LaunchRequest) -> Result<(), String> + Send + Sync + 'static + ?Sized,
     {
         let socket = profile.endpoint(SOCKET_NAME);
         if let Some(metadata) = socket_metadata(&socket)? {
@@ -344,7 +372,9 @@ impl ActivationServer {
                         break;
                     }
                     match listener.accept() {
-                        Ok((stream, _)) => handle_connection(stream, activate.as_ref()),
+                        Ok((stream, _)) => {
+                            handle_connection(stream, activate.as_ref(), launch.as_ref())
+                        }
                         Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                             continue;
                         }
@@ -383,27 +413,71 @@ impl Drop for ActivationServer {
     }
 }
 
-fn handle_connection<F>(mut stream: UnixStream, activate: &F)
+fn handle_connection<F, L>(mut stream: UnixStream, activate: &F, launch: &L)
 where
     F: Fn() -> Result<(), String> + ?Sized,
+    L: Fn(LaunchRequest) -> Result<(), String> + ?Sized,
 {
     let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
     let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
-    let accepted = peer_is_current_user(&stream)
-        .map_err(|error| error.to_string())
-        .and_then(|()| {
-            let request = read_frame(&stream).map_err(|error| error.to_string())?;
-            if request != REQUEST {
-                return Err("malformed activation request".into());
-            }
-            activate()
-        });
-    let response = if accepted.is_ok() {
-        ACKNOWLEDGED
-    } else {
-        REJECTED
+    let deadline = Instant::now() + IO_TIMEOUT;
+    let header =
+        peer_is_current_user(&stream).and_then(|()| read_frame_until(&stream, MAX_FRAME, deadline));
+    let Ok(header) = header else {
+        let _ = stream.write_all(REJECTED);
+        return;
+    };
+    if header == REQUEST {
+        let response = if activate().is_ok() {
+            ACKNOWLEDGED
+        } else {
+            REJECTED
+        };
+        let _ = stream.write_all(response);
+        return;
+    }
+    if !header.starts_with(LAUNCH_PREFIX) {
+        let _ = stream.write_all(REJECTED);
+        return;
+    }
+
+    // Validate the complete bounded payload before activating or enqueueing.
+    // Activation, closing, queue-capacity, and event-delivery failures are
+    // retryable under the same request identity; malformed requests are not.
+    let request = launch_payload_length(&header)
+        .and_then(|length| {
+            read_launch_payload(&stream, length, deadline).map_err(|error| error.to_string())
+        })
+        .and_then(|payload| LaunchRequest::decode(&payload));
+    let response = match request {
+        Err(_) => LAUNCH_REJECTED,
+        Ok(request) => match activate() {
+            Err(_) => REJECTED,
+            Ok(()) => match launch(request) {
+                Ok(()) => LAUNCH_ACKNOWLEDGED,
+                Err(_) => REJECTED,
+            },
+        },
     };
     let _ = stream.write_all(response);
+}
+
+fn launch_payload_length(header: &[u8]) -> Result<usize, String> {
+    let length = header
+        .strip_prefix(LAUNCH_PREFIX)
+        .and_then(|tail| tail.strip_suffix(b"\n"))
+        .ok_or("Malformed launch header.")?;
+    let length = std::str::from_utf8(length).map_err(|_| "Malformed launch length.")?;
+    if length.is_empty() || !length.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("Malformed launch length.".into());
+    }
+    let length: usize = length
+        .parse()
+        .map_err(|_| "Malformed launch length.".to_string())?;
+    if length == 0 || length > crate::launch::MAX_LAUNCH_REQUEST_BYTES {
+        return Err("Launch request exceeds the 256 KiB input limit.".into());
+    }
+    Ok(length)
 }
 
 #[derive(Debug)]
@@ -412,27 +486,46 @@ enum ActivationError {
     Fatal(String),
 }
 
-fn request_activation(profile: &Profile) -> Result<(), ActivationError> {
-    let socket = profile.endpoint(SOCKET_NAME);
-    match socket_metadata(&socket).map_err(ActivationError::Fatal)? {
-        Some(_) => {}
-        None => {
-            return Err(ActivationError::Retry(
-                "the owner has not published its activation socket".into(),
-            ));
-        }
+fn time_remaining(deadline: Instant) -> io::Result<Duration> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        Err(io::ErrorKind::TimedOut.into())
+    } else {
+        Ok(remaining)
     }
-    let mut stream = connect_stream(&socket, CONNECT_TIMEOUT)
+}
+
+fn request_activation(profile: &Profile, deadline: Instant) -> Result<(), ActivationError> {
+    let socket = profile.endpoint(SOCKET_NAME);
+    let metadata = socket_metadata(&socket).map_err(|error| {
+        // bind() publishes the inode immediately before the owner can chmod it.
+        // Never use an unsafe endpoint, but allow that short startup window to
+        // finish instead of turning it into a competing-writer failure.
+        ActivationError::Retry(format!("the owner endpoint is not ready safely: {error}"))
+    })?;
+    if metadata.is_none() {
+        return Err(ActivationError::Retry(
+            "the owner has not published its activation socket".into(),
+        ));
+    }
+    let connect_timeout = time_remaining(deadline)
+        .map_err(|error| ActivationError::Retry(format!("the handoff deadline elapsed: {error}")))?
+        .min(CONNECT_TIMEOUT);
+    let mut stream = connect_stream(&socket, connect_timeout)
         .map_err(|error| ActivationError::Retry(format!("the owner is unavailable: {error}")))?;
     peer_is_current_user(&stream).map_err(|error| {
         ActivationError::Fatal(format!("activation peer check failed: {error}"))
     })?;
+    let io_timeout = time_remaining(deadline)
+        .map_err(|error| ActivationError::Retry(format!("the handoff deadline elapsed: {error}")))?
+        .min(IO_TIMEOUT);
     stream
-        .set_read_timeout(Some(IO_TIMEOUT))
-        .and_then(|()| stream.set_write_timeout(Some(IO_TIMEOUT)))
+        .set_read_timeout(Some(io_timeout))
+        .and_then(|()| stream.set_write_timeout(Some(io_timeout)))
         .and_then(|()| stream.write_all(REQUEST))
         .map_err(|error| ActivationError::Retry(format!("activation handshake failed: {error}")))?;
-    let response = read_frame(&stream).map_err(|error| {
+    let response_deadline = deadline.min(Instant::now() + IO_TIMEOUT);
+    let response = read_frame_until(&stream, MAX_FRAME, response_deadline).map_err(|error| {
         ActivationError::Retry(format!("activation was not acknowledged: {error}"))
     })?;
     if response == ACKNOWLEDGED {
@@ -444,6 +537,64 @@ fn request_activation(profile: &Profile) -> Result<(), ActivationError> {
     } else {
         Err(ActivationError::Fatal(
             "the activation endpoint returned a malformed response".into(),
+        ))
+    }
+}
+
+fn request_launch(
+    profile: &Profile,
+    request: &LaunchRequest,
+    deadline: Instant,
+) -> Result<(), ActivationError> {
+    let payload = request.encode().map_err(ActivationError::Fatal)?;
+    let header = format!("NOTATION_LAUNCH/2 {}\n", payload.len());
+    let socket = profile.endpoint(SOCKET_NAME);
+    let metadata = socket_metadata(&socket).map_err(|error| {
+        ActivationError::Retry(format!("the owner endpoint is not ready safely: {error}"))
+    })?;
+    if metadata.is_none() {
+        return Err(ActivationError::Retry(
+            "the owner has not published its activation socket".into(),
+        ));
+    }
+    let connect_timeout = time_remaining(deadline)
+        .map_err(|error| ActivationError::Retry(format!("the handoff deadline elapsed: {error}")))?
+        .min(CONNECT_TIMEOUT);
+    let mut stream = connect_stream(&socket, connect_timeout)
+        .map_err(|error| ActivationError::Retry(format!("the owner is unavailable: {error}")))?;
+    peer_is_current_user(&stream).map_err(|error| {
+        ActivationError::Fatal(format!("activation peer check failed: {error}"))
+    })?;
+    let io_timeout = time_remaining(deadline)
+        .map_err(|error| ActivationError::Retry(format!("the handoff deadline elapsed: {error}")))?
+        .min(IO_TIMEOUT);
+    stream
+        .set_read_timeout(Some(io_timeout))
+        .and_then(|()| stream.set_write_timeout(Some(io_timeout)))
+        .and_then(|()| stream.write_all(header.as_bytes()))
+        .and_then(|()| stream.write_all(&payload))
+        .map_err(|error| ActivationError::Retry(format!("launch handshake failed: {error}")))?;
+    let response = read_frame_until(
+        &stream,
+        MAX_FRAME,
+        deadline.min(Instant::now() + IO_TIMEOUT),
+    )
+    .map_err(|error| ActivationError::Retry(format!("launch was not acknowledged: {error}")))?;
+    if response == LAUNCH_ACKNOWLEDGED {
+        // Accepted means queued by the owner; document open outcomes belong to
+        // the frontend and may include a visible per-file error.
+        Ok(())
+    } else if response == REJECTED {
+        Err(ActivationError::Retry(
+            "the owner could not complete launch activation".into(),
+        ))
+    } else if response == LAUNCH_REJECTED {
+        Err(ActivationError::Fatal(
+            "the owner rejected the launch request".into(),
+        ))
+    } else {
+        Err(ActivationError::Fatal(
+            "the launch endpoint returned a malformed response".into(),
         ))
     }
 }
@@ -491,6 +642,7 @@ fn socket_metadata(path: &Path) -> Result<Option<Metadata>, String> {
     Ok(Some(metadata))
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum SocketProbe {
     Live,
     Stale,
@@ -498,6 +650,18 @@ enum SocketProbe {
 }
 
 fn probe_socket(path: &Path) -> io::Result<SocketProbe> {
+    let first = probe_socket_once(path)?;
+    if first != SocketProbe::Live {
+        return Ok(first);
+    }
+    // A just-closed listener can race its final pending connection. Confirm a
+    // live result once before refusing startup; a genuinely live owner remains
+    // live, while a closed/crashed owner becomes safely recoverable.
+    thread::sleep(Duration::from_millis(5));
+    probe_socket_once(path)
+}
+
+fn probe_socket_once(path: &Path) -> io::Result<SocketProbe> {
     match connect_stream(path, CONNECT_TIMEOUT) {
         Ok(stream) => {
             peer_is_current_user(&stream)?;
@@ -523,11 +687,16 @@ fn remove_socket(path: &Path, expected: &Metadata) -> Result<(), String> {
         .map_err(|error| format!("Could not remove the stale activation socket: {error}"))
 }
 
-fn read_frame(stream: &UnixStream) -> io::Result<Vec<u8>> {
-    let deadline = Instant::now() + IO_TIMEOUT;
+fn read_frame_until(stream: &UnixStream, maximum: usize, deadline: Instant) -> io::Result<Vec<u8>> {
     let mut reader = stream;
-    let mut frame = Vec::with_capacity(MAX_FRAME);
-    while frame.len() <= MAX_FRAME {
+    let mut frame = Vec::with_capacity(maximum.min(256));
+    loop {
+        if frame.len() >= maximum {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Notation protocol frame exceeds its limit",
+            ));
+        }
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             return Err(io::ErrorKind::TimedOut.into());
@@ -541,14 +710,37 @@ fn read_frame(stream: &UnixStream) -> io::Result<Vec<u8>> {
             Ok(_) => {
                 frame.push(byte[0]);
                 if byte[0] == b'\n' {
-                    break;
+                    return Ok(frame);
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             Err(error) => return Err(error),
         }
     }
-    Ok(frame)
+}
+
+fn read_launch_payload(
+    stream: &UnixStream,
+    length: usize,
+    deadline: Instant,
+) -> io::Result<Vec<u8>> {
+    let mut reader = stream;
+    let mut payload = vec![0; length];
+    let mut offset = 0;
+    while offset < length {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        reader.set_read_timeout(Some(remaining))?;
+        match reader.read(&mut payload[offset..]) {
+            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+            Ok(read) => offset += read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(payload)
 }
 
 fn file_metadata(file: &File, description: &str) -> Result<Metadata, String> {

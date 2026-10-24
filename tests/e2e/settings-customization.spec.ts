@@ -17,7 +17,7 @@ test('custom appearance and editor preferences persist and reset to defaults', a
   await setSetting(page, 'Dark preset', 'charcoal');
   await expect(settings.getByRole('textbox', { name: 'Accent color', exact: true })).toHaveCount(0);
   await setSetting(page, 'Density', 'comfortable');
-  await setSetting(page, 'Sidebar width', '340');
+  await setSetting(page, 'Tool panel width', '340');
   await settings.getByRole('checkbox', { name: 'Show status bar' }).uncheck();
 
   await settingsTab(page, 'Editor').click();
@@ -35,7 +35,7 @@ test('custom appearance and editor preferences persist and reset to defaults', a
   await expectSetting(page, 'Dark preset', 'charcoal');
   await expect(settings.getByRole('textbox', { name: 'Accent color', exact: true })).toHaveCount(0);
   await expectSetting(page, 'Density', 'comfortable');
-  await expectSetting(page, 'Sidebar width', '340');
+  await expectSetting(page, 'Tool panel width', '340');
   await expect(settings.getByRole('checkbox', { name: 'Show status bar' })).not.toBeChecked();
   await settings.getByRole('button', { name: 'Reset appearance', exact: true }).click();
   await expectSetting(page, 'Dark preset', 'midnight');
