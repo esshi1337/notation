@@ -48,24 +48,28 @@ test('wiki completion inserts note and heading targets from open browser tabs', 
   await runCommand(page, 'New');
   await source(page).fill('[[Tar');
   const options = page.locator('.cm-tooltip-autocomplete [role="option"]');
-  await expect(options.filter({ hasText: 'Target' }).first()).toBeVisible();
-  await source(page).press('Enter');
+  async function acceptSuggestion(label: string) {
+    await expect(options.filter({ hasText: label }).first()).toBeVisible();
+    // CodeMirror ignores completion keys for 75 ms after opening its popup.
+    // A visible option can precede that guard; keep testing real Enter input.
+    await page.waitForTimeout(100);
+    await source(page).press('Enter');
+  }
+  await acceptSuggestion('Target');
   await expect(source(page)).toHaveText('[[Target]]');
 
   await source(page).fill('[[Ta]]');
   await source(page).press('ArrowLeft');
   await source(page).press('ArrowLeft');
   await source(page).pressSequentially('r');
-  await expect(options.filter({ hasText: 'Target' }).first()).toBeVisible();
-  await source(page).press('Enter');
+  await acceptSuggestion('Target');
   await expect(source(page)).toHaveText('[[Target]]');
 
   await source(page).fill('[[Target#Dee]]');
   await source(page).press('ArrowLeft');
   await source(page).press('ArrowLeft');
   await source(page).pressSequentially('p');
-  await expect(options.filter({ hasText: 'Deep heading' }).first()).toBeVisible();
-  await source(page).press('Enter');
+  await acceptSuggestion('Deep heading');
   await expect(source(page)).toHaveText('[[Target#Deep heading]]');
 
   await runCommand(page, 'Live Preview');
