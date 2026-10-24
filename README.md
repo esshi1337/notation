@@ -303,11 +303,12 @@ npm run test:e2e
 cargo test --locked --manifest-path src-tauri/Cargo.toml --no-default-features
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 cargo clippy --locked --manifest-path src-tauri/Cargo.toml --no-default-features --all-targets -- -D warnings
+python3 tests/native/packaging_test.py
 ```
 
 Playwright starts an isolated Vite server on port 1420, so stop any existing development server before running tests. Tests exercise real CodeMirror input, rendering, malformed diagrams, browser import/export, draft recovery, preferences, layouts, and HTML sanitization. Live Preview tests also cover source preservation, undo across modes, inline diagram editing, keyboard access, standalone Mermaid, task toggles, and math rendering with local fonts. Failed tests retain screenshots and traces; use `npx playwright show-report` to inspect results.
 
-Rust tests exercise real temporary files. Browser tests do not exercise native operating-system dialogs or prove desktop-webview compatibility. GitHub Actions runs frontend validation, Chromium tests, and Rust core checks.
+Rust tests exercise real temporary files. Browser tests do not exercise native operating-system dialogs or prove desktop-webview compatibility. Validation runs locally; this repository has no CI workflows. The Python packaging tests verify playback dependencies and portable build helpers without building or launching the app.
 
 The installed Linux package has an additional native smoke test using `tauri-driver` and `WebKitWebDriver`, with temporary user-data directories:
 

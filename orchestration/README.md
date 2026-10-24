@@ -28,7 +28,8 @@ sessions for one task.
   rules (`task` denied for implementers; `edit`/`bash`/`task` denied for
   reviewers and scouts), autocompaction settings.
 - `orchestration/compact.md` — compaction handoff prompt referenced by the
-  project Codex config.
+  project Codex config using a path relative to `.codex/config.toml`, so the
+  same configuration works in other checkouts without a machine-specific path.
 
 ## Serena
 

@@ -4,8 +4,8 @@
 # project model keys override the selected profile, which can route the wrong
 # model name to a provider.
 
-# Compaction handoff prompt (see orchestration/compact.md).
-experimental_compact_prompt_file = "/home/esshi/Coding/Notation/orchestration/compact.md"
+# Resolved relative to this .codex/config.toml file.
+experimental_compact_prompt_file = "../orchestration/compact.md"
 
 # One advisor session; workers use OpenCodex via scripts/notation-worker.
 [agents]
