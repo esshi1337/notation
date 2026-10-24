@@ -14,23 +14,24 @@ const baseState = { settings: {}, draft: baseDraft, scriptDraft: baseScript, scr
 const server = await createServer({ cacheDir: 'node_modules/.vite-store-recovery', optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true }, logLevel: 'error' });
 let sequence = 0;
 
-async function fixture({ cachedDraft = baseDraft, cachedScript = baseScript, cachedSession = null, pendingRecovery = null, database = baseState, failWrites = false, failCache = false, cacheLimit = Infinity } = {}) {
+async function fixture({ cachedDraft = baseDraft, cachedScript = baseScript, cachedSession = null, pendingRecovery = null, database = baseState, failWrites = false, failCache = false, cacheLimit = Infinity, native = true, scriptLibrary = null } = {}) {
   const data = new Map([
     ['notation.draft', JSON.stringify(cachedDraft)],
     ['notation.scripts', JSON.stringify(cachedScript)],
     ['notation.session', JSON.stringify(cachedSession)],
     ['notation.pending-recovery', JSON.stringify(pendingRecovery)],
+    ['notation.script-library', JSON.stringify(scriptLibrary)],
   ]);
   const commits = [];
   const commands = [];
   const cacheAttempts = [];
   let writeGate, writeStarted;
-  globalThis.isTauri = true;
+  globalThis.isTauri = native;
   globalThis.localStorage = {
     getItem: (key) => data.get(key) ?? null,
     setItem: (key, value) => { cacheAttempts.push(key); if (failCache || Buffer.byteLength(value) > cacheLimit) throw new Error('Simulated recovery cache full'); data.set(key, value); },
   };
-  globalThis.window = { __TAURI_INTERNALS__: {
+  globalThis.window = native ? { __TAURI_INTERNALS__: {
     invoke: async (command, args) => {
       commands.push(command);
       if (command === 'bootstrap_state') return structuredClone(database);
@@ -43,7 +44,7 @@ async function fixture({ cachedDraft = baseDraft, cachedScript = baseScript, cac
       }
       throw new Error('Unexpected command ' + command);
     },
-  } };
+  } } : {};
   const store = await server.ssrLoadModule('/src/store.ts?recovery-test=' + ++sequence);
   const state = await store.bootstrapMetadata();
   const currentStatus = () => { let value; const unsubscribe = store.observePersistence((status) => value = status); unsubscribe(); return value; };
@@ -258,7 +259,21 @@ try {
     assert.equal(await test.store.flushPersistence(), true);
     assert.equal(await test.store.flushPersistence(), true, 'empty flush retains latest outcome');
   }
-  console.log('Store recovery: 16 scenario groups passed (including 9 content comparisons)');
+  {
+    const existing = [{ id: 'saved-one', name: 'Saved', code: 'return 1;', cwd: null, updatedAt: 100 }];
+    const test = await fixture({ native: false, scriptLibrary: existing });
+    const before = structuredClone(test.store.currentMetadata().scripts);
+    const attempts = test.cacheAttempts.length;
+    await assert.rejects(
+      () => test.store.saveScript({ id: 'too-big', name: 'Too big', code: 'x'.repeat(128 * 1024 + 1), cwd: null }),
+      /128 KiB/,
+      'browser mode rejects oversized scripts before writing',
+    );
+    assert.deepEqual(test.store.currentMetadata().scripts, before, 'rejected script leaves the library untouched');
+    assert.deepEqual(JSON.parse(test.data.get('notation.script-library')), existing, 'rejected script is not persisted');
+    assert.ok(!test.cacheAttempts.slice(attempts).includes('notation.script-library'), 'rejected script never writes script-library storage');
+  }
+  console.log('Store recovery: 17 scenario groups passed (including 9 content comparisons)');
 } finally {
   await server.close();
 }

@@ -83,6 +83,57 @@ fn migrates_legacy_once_and_restores_metadata_across_reopening() {
 }
 
 #[test]
+fn legacy_migration_skips_oversized_scripts_and_still_commits_the_marker() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db/state.sqlite3");
+    let database = Database::open(&path).unwrap();
+    let legacy_scripts = || {
+        vec![
+            ScriptInput {
+                id: "script-oversized".into(),
+                name: "Oversized".into(),
+                code: "x".repeat(128 * 1024 + 1),
+                cwd: None,
+            },
+            script(),
+        ]
+    };
+    let state = database
+        .bootstrap(Some(LegacyState {
+            session: None,
+            settings: None,
+            draft: None,
+            script_draft: None,
+            scripts: legacy_scripts(),
+            recents: vec![],
+        }))
+        .unwrap();
+    assert!(state.migration_applied);
+    assert_eq!(state.scripts.len(), 1);
+    assert_eq!(state.scripts[0].id, "script-1");
+    let scripts = database.list_scripts().unwrap();
+    assert_eq!(scripts.len(), 1);
+    assert!(scripts.iter().all(|script| script.id != "script-oversized"));
+    drop(database);
+    let database = Database::open(&path).unwrap();
+    let state = database
+        .bootstrap(Some(LegacyState {
+            session: None,
+            settings: None,
+            draft: None,
+            script_draft: None,
+            scripts: legacy_scripts(),
+            recents: vec![],
+        }))
+        .unwrap();
+    assert!(
+        !state.migration_applied,
+        "committed migration marker must survive the skipped script"
+    );
+    assert_eq!(state.scripts.len(), 1);
+}
+
+#[test]
 fn existing_user_state_wins_over_legacy_and_bad_updates_are_atomic() {
     let directory = tempfile::tempdir().unwrap();
     let database = Database::open(&directory.path().join("db/state.sqlite3")).unwrap();

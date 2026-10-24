@@ -201,6 +201,9 @@ export async function savedScripts(): Promise<SavedScript[]> {
   return metadata.scripts;
 }
 export async function saveScript(script: Omit<SavedScript, 'updatedAt'>): Promise<SavedScript> {
+  if (new TextEncoder().encode(script.code).byteLength > 128 * 1024) {
+    throw new Error('Script code exceeds the 128 KiB limit. Shorten the script before saving.');
+  }
   await flushPersistence();
   const saved = nativeStore ? await invoke<SavedScript>('save_script', { script }) : { ...script, updatedAt: Date.now() };
   metadata.scripts = [...metadata.scripts.filter((item) => item.id !== saved.id), saved];

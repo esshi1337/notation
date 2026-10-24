@@ -283,6 +283,9 @@ PRAGMA user_version=2;
                         },
                     )?;
                     for script in legacy.scripts {
+                        if !valid_script(&script) {
+                            continue;
+                        }
                         save_script(&tx, &script)?;
                     }
                     for recent in legacy.recents.into_iter().take(20) {
@@ -494,13 +497,15 @@ fn revision_row(row: &rusqlite::Row<'_>, full: bool) -> rusqlite::Result<Revisio
         content: full.then_some(content),
     })
 }
+fn valid_script(script: &ScriptInput) -> bool {
+    !script.id.is_empty()
+        && script.id.len() <= 128
+        && !script.name.trim().is_empty()
+        && script.name.len() <= 256
+        && script.code.len() <= 128 * 1024
+}
 fn save_script(connection: &Connection, script: &ScriptInput) -> Result<(), String> {
-    if script.id.is_empty()
-        || script.id.len() > 128
-        || script.name.trim().is_empty()
-        || script.name.len() > 256
-        || script.code.len() > 128 * 1024
-    {
+    if !valid_script(script) {
         return Err(
             "Script needs an ID, a name up to 256 characters, and code up to 128 KiB.".into(),
         );
