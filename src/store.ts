@@ -68,8 +68,11 @@ function sameScript(left: ScriptDraft | null | undefined, right: ScriptDraft | n
 }
 function sameSession(left: DocumentSession | null | undefined, right: DocumentSession | null | undefined) {
   if (!validSession(left) || !validSession(right)) return false;
-  const content = (session: DocumentSession) => JSON.stringify(session.tabs.map((tab) => ({ id: tab.id, name: tab.name, path: tab.path, content: tab.content, hemingway: tab.hemingway === true })));
-  return content(left) === content(right);
+  return left.tabs.length === right.tabs.length && left.tabs.every((tab, index) => {
+    const other = right.tabs[index];
+    return tab.id === other.id && tab.name === other.name && tab.path === other.path
+      && tab.content === other.content && (tab.hemingway === true) === (other.hemingway === true);
+  });
 }
 function stashRecovery() {
   if (recovery && !recoveryOwned) return !!readStorage<PendingRecovery | null>('notation.pending-recovery', null);
@@ -191,7 +194,7 @@ export async function deleteScript(id: string): Promise<void> {
 
 export async function metadataSummary() {
   if (nativeStore && ready) {
-    const loaded = await invoke<Metadata>('bootstrap_state');
+    const loaded = await invoke<Pick<Metadata, 'workspace' | 'workspaceCatalog' | 'recents'>>('metadata_summary');
     metadata.workspace = loaded.workspace;
     metadata.workspaceCatalog = loaded.workspaceCatalog;
     metadata.recents = loaded.recents;

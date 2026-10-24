@@ -20,6 +20,11 @@ language-server requests still use live document state.
 
 ## Changes
 
+The [persistence follow-up](persistence-performance.md) removes temporary JSON
+copies from recovery comparisons and uses a small navigation-metadata response.
+Native serialization experiments were reverted after measurement. Whole-session
+recovery snapshots and live editable buffers remain in place.
+
 The initial recovery snapshot is consumed without retaining its full document
 array in application props or the top-level await continuation. A Chromium heap
 snapshot traced the latter retention through the module generator; discarding

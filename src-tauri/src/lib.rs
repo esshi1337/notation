@@ -148,6 +148,12 @@ mod desktop {
         database_work(database.get()?, move |database| database.bootstrap(legacy)).await
     }
     #[tauri::command]
+    async fn metadata_summary(
+        database: State<'_, DatabaseState>,
+    ) -> Result<storage::MetadataSummary, String> {
+        database_work(database.get()?, move |database| database.metadata_summary()).await
+    }
+    #[tauri::command]
     async fn persist_state(
         state: storage::StateUpdate,
         database: State<'_, DatabaseState>,
@@ -710,6 +716,7 @@ mod desktop {
                 run_script,
                 stop_script,
                 bootstrap_state,
+                metadata_summary,
                 persist_state,
                 save_script,
                 delete_script,

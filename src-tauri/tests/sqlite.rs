@@ -546,3 +546,131 @@ fn session_migration_restores_all_tabs_and_rejects_oversized_or_invalid_updates_
         Some(&session)
     );
 }
+
+#[test]
+fn navigation_summary_excludes_document_payloads_and_does_not_parse_them() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("state.sqlite3");
+    let database = Database::open(&path).unwrap();
+    database.bootstrap(None).unwrap();
+    database
+        .persist(StateUpdate {
+            draft: Some(draft(&"large buffer".repeat(100_000))),
+            ..Default::default()
+        })
+        .unwrap();
+    let expected = database.bootstrap(None).unwrap();
+    let summary = serde_json::to_value(database.metadata_summary().unwrap()).unwrap();
+    assert_eq!(summary.as_object().unwrap().len(), 3);
+    assert_eq!(
+        summary["workspace"],
+        serde_json::to_value(expected.workspace).unwrap()
+    );
+    assert_eq!(
+        summary["workspaceCatalog"],
+        serde_json::to_value(expected.workspace_catalog).unwrap()
+    );
+    assert_eq!(
+        summary["recents"],
+        serde_json::to_value(expected.recents).unwrap()
+    );
+
+    // A navigation refresh must neither parse nor repair unrelated snapshots.
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "UPDATE drafts SET json='invalid preserved snapshot' WHERE id=1",
+            [],
+        )
+        .unwrap();
+    assert!(database.bootstrap(None).is_err());
+    assert_eq!(
+        serde_json::to_value(database.metadata_summary().unwrap()).unwrap(),
+        summary
+    );
+    let retained: String = connection
+        .query_row("SELECT json FROM drafts WHERE id=1", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(retained, "invalid preserved snapshot");
+}
+
+#[test]
+fn encoded_session_limit_accepts_exact_boundary_and_rejects_one_more_byte_atomically() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = Database::open(&directory.path().join("state.sqlite3")).unwrap();
+    let text = "Unicode café 日本語, quote \" and backslash \\ and control \u{0001}";
+    let mut session =
+        json!({"activeTabId":"draft-1", "tabs":[draft(text)], "updatedAt":1, "padding":""});
+    let limit = 32 * 1024 * 1024;
+    let padding = limit - serde_json::to_vec(&session).unwrap().len();
+    session["padding"] = json!("x".repeat(padding));
+    assert_eq!(serde_json::to_vec(&session).unwrap().len(), limit);
+    database
+        .persist(StateUpdate {
+            session: Some(session.clone()),
+            settings: Some(json!({"theme":"light"})),
+            ..Default::default()
+        })
+        .unwrap();
+    let revisions = database.list_revisions("draft-1").unwrap().len();
+    session["padding"] = json!("x".repeat(padding + 1));
+    let error = database
+        .persist(StateUpdate {
+            session: Some(session),
+            settings: Some(json!({"theme":"dark"})),
+            ..Default::default()
+        })
+        .unwrap_err();
+    assert!(error.contains("32 MiB recovery limit"));
+    let restored = database.bootstrap(None).unwrap();
+    assert_eq!(restored.settings["theme"], "light");
+    let restored = restored.session.unwrap();
+    assert_eq!(restored["tabs"][0]["content"], text);
+    assert_eq!(restored["padding"].as_str().unwrap().len(), padding);
+    assert_eq!(database.list_revisions("draft-1").unwrap().len(), revisions);
+}
+
+#[test]
+fn escaped_draft_limits_rollback_session_and_settings_and_preserve_explicit_nulls() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = Database::open(&directory.path().join("state.sqlite3")).unwrap();
+    let session = json!({"activeTabId":"draft-1", "tabs":[draft("original")], "updatedAt":1});
+    database
+        .persist(StateUpdate {
+            session: Some(session.clone()),
+            draft: Some(draft("original")),
+            settings: Some(json!({"theme":"light"})),
+            ..Default::default()
+        })
+        .unwrap();
+    let mut changed = session.clone();
+    changed["tabs"][0]["content"] = json!("new content that must roll back");
+    let revisions = database.list_revisions("draft-1").unwrap().len();
+    // Within the raw text limit but beyond the JSON draft limit after escaping.
+    let error = database
+        .persist(StateUpdate {
+            session: Some(changed),
+            draft: Some(draft(&"\u{0001}".repeat(3 * 1024 * 1024))),
+            settings: Some(json!({"theme":"dark"})),
+            ..Default::default()
+        })
+        .unwrap_err();
+    assert!(error.contains("Draft exceeds"));
+    let restored = database.bootstrap(None).unwrap();
+    assert_eq!(restored.session, Some(session));
+    assert_eq!(restored.draft.unwrap()["content"], "original");
+    assert_eq!(restored.settings["theme"], "light");
+    assert_eq!(database.list_revisions("draft-1").unwrap().len(), revisions);
+    let error = database
+        .persist(StateUpdate {
+            script_draft: Some(json!({"code":"\u{0001}".repeat(128 * 1024)})),
+            ..Default::default()
+        })
+        .unwrap_err();
+    assert!(error.contains("Script draft must contain"));
+    let clear: StateUpdate =
+        serde_json::from_value(json!({"session":null,"draft":null,"scriptDraft":null})).unwrap();
+    database.persist(clear).unwrap();
+    let cleared = database.bootstrap(None).unwrap();
+    assert!(cleared.session.is_none() && cleared.draft.is_none() && cleared.script_draft.is_none());
+}

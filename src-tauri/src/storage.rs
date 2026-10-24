@@ -75,6 +75,15 @@ pub struct BootstrapState {
     pub migration_applied: bool,
 }
 
+/// Navigation metadata only: refreshing recent files must not load every draft.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataSummary {
+    pub workspace: Option<String>,
+    pub workspace_catalog: crate::workspace_catalog::WorkspaceCatalog,
+    pub recents: Vec<Recent>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScriptInput {
     pub id: String,
@@ -300,6 +309,14 @@ PRAGMA user_version=2;
             workspace_catalog: self.list_workspaces()?,
             recents: self.recents()?,
             migration_applied,
+        })
+    }
+
+    pub fn metadata_summary(&self) -> Result<MetadataSummary, String> {
+        Ok(MetadataSummary {
+            workspace: self.workspace()?,
+            workspace_catalog: self.list_workspaces()?,
+            recents: self.recents()?,
         })
     }
 

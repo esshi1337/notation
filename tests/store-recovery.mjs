@@ -21,6 +21,8 @@ async function fixture({ cachedDraft = baseDraft, cachedScript = baseScript, cac
     ['notation.session', JSON.stringify(cachedSession)],
   ]);
   const commits = [];
+  const commands = [];
+  let writeGate, writeStarted;
   globalThis.isTauri = true;
   globalThis.localStorage = {
     getItem: (key) => data.get(key) ?? null,
@@ -28,15 +30,28 @@ async function fixture({ cachedDraft = baseDraft, cachedScript = baseScript, cac
   };
   globalThis.window = { __TAURI_INTERNALS__: {
     invoke: async (command, args) => {
+      commands.push(command);
       if (command === 'bootstrap_state') return structuredClone(database);
-      if (command === 'persist_state') { if (failWrites) throw new Error('Simulated database write failure'); commits.push(structuredClone(args.state)); return null; }
+      if (command === 'metadata_summary') return structuredClone({ workspace: database.workspace, workspaceCatalog: database.workspaceCatalog, recents: database.recents });
+      if (command === 'persist_state') {
+        if (writeGate) { const gate = writeGate; writeGate = null; writeStarted(); await gate; }
+        if (failWrites) throw new Error('Simulated database write failure');
+        commits.push(structuredClone(args.state)); return null;
+      }
       throw new Error('Unexpected command ' + command);
     },
   } };
   const store = await server.ssrLoadModule('/src/store.ts?recovery-test=' + ++sequence);
   const state = await store.bootstrapMetadata();
   const currentStatus = () => { let value; const unsubscribe = store.observePersistence((status) => value = status); unsubscribe(); return value; };
-  return { store, state, data, commits, status: currentStatus, allowWrites: () => { failWrites = false; } };
+  return { store, state, data, commits, commands, status: currentStatus, allowWrites: () => { failWrites = false; },
+    blockNextWrite: () => {
+      let release;
+      const started = new Promise(resolve => { writeStarted = resolve; });
+      writeGate = new Promise(resolve => { release = resolve; });
+      return { started, release };
+    },
+  };
 }
 
 try {
@@ -140,7 +155,60 @@ try {
     assert.doesNotMatch(test.status().error, /cache is retained/i, 'do not claim a recovery copy exists when both stores failed');
     assert.match(test.status().error, /keep.*open|save.*(?:document|file)/i, 'tell the user how to preserve the in-memory edits');
   }
-  console.log('Store recovery: 10 scenarios passed');
+  {
+    for (const change of [
+      value => { value.tabs.reverse(); },
+      value => { value.tabs.pop(); },
+      value => { value.tabs[1].id = 'replacement'; },
+      value => { value.tabs[1].name = 'renamed.md'; },
+      value => { value.tabs[1].path = '/different.md'; },
+      value => { delete value.tabs[1].path; },
+      value => { value.tabs[1].content += '\n"escaped" \\ café'; },
+      value => { value.tabs[1].hemingway = true; },
+    ]) {
+      const newer = structuredClone(baseSession); newer.updatedAt = 700;
+      change(newer);
+      const test = await fixture({ cachedSession: newer, database: { ...baseState, session: baseSession } });
+      assert.deepEqual(test.status().recovery.session, newer, 'recover meaningful ordered tab changes');
+    }
+    const same = structuredClone(baseSession); same.updatedAt = 701;
+    same.tabs.forEach(tab => { tab.hemingway = false; });
+    const test = await fixture({ cachedSession: same, database: { ...baseState, session: baseSession } });
+    assert.equal(test.status().recovery, null, 'missing and false Hemingway flags are equivalent');
+  }
+  {
+    const test = await fixture({ cachedSession: baseSession, database: { ...baseState, session: baseSession }, failWrites: true });
+    const older = structuredClone(baseSession); older.tabs[1].content = 'First unsaved version'; older.updatedAt = 800;
+    test.store.persistMetadata({ session: older });
+    await test.store.flushPersistence();
+    test.allowWrites();
+    const blocked = test.blockNextWrite();
+    const retry = test.store.retryPersistence();
+    await blocked.started;
+    const newer = structuredClone(older); newer.tabs[1].content = 'Edited during in-flight retry'; newer.updatedAt = 801;
+    test.store.persistMetadata({ session: newer });
+    blocked.release();
+    await retry;
+    assert.deepEqual(test.status().recovery.session, newer, 'older successful retry cannot clear newer recovery');
+    assert.deepEqual(JSON.parse(test.data.get('notation.pending-recovery')).session, newer);
+    await test.store.flushPersistence();
+    assert.equal(test.status().recovery, null);
+    assert.deepEqual(test.commits.at(-1).session, newer, 'newer pending snapshot commits next');
+  }
+  {
+    const database = { ...baseState, session: baseSession, workspace: '/workspace',
+      workspaceCatalog: { activeId: 'work', workspaces: [] }, recents: [{ path: '/workspace/a.md' }] };
+    const test = await fixture({ database });
+    const sessionBefore = test.store.currentMetadata().session;
+    database.recents = [{ path: '/workspace/b.md' }];
+    const summary = await test.store.metadataSummary();
+    assert.deepEqual(summary, { workspace: '/workspace', recents: database.recents });
+    assert.equal(test.commands.at(-1), 'metadata_summary', 'recent-file refresh avoids full bootstrap');
+    assert.equal(test.commands.filter(command => command === 'bootstrap_state').length, 1);
+    assert.equal(test.store.currentMetadata().session, sessionBefore, 'summary does not reload document buffers');
+    assert.deepEqual(test.store.currentMetadata().workspaceCatalog, database.workspaceCatalog);
+  }
+  console.log('Store recovery: 13 scenario groups passed (including 9 content comparisons)');
 } finally {
   await server.close();
 }

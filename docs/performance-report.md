@@ -134,6 +134,10 @@ that infrastructure risks losing undo or edits.
 
 ## Remaining optimization targets
 
+The subsequent [persistence allocation follow-up](persistence-performance.md)
+measures the first target and removes redundant comparison/metadata work.
+The measurements above describe the earlier build and are unchanged.
+
 1. Profile session/draft serialization and native IPC allocation. Current
    recovery writes serialize document content into the webview recovery store
    and debounce SQLite persistence. Full snapshots create transient copies;
