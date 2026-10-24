@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { runCommand } from './commands';
+import { runCommand, setSetting, expectSetting } from './commands';
 
 const source = (page: Page) => page.getByRole('textbox', { name: 'Document source' });
 const settingsDialog = (page: Page) => page.getByRole('dialog', { name: 'Settings', exact: true });
@@ -14,14 +14,14 @@ test('custom appearance and editor preferences persist and reset to defaults', a
   await runCommand(page, 'Settings');
   let settings = settingsDialog(page);
   await settingsTab(page, 'Appearance').click();
-  await settings.getByRole('combobox', { name: 'Dark preset' }).selectOption('charcoal');
-  await settings.getByRole('textbox', { name: 'Accent color', exact: true }).fill('#336699');
-  await settings.getByRole('combobox', { name: 'Density' }).selectOption('comfortable');
-  await settings.getByRole('spinbutton', { name: 'Sidebar width' }).fill('320');
+  await setSetting(page, 'Dark preset', 'charcoal');
+  await expect(settings.getByRole('textbox', { name: 'Accent color', exact: true })).toHaveCount(0);
+  await setSetting(page, 'Density', 'comfortable');
+  await setSetting(page, 'Sidebar width', '340');
   await settings.getByRole('checkbox', { name: 'Show status bar' }).uncheck();
 
   await settingsTab(page, 'Editor').click();
-  await settings.getByRole('combobox', { name: 'Editor font' }).selectOption('sans');
+  await setSetting(page, 'Editor font', 'sans');
   await settings.getByRole('spinbutton', { name: 'Line height' }).fill('2');
   await settings.getByRole('spinbutton', { name: 'Reading width' }).fill('700');
   await settings.getByRole('checkbox', { name: 'Show line numbers' }).uncheck();
@@ -32,23 +32,23 @@ test('custom appearance and editor preferences persist and reset to defaults', a
   await runCommand(page, 'Settings');
   settings = settingsDialog(page);
   await settingsTab(page, 'Appearance').click();
-  await expect(settings.getByRole('combobox', { name: 'Dark preset' })).toHaveValue('charcoal');
-  await expect(settings.getByRole('textbox', { name: 'Accent color', exact: true })).toHaveValue('#336699');
-  await expect(settings.getByRole('combobox', { name: 'Density' })).toHaveValue('comfortable');
-  await expect(settings.getByRole('spinbutton', { name: 'Sidebar width' })).toHaveValue('320');
+  await expectSetting(page, 'Dark preset', 'charcoal');
+  await expect(settings.getByRole('textbox', { name: 'Accent color', exact: true })).toHaveCount(0);
+  await expectSetting(page, 'Density', 'comfortable');
+  await expectSetting(page, 'Sidebar width', '340');
   await expect(settings.getByRole('checkbox', { name: 'Show status bar' })).not.toBeChecked();
   await settings.getByRole('button', { name: 'Reset appearance', exact: true }).click();
-  await expect(settings.getByRole('combobox', { name: 'Dark preset' })).toHaveValue('midnight');
-  await expect(settings.getByRole('textbox', { name: 'Accent color', exact: true })).toHaveValue('#d8d8df');
-  await expect(settings.getByRole('combobox', { name: 'Density' })).toHaveValue('compact');
+  await expectSetting(page, 'Dark preset', 'midnight');
+  await expect(settings.getByRole('textbox', { name: 'Accent color', exact: true })).toHaveCount(0);
+  await expectSetting(page, 'Density', 'compact');
 
   await settingsTab(page, 'Editor').click();
-  await expect(settings.getByRole('combobox', { name: 'Editor font' })).toHaveValue('sans');
+  await expectSetting(page, 'Editor font', 'sans');
   await expect(settings.getByRole('spinbutton', { name: 'Line height' })).toHaveValue('2');
   await expect(settings.getByRole('spinbutton', { name: 'Reading width' })).toHaveValue('700');
   await expect(settings.getByRole('checkbox', { name: 'Show line numbers' })).not.toBeChecked();
   await settings.getByRole('button', { name: 'Reset editor', exact: true }).click();
-  await expect(settings.getByRole('combobox', { name: 'Editor font' })).toHaveValue('mono');
+  await expectSetting(page, 'Editor font', 'mono');
   await expect(settings.getByRole('spinbutton', { name: 'Line height' })).toHaveValue('1.7');
   await expect(settings.getByRole('spinbutton', { name: 'Reading width' })).toHaveValue('756');
   await expect(settings.getByRole('checkbox', { name: 'Show line numbers' })).toBeChecked();

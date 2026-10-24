@@ -39,3 +39,28 @@ export async function renameDocument(page: Page, name: string) {
 export async function blurEditor(page: Page) {
   await page.getByRole('button', { name: 'Commands', exact: true }).focus();
 }
+
+const settingLabels: Record<string, string> = {
+  dark: 'Dark', light: 'Light', compact: 'Compact', comfortable: 'Comfortable',
+  left: 'Left', right: 'Right', midnight: 'Midnight', charcoal: 'Charcoal',
+  mono: 'IBM Plex Mono', sans: 'Source Sans 3', source: 'Source', split: 'Split',
+  preview: 'Preview', live: 'Live Preview', '220': 'Narrow', '260': 'Standard', '340': 'Wide',
+};
+const segmentedSettings = ['Theme', 'Density', 'Sidebar position'];
+export async function setSetting(page: Page, name: string, value: string) {
+  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+  const label = settingLabels[value] ?? value;
+  if (segmentedSettings.includes(name)) {
+    await settings.getByRole('radiogroup', { name, exact: true }).getByRole('radio', { name: label, exact: true }).click();
+  } else {
+    await settings.getByRole('combobox', { name, exact: true }).click();
+    await settings.getByRole('option', { name: new RegExp('^' + label + '(?:\\s|$)') }).click();
+  }
+}
+export async function expectSetting(page: Page, name: string, value: string) {
+  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+  const label = settingLabels[value] ?? value;
+  if (segmentedSettings.includes(name)) {
+    await expect(settings.getByRole('radiogroup', { name, exact: true }).getByRole('radio', { name: label, exact: true })).toHaveAttribute('aria-checked', 'true');
+  } else await expect(settings.getByRole('combobox', { name, exact: true })).toContainText(label);
+}

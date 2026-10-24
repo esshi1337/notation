@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { runCommand } from './commands';
+import { runCommand, setSetting } from './commands';
 
 for (const size of [{ width: 720, height: 520 }, { width: 1266, height: 1357 }]) {
   test(`Settings stays fixed and shortcuts scroll internally at ${size.width}x${size.height}`, async ({ page }, testInfo) => {
@@ -18,14 +18,16 @@ for (const size of [{ width: 720, height: 520 }, { width: 1266, height: 1357 }])
       }
     }
     const close = dialog.getByRole('button', { name: 'Close settings' });
-    const circle = await close.evaluate(element => {
+    const closeShape = await close.evaluate(element => {
       const box = element.getBoundingClientRect(), style = getComputedStyle(element);
       return { width: box.width, height: box.height, radius: style.borderRadius, border: style.borderTopWidth };
     });
-    expect(circle.width).toBe(circle.height);
-    expect(circle.width).toBeGreaterThanOrEqual(24);
-    expect(circle.radius).toBe('50%');
-    expect(circle.border).toBe('1px');
+    expect(closeShape.width).toBe(closeShape.height);
+    expect(closeShape.width).toBeGreaterThanOrEqual(24);
+    expect(parseFloat(closeShape.radius)).toBeGreaterThan(0);
+    expect(parseFloat(closeShape.radius)).toBeLessThan(closeShape.width / 2);
+    expect(closeShape.radius).not.toContain('%');
+    expect(closeShape.border).toBe('1px');
     const list = dialog.getByRole('region', { name: 'Keyboard shortcuts' });
     const before = await page.evaluate(() => ({ document: document.documentElement.scrollTop, preview: document.querySelector('.preview-scroll')?.scrollTop }));
     await list.hover();
@@ -66,7 +68,7 @@ test('Settings checkboxes keep centered square marks and keyboard feedback in bo
   const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
   for (const density of ['compact', 'comfortable']) {
     await dialog.getByRole('tab', { name: 'Appearance', exact: true }).click();
-    await dialog.getByRole('combobox', { name: 'Density', exact: true }).selectOption(density);
+    await setSetting(page, 'Density', density);
     for (const section of ['Appearance', 'Editor', 'Agents']) {
       await dialog.getByRole('tab', { name: section, exact: true }).click();
       const labels = dialog.locator('.settings-checkbox');

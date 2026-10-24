@@ -8,7 +8,7 @@
  * stops as soon as it settles.
  */
 
-const SCROLL_CONTAINERS = '.preview-scroll, .cm-scroller, .settings-content, .shortcut-list, .sidebar-panel';
+const SCROLL_CONTAINERS = '.preview-scroll, .cm-scroller, .settings-content, .settings-editor-controls, .settings-specimen-stage, .shortcut-list, .sidebar-panel';
 const SIDEBAR = '.sidebar-panel';
 const NATIVE_OWNERS = '.graph-canvas, .graph-viewport, .canvas-viewport, canvas, video, audio, input[type="range"], input[type="number"], select, textarea, [role="slider"]';
 const NESTED_SCROLLERS = 'pre, code, table, .markdown-table-scroll, .query-table-scroll, .diagram, .git-diff, .unified-diff, .revision-content, .cell-output, .database-view, .cm-live-math-block, .rendered-math, .callout';

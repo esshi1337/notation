@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 
 import smoke
+from settings_controls import segment
 from media_graph_smoke import stop_profile_apps
 from responsive_smoke import command
 
@@ -60,7 +61,7 @@ def run(app):
                 for theme in ['dark', 'light']:
                     if theme == 'light':
                         command(client, 'Settings')
-                        client.execute("const e=document.querySelector('[aria-label=\"Theme\"]');e.value='light';e.dispatchEvent(new Event('change',{bubbles:true}))")
+                        segment(client, 'Theme', 'Light')
                         client.element_command(client.find('[aria-label="Close settings"]'), '/click')
                     client.execute_async('const done=arguments[arguments.length-1];document.fonts.ready.then(()=>requestAnimationFrame(()=>requestAnimationFrame(done)))')
                     assets = client.execute_async("""

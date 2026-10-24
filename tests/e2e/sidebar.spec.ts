@@ -1,12 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
-import { openSettings, runCommand } from './commands';
+import { openSettings, runCommand, setSetting, expectSetting } from './commands';
 
 const sidebar = (page: Page) => page.getByRole('navigation', { name: 'App sidebar' });
 const source = (page: Page) => page.getByRole('textbox', { name: 'Document source' });
 async function position(page: Page, side: 'left' | 'right') {
   await openSettings(page);
   const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
-  await settings.getByRole('combobox', { name: 'Sidebar position' }).selectOption(side);
+  await setSetting(page, 'Sidebar position', side);
   await settings.getByRole('button', { name: 'Close settings' }).click();
   await expect(page.locator('.content-area')).toHaveAttribute('data-sidebar-position', side);
 }
@@ -91,9 +91,9 @@ test('narrow windows keep tools reachable on either side and appearance reset re
   await settings.getByRole('tab', { name: 'Editor', exact: true }).click();
   await settings.getByRole('button', { name: 'Reset editor', exact: true }).click();
   await settings.getByRole('tab', { name: 'Appearance', exact: true }).click();
-  await expect(settings.getByRole('combobox', { name: 'Sidebar position' })).toHaveValue('right');
+  await expectSetting(page, 'Sidebar position', 'right');
   await settings.getByRole('button', { name: 'Reset appearance', exact: true }).click();
-  await expect(settings.getByRole('combobox', { name: 'Sidebar position' })).toHaveValue('left');
+  await expectSetting(page, 'Sidebar position', 'left');
   await settings.getByRole('button', { name: 'Close settings' }).click();
   await checkGeometry(page, 'left', true);
   await page.screenshot({ path: 'test-results/sidebar-narrow.png' });

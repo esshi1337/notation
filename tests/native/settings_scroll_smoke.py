@@ -8,6 +8,7 @@ import signal
 import subprocess
 import tempfile
 import smoke
+from settings_controls import segment
 from responsive_smoke import command
 from media_graph_smoke import stop_profile_apps
 
@@ -32,15 +33,15 @@ def run(app):
                 client.create_session(app)
                 smoke.wait_for(client,"document.querySelector('main.app')",'packaged app')
                 command(client,'Settings')
-                client.execute("const density=document.querySelector('[aria-label=\"Density\"]');density.value='comfortable';density.dispatchEvent(new Event('change',{bubbles:true}));")
+                segment(client, 'Density', 'Comfortable')
                 baseline = client.execute("return document.querySelector('.settings-dialog').getBoundingClientRect().toJSON()")
                 for section in ['Shortcuts','Agents','Editor','Appearance','Shortcuts']:
                     client.element_command(client.find('[data-section="'+section+'"]'),'/click')
                     smoke.wait_for(client,"document.querySelector('.settings-content').getAttribute('aria-label') === "+json.dumps(section),'section '+section)
                     box = client.execute("return document.querySelector('.settings-dialog').getBoundingClientRect().toJSON()")
                     smoke.require(all(abs(box[k]-baseline[k])<=1 for k in ['x','y','width','height']),f'{section} moved Settings: {baseline} -> {box}')
-                circle = client.execute("const e=document.querySelector('[aria-label=\"Close settings\"]'),r=e.getBoundingClientRect(),s=getComputedStyle(e);return {width:r.width,height:r.height,radius:s.borderRadius,border:s.borderTopWidth}")
-                smoke.require(circle['width']==circle['height'] and circle['width']>=24 and circle['radius']=='50%' and circle['border']=='1px',f'Close is not a circle: {circle}')
+                close_shape = client.execute("const e=document.querySelector('[aria-label=\"Close settings\"]'),r=e.getBoundingClientRect(),s=getComputedStyle(e);return {width:r.width,height:r.height,radius:s.borderRadius,border:s.borderTopWidth}")
+                smoke.require(close_shape['width']==close_shape['height'] and close_shape['width']>=24 and 0 < float(close_shape['radius'].removesuffix('px')) < close_shape['width']/2 and close_shape['border']=='1px',f'Close is not a squircle: {close_shape}')
                 before = client.execute("return {page:document.documentElement.scrollTop,preview:document.querySelector('.preview-scroll')?.scrollTop||0,header:document.querySelector('.settings-heading').getBoundingClientRect().top}")
                 idle = client.execute_async("""
 const done=arguments[arguments.length-1],gaps=[];let last=performance.now();
@@ -91,9 +92,9 @@ return [...document.querySelectorAll('.settings-checkbox')].map(label=>{
                 smoke.require(not consumed,'Disabled smoothing still intercepted wheel input')
                 errors = client.execute("return [...document.querySelectorAll('.settings-dialog [role=alert]')].map(e=>e.textContent)")
                 smoke.require(not errors,str(errors))
-                report={'dialog':baseline,'close':circle,'idleFrames':idle,'scrollFrames':frames,'backgroundUnchanged':before==after,'disabledUsesNativeWheel':not consumed,'smallWheel':small_wheel,'checkboxes':checkboxes}
+                report={'dialog':baseline,'close':close_shape,'idleFrames':idle,'scrollFrames':frames,'backgroundUnchanged':before==after,'disabledUsesNativeWheel':not consumed,'smallWheel':small_wheel,'checkboxes':checkboxes}
                 (output/'metrics.json').write_text(json.dumps(report,indent=2))
-                print('PASS: stable Settings sections, circular close, contained scrolling, persisted toggle; frame timings '+json.dumps({'idle':idle,'scroll':frames}),flush=True)
+                print('PASS: stable Settings sections, squircle close, contained scrolling, persisted toggle; frame timings '+json.dumps({'idle':idle,'scroll':frames}),flush=True)
             finally:
                 if client.session_id:
                     try:client.quit()

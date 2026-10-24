@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { runCommand } from './commands';
+import { runCommand, setSetting, expectSetting } from './commands';
 
 const source = (page: Page) => page.getByRole('textbox', { name: 'Document source' });
 const settings = (page: Page) => page.getByRole('dialog', { name: 'Settings', exact: true });
@@ -16,7 +16,6 @@ test('Settings traps focus, closes with Escape, restores focus, and persists pre
   await expect(panel).toBeVisible();
   const appearance = panel.getByRole('tab', { name: 'Appearance', exact: true });
   await expect(appearance).toBeFocused();
-  const theme = panel.getByRole('combobox', { name: 'Theme' });
 
   for (let index = 0; index < 9; index += 1) {
     await page.keyboard.press('Tab');
@@ -26,9 +25,9 @@ test('Settings traps focus, closes with Escape, restores focus, and persists pre
     });
     expect(focusState.inDialog, `Tab ${index + 1} escaped Settings; state=${JSON.stringify(focusState)}`).toBe(true);
   }
-  await panel.getByRole('combobox', { name: 'Theme' }).selectOption('light');
+  await setSetting(page, 'Theme', 'light');
   await panel.getByRole('tab', { name: 'Editor', exact: true }).click();
-  await panel.getByRole('combobox', { name: 'Layout' }).selectOption('source');
+  await setSetting(page, 'Layout', 'source');
   await page.keyboard.press('Escape');
   await expect(panel).not.toBeVisible();
   await expect(source(page)).toBeFocused();
@@ -36,9 +35,9 @@ test('Settings traps focus, closes with Escape, restores focus, and persists pre
   await page.reload();
   await runCommand(page, 'Settings');
   await settings(page).getByRole('tab', { name: 'Appearance', exact: true }).click();
-  await expect(settings(page).getByRole('combobox', { name: 'Theme' })).toHaveValue('light');
+  await expectSetting(page, 'Theme', 'light');
   await settings(page).getByRole('tab', { name: 'Editor', exact: true }).click();
-  await expect(settings(page).getByRole('combobox', { name: 'Layout' })).toHaveValue('source');
+  await expectSetting(page, 'Layout', 'source');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await expect(source(page)).toBeVisible();
 });

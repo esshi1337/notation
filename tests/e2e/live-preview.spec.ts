@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
-import { blurEditor, renameDocument, runCommand } from './commands';
+import { blurEditor, renameDocument, runCommand, setSetting } from './commands';
 
 const source = (page: Page) => page.getByRole('textbox', { name: 'Document source' });
 const diagrams = (page: Page) => page.locator('.cm-live-mermaid');
@@ -136,7 +136,7 @@ test('renders multiple inline diagrams and updates their theme', async ({ page }
   await runCommand(page, 'Settings');
   const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
   await settings.getByRole('tab', { name: 'Appearance', exact: true }).click();
-  await settings.getByRole('combobox', { name: 'Theme' }).selectOption('light');
+  await setSetting(page, 'Theme', 'light');
   await page.keyboard.press('Escape');
   await expect(diagrams(page).locator('svg')).toHaveCount(2);
   await expect.poll(() => diagrams(page).first().locator('svg style').textContent()).not.toBe(oldStyle);

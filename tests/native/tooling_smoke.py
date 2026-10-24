@@ -16,6 +16,7 @@ import sys
 import tempfile
 
 import smoke
+from settings_controls import segment, select as select_setting, selected_segment
 
 
 class McpStdio:
@@ -242,7 +243,7 @@ def run(app: Path) -> None:
             client.element_command(smoke.button(client, "Settings"), "/click")
             agents = client.find("//dialog[@aria-label='Settings']//button[@role='tab' and normalize-space(.)='Agents']", using="xpath")
             client.element_command(agents, "/click")
-            smoke.wait_for(client, "document.querySelector('[aria-label=\\\"Settings\\\"] .panel-status')?.innerText.includes('MCP ready')",
+            smoke.wait_for(client, "document.querySelector('[aria-label=\\\"Settings\\\"] .agent-status-copy')?.innerText.includes('MCP ready')",
                            "MCP bridge ready")
             status = invoke(client, "agent_status", {})
             smoke.require(isinstance(status, dict) and status.get("ready"), f"MCP agent bridge is not ready: {status!r}")
@@ -258,13 +259,9 @@ def run(app: Path) -> None:
 
             appearance = client.find("//dialog[@aria-label='Settings']//button[@role='tab' and normalize-space(.)='Appearance']", using="xpath")
             client.element_command(appearance, "/click")
-            preset = client.find("dialog[aria-label='Settings'] [aria-label='Dark preset']")
-            client.element_command(preset, "/click")
-            client.execute("arguments[0].value = 'charcoal'; arguments[0].dispatchEvent(new Event('input', {bubbles:true})); arguments[0].dispatchEvent(new Event('change', {bubbles:true}));", [{smoke.ELEMENT_KEY: preset}])
-            accent = smoke.fill_control(client, "dialog[aria-label='Settings'] input[aria-label='Accent color']", "#447799")
-            client.send_keys(accent, "\ue007")
-            density = client.find("dialog[aria-label='Settings'] [aria-label='Density']")
-            client.execute("arguments[0].value = 'comfortable'; arguments[0].dispatchEvent(new Event('input', {bubbles:true})); arguments[0].dispatchEvent(new Event('change', {bubbles:true}));", [{smoke.ELEMENT_KEY: density}])
+            select_setting(client, 'Dark preset', 'Charcoal')
+            smoke.require(client.execute("return !document.querySelector('[aria-label=\"Accent color\"]')"), 'Removed accent control is still visible')
+            segment(client, 'Density', 'Comfortable')
             shortcuts_tab = client.find("//dialog[@aria-label='Settings']//button[@role='tab' and normalize-space(.)='Shortcuts']", using="xpath")
             client.element_command(shortcuts_tab, "/click")
             new_binding = smoke.fill_control(client, "dialog[aria-label='Settings'] [aria-label='Shortcut for New']", "Ctrl+Shift+J")
@@ -437,11 +434,11 @@ def run(app: Path) -> None:
             client.element_command(smoke.button(client, "Settings"), "/click")
             appearance = client.find("//dialog[@aria-label='Settings']//button[@role='tab' and normalize-space(.)='Appearance']", using="xpath")
             client.element_command(appearance, "/click")
-            smoke.require(client.execute("return document.querySelector('[aria-label=\\\"Dark preset\\\"]')?.value") == "charcoal",
+            smoke.require(client.execute("return document.querySelector('[aria-label=\"Dark preset\"]')?.textContent.includes('Charcoal')"),
                           "Native appearance preset did not survive app restart")
-            smoke.require(client.execute("return document.querySelector('[aria-label=\\\"Accent color\\\"]')?.value") == "#447799",
-                          "Native accent color did not survive app restart")
-            smoke.require(client.execute("return document.querySelector('[aria-label=\\\"Density\\\"]')?.value") == "comfortable",
+            smoke.require(client.execute("return !document.querySelector('[aria-label=\"Accent color\"]')"),
+                          "Removed accent control reappeared after restart")
+            smoke.require(selected_segment(client, 'Density') == "Comfortable",
                           "Native density setting did not survive app restart")
             shortcuts_tab = client.find("//dialog[@aria-label='Settings']//button[@role='tab' and normalize-space(.)='Shortcuts']", using="xpath")
             client.element_command(shortcuts_tab, "/click")

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
-import { renameDocument, runCommand } from './commands';
+import { renameDocument, runCommand, setSetting, expectSetting } from './commands';
 
 const source = (page: Page) => page.getByRole('textbox', { name: 'Document source' });
 const preview = (page: Page) => page.getByRole('region', { name: 'Document preview' });
@@ -71,7 +71,7 @@ test('persists appearance and editing preferences', async ({ page }) => {
   await runCommand(page, 'Settings');
   let settings = page.getByRole('dialog', { name: 'Settings', exact: true });
   await settings.getByRole('tab', { name: 'Appearance', exact: true }).click();
-  await settings.getByRole('combobox', { name: 'Theme' }).selectOption('light');
+  await setSetting(page, 'Theme', 'light');
   await settings.getByRole('tab', { name: 'Editor', exact: true }).click();
   await settings.getByRole('spinbutton', { name: 'Font size' }).fill('');
   await settings.getByRole('spinbutton', { name: 'Font size' }).pressSequentially('18');
@@ -81,7 +81,7 @@ test('persists appearance and editing preferences', async ({ page }) => {
   await runCommand(page, 'Settings');
   settings = page.getByRole('dialog', { name: 'Settings', exact: true });
   await settings.getByRole('tab', { name: 'Appearance', exact: true }).click();
-  await expect(settings.getByRole('combobox', { name: 'Theme' })).toHaveValue('light');
+  await expectSetting(page, 'Theme', 'light');
   await settings.getByRole('tab', { name: 'Editor', exact: true }).click();
   await expect(settings.getByRole('spinbutton', { name: 'Font size' })).toHaveValue('18');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
@@ -134,5 +134,5 @@ test('starts safely with malformed saved preferences', async ({ page }) => {
   await runCommand(page, 'Settings');
   const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
   await settings.getByRole('tab', { name: 'Appearance', exact: true }).click();
-  await expect(settings.getByRole('combobox', { name: 'Theme' })).toHaveValue('dark');
+  await expectSetting(page, 'Theme', 'dark');
 });

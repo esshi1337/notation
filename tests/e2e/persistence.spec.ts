@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { runCommand } from './commands';
+import { runCommand, expectSetting } from './commands';
 
 const source = (page: Page) => page.getByRole('textbox', { name: 'Document source' });
 const scripts = (page: Page) => page.getByRole('dialog', { name: 'Scripts', exact: true });
@@ -59,7 +59,7 @@ test('keeps legacy preferences, document recovery, and the existing script', asy
   await runCommand(page, 'Settings');
   const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
   await settings.getByRole('tab', { name: 'Appearance', exact: true }).click();
-  await expect(settings.getByRole('combobox', { name: 'Theme' })).toHaveValue('light');
+  await expectSetting(page, 'Theme', 'light');
   await settings.getByRole('tab', { name: 'Editor', exact: true }).click();
   await expect(settings.getByRole('spinbutton', { name: 'Font size' })).toHaveValue('17');
   await expect(settings.getByRole('checkbox', { name: 'Word wrap' })).not.toBeChecked();

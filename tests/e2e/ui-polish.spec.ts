@@ -1,13 +1,13 @@
 import { expect, test } from '@playwright/test';
-import { runCommand } from './commands';
+import { runCommand, setSetting } from './commands';
 
-test('settings filter shortcuts and disable irrelevant appearance controls', async ({ page }) => {
+test('settings filter shortcuts and hide irrelevant appearance controls', async ({ page }) => {
   await page.goto('/');
   await runCommand(page, 'Settings');
   const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
-  await settings.getByRole('combobox', { name: 'Theme', exact: true }).selectOption('light');
-  await expect(settings.getByRole('combobox', { name: 'Dark preset' })).toBeDisabled();
-  await settings.getByRole('combobox', { name: 'Theme', exact: true }).selectOption('dark');
+  await setSetting(page, 'Theme', 'light');
+  await expect(settings.getByRole('combobox', { name: 'Dark preset' })).toHaveCount(0);
+  await setSetting(page, 'Theme', 'dark');
   await expect(settings.getByRole('combobox', { name: 'Dark preset' })).toBeEnabled();
   await settings.getByRole('tab', { name: 'Shortcuts', exact: true }).click();
   const search = settings.getByRole('searchbox', { name: 'Search shortcuts' });

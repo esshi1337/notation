@@ -135,7 +135,7 @@ def run(app: Path) -> None:
                 wait_for(client, "document.querySelector('dialog[aria-label=\"Settings\"]')?.open === true", "Settings dialog")
                 agents = client.find("//dialog[@aria-label='Settings']//button[@role='tab' and normalize-space(.)='Agents']", using="xpath")
                 client.element_command(agents, "/click")
-                wait_for(client, "document.querySelector('[aria-label=\"Settings\"] .panel-status')?.innerText.includes('MCP ready')", "native MCP bridge readiness")
+                wait_for(client, "document.querySelector('[aria-label=\"Settings\"] .agent-status-copy')?.innerText.includes('MCP ready')", "native MCP bridge readiness")
                 agent_status = tooling_smoke.invoke(client, "agent_status", {})
                 require(isinstance(agent_status, dict) and agent_status.get("ready"), f"MCP bridge is not ready: {agent_status!r}")
                 socket_path = Path(agent_status["socketPath"])
