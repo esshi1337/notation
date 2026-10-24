@@ -235,7 +235,7 @@
     workspaceBusy = true;
     workspaceViews[workspaceKey(catalog.activeId)] = captureWorkspaceView(documents, visibleIds, activeId, layout);
     try {
-      await tick(); await flushPersistence();
+      await tick(); if (!await flushPersistence()) throw new Error('Unsaved changes could not be saved before switching workspaces. Try saving, then switch again.');
       let next: WorkspaceCatalog;
       if (desktop) next = await invoke<WorkspaceCatalog>(command, args);
       else {
@@ -275,7 +275,7 @@
         delete workspaceViews[workspaceKey(String(args.id))];
       }
       status = activeWorkspace ? 'Workspace: ' + activeWorkspace.name : 'Personal tabs';
-      await tick(); await flushPersistence();
+      await tick(); if (!await flushPersistence()) error = 'Workspace switched, but some changes could not be saved.';
     } finally { workspaceBusy = false; }
   }
   async function chooseWorkspace(id: string) {
