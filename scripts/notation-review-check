@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""Fixed test suites in a fresh credential-free, read-only source sandbox."""
+import os
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'scripts'))
+from notation_sandbox import build, exec_sandbox
+
+SUITES = ('check', 'store', 'preferences', 'documents', 'markdown', 'tables',
+          'export', 'canvas', 'workspace', 'citations', 'hemingway', 'code',
+          'e2e', 'native', 'orchestration')
+
+
+def suite_command(suite):
+    if suite not in SUITES:
+        raise ValueError('Unknown suite; choose: ' + ', '.join(SUITES))
+    if suite == 'native':
+        return ['/usr/bin/cargo', 'test', '--locked', '--manifest-path',
+                'src-tauri/Cargo.toml', '--no-default-features']
+    if suite == 'orchestration':
+        return ['/usr/bin/python3', 'tests/orchestration_test.py']
+    return ['/usr/bin/npm', '--ignore-scripts', 'run',
+            'check' if suite == 'check' else 'test:' + suite]
+
+
+def main():
+    if len(sys.argv) != 2:
+        raise ValueError('Exactly one fixed suite argument is required')
+    command = suite_command(sys.argv[1])
+    env = {}
+    if sys.argv[1] == 'e2e':
+        env['NOTATION_TEST_WORKERS'] = '2'
+        if Path('/usr/bin/chromium').is_file():
+            env['PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH'] = '/usr/bin/chromium'
+    argv = build(ROOT, 'security', command, env)
+    exec_sandbox(argv)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (ValueError, RuntimeError) as error:
+        print(error, file=sys.stderr)
+        sys.exit(2)

@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""Owner-assigned issues, topic branches and linked PRs; no CI dependency."""
+import argparse
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+REPO = 'esshi1337/notation'
+OWNER = 'esshi1337'
+CATEGORIES = ('bug', 'enhancement', 'documentation', 'maintenance')
+
+
+def run(*args, capture=True):
+    result = subprocess.run(args, cwd=ROOT, check=True, text=True,
+                            stdout=subprocess.PIPE if capture else None)
+    return result.stdout.strip() if capture else ''
+
+
+def gh(*args):
+    return run('gh', *args, '--repo', REPO)
+
+
+def scope(body):
+    for heading in ('Problem', 'Scope', 'Non-goals', 'Acceptance'):
+        match = re.search(r'^#{2,3} ' + heading + r'[^\S\n]*\n(.*?)(?=^#{2,3} |\Z)', body, re.M | re.S)
+        if not match or not match[1].strip():
+            raise ValueError(f'Issue needs a substantive ## {heading} section')
+
+
+def issue(number):
+    value = json.loads(gh('issue', 'view', str(number), '--json', 'state,assignees,labels,body'))
+    if value['state'] != 'OPEN' or OWNER not in [a['login'] for a in value['assignees']]:
+        raise ValueError('Issue must be open and assigned to esshi1337')
+    labels = [label['name'] for label in value['labels']]
+    if len(labels) != 1 or labels[0] not in CATEGORIES:
+        raise ValueError('Issue must have exactly one of the four category labels')
+    scope(value['body'])
+
+
+def branch_issue():
+    branch = run('git', 'branch', '--show-current')
+    match = re.fullmatch(r'issue/([1-9][0-9]*)-[a-z0-9][a-z0-9-]*', branch)
+    if not match:
+        raise ValueError('Use issue/<number>-<short-scope>; main and detached HEAD are read-only for coding')
+    number = int(match[1])
+    issue(number)
+    return branch, number
+
+
+def clean():
+    # Ignored build artifacts and agent history are excluded by git itself.
+    if run('git', 'status', '--porcelain'):
+        raise ValueError('Commit or preserve changes before changing branches or merging')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest='command', required=True)
+    create = commands.add_parser('issue')
+    create.add_argument('category', choices=CATEGORIES)
+    create.add_argument('title')
+    create.add_argument('--body-file', required=True)
+    start = commands.add_parser('start')
+    start.add_argument('number', type=int)
+    start.add_argument('slug')
+    commands.add_parser('check')
+    commands.add_parser('install-hooks')
+    commands.add_parser('pre-push')
+    pr = commands.add_parser('pr')
+    pr.add_argument('--title', required=True)
+    pr.add_argument('--body-file', required=True)
+    pr.add_argument('--draft', action='store_true')
+    evidence = commands.add_parser('record-review', help='Advisor attests checked reports for this exact HEAD')
+    evidence.add_argument('--checks-file', required=True)
+    evidence.add_argument('--review-file', required=True)
+    merge = commands.add_parser('merge')
+    merge.add_argument('number', type=int)
+    args = parser.parse_args()
+    if args.command == 'issue':
+        scope(Path(args.body_file).read_text())
+        print(gh('issue', 'create', '--title', args.title, '--body-file', args.body_file,
+                 '--label', args.category, '--assignee', OWNER))
+    elif args.command == 'install-hooks':
+        run('git', 'config', '--local', 'core.hooksPath', '.githooks')
+    elif args.command == 'start':
+        issue(args.number)
+        if not re.fullmatch('[a-z0-9][a-z0-9-]*', args.slug):
+            raise ValueError('Slug must contain lowercase letters, digits and hyphens')
+        clean()
+        run('git', 'fetch', 'origin', 'main', capture=False)
+        run('git', 'switch', '-c', f'issue/{args.number}-{args.slug}', 'origin/main', capture=False)
+    elif args.command == 'pre-push':
+        branch, _ = branch_issue()
+        for line in sys.stdin:
+            local_ref, local_sha, remote_ref, remote_sha = line.split()
+            if local_ref != f'refs/heads/{branch}' or remote_ref != local_ref or set(local_sha) == {'0'}:
+                raise ValueError('Push only the current issue branch; no main/tags/deletion/other refs')
+            if set(remote_sha) != {'0'}:
+                run('git', 'merge-base', '--is-ancestor', remote_sha, local_sha)
+    elif args.command == 'pr':
+        branch, number = branch_issue()
+        body = Path(args.body_file).read_text()
+        if not re.search(rf'(?im)^Closes #{number}\s*$', body):
+            raise ValueError('PR body must close the current branch issue')
+        for heading in ('Validation', 'Review'):
+            if not re.search(r'^## ' + heading + r'\s*\n\S', body, re.M):
+                raise ValueError(f'PR needs ## {heading} evidence')
+        clean()
+        run('git', 'push', '-u', 'origin', branch, capture=False)
+        print(gh('pr', 'create', '--base', 'main', '--head', branch, '--assignee', OWNER,
+                 '--title', args.title, '--body-file', args.body_file,
+                 *(['--draft'] if args.draft else [])))
+    elif args.command == 'record-review':
+        branch_issue()
+        clean()
+        reports = [Path(p).read_text().strip() for p in (args.checks_file, args.review_file)]
+        if not all(reports):
+            raise ValueError('Both completed check and independent review reports are required')
+        receipt = {'head': run('git', 'rev-parse', 'HEAD'), 'checks': reports[0], 'review': reports[1]}
+        (ROOT / run('git', 'rev-parse', '--git-path', 'notation-review.json')).write_text(json.dumps(receipt))
+        print('Recorded advisor acceptance for this HEAD; re-record after every commit.')
+    elif args.command == 'merge':
+        branch, number = branch_issue()
+        clean()
+        receipt = json.loads((ROOT / run('git', 'rev-parse', '--git-path', 'notation-review.json')).read_text())
+        pr = json.loads(gh('pr', 'view', str(args.number), '--json',
+                           'headRefOid,headRefName,baseRefName,state,isDraft,closingIssuesReferences'))
+        head = run('git', 'rev-parse', 'HEAD')
+        if (receipt['head'] != head or pr['headRefOid'] != head or pr['headRefName'] != branch or
+                pr['baseRefName'] != 'main' or pr['state'] != 'OPEN' or pr['isDraft'] or
+                number not in [i['number'] for i in pr['closingIssuesReferences']]):
+            raise ValueError('PR, issue, HEAD and accepted review must match; no stale review merges')
+        print(gh('pr', 'merge', str(args.number), '--squash', '--match-head-commit', head))
+    else:
+        branch, number = branch_issue()
+        print(f'{branch}: scoped owner-assigned issue #{number} verified')
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (ValueError, OSError, subprocess.CalledProcessError) as error:
+        sys.exit(f'Notation workflow refused: {error}')

@@ -9,7 +9,7 @@ prose. Never carry credentials, full file contents, or large logs.
 1. **Intent** — the user's goal and the current task in one or two sentences.
 2. **Authorization** — what the user has explicitly approved or declined
    (push, merge, deploy, destructive steps). Preserve exact scope.
-3. **State** — branch or worktree, active task or packet ID, worker sessions
+3. **State** — independent clone and branch, issue/PR URLs, exact reviewed HEAD, active packet ID, worker sessions
    and their status, applied migrations, long-running processes.
 4. **Decisions** — accepted approaches and rejected alternatives with reasons.
 5. **Evidence** — exact check commands and results (pass/fail/unrun), artifact

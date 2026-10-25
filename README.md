@@ -458,3 +458,11 @@ See [memory retention and disk caching](docs/memory-retention.md) for what stays
 in RAM, cache limits and verification commands. The
 [measured performance report](docs/performance-report.md) includes packaged-app
 stress results, language-server costs and remaining optimization targets.
+
+## Project agents and contribution workflow
+
+Start the sandboxed Astra session with `scripts/notation-advisor`. Work starts
+with a scoped GitHub issue assigned to the owner, uses an issue branch and
+linked PR, and receives local checks plus GLM Flash challenger review. No CI
+is configured. See [the project orchestration guide](orchestration/README.md)
+for prerequisites, model routing, sandbox limits and issue-to-merge commands.

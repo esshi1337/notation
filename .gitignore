@@ -1,4 +1,6 @@
 node_modules/
+node_modules
+.agent-state/
 dist/
 src-tauri/target/
 src-tauri/gen/schemas/
