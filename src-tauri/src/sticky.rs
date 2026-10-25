@@ -1,4 +1,4 @@
-//! Bounded plain-text notes and admission shared by window creation and main exit.
+//! Bounded sticky snapshots and admission shared by window creation and main exit.
 use crate::storage::{now, Database};
 use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
@@ -8,6 +8,8 @@ use std::sync::{Mutex, MutexGuard};
 pub const MAX_NOTES: usize = 64;
 pub const MAX_TEXT: usize = 65536;
 pub const MAX_TITLE: usize = 256;
+pub const MAX_HTML: usize = 131072;
+pub const COLORS: [&str; 6] = ["yellow", "green", "blue", "pink", "purple", "gray"];
 pub const CLOSE_MESSAGE: &str =
     "Close sticky windows first, or minimize Notation to keep them visible.";
 
@@ -120,6 +122,8 @@ pub struct Note {
     pub id: String,
     pub title: String,
     pub text: String,
+    pub color: String,
+    pub html: Option<String>,
 }
 fn db_error(error: impl std::fmt::Display) -> String {
     format!("Sticky note database: {error}")
@@ -139,7 +143,7 @@ impl Database {
             .map_err(db_error)?;
         let updated_at = now();
         tx.execute(
-            "INSERT INTO sticky_notes VALUES(?1,'Untitled sticky','',?2)",
+            "INSERT INTO sticky_notes(id,title,text,updated_at) VALUES(?1,'Untitled sticky','',?2)",
             params![id, updated_at],
         )
         .map_err(db_error)?;
@@ -172,13 +176,15 @@ impl Database {
         valid_id(id)?;
         self.lock()?
             .query_row(
-                "SELECT id,title,text FROM sticky_notes WHERE id=?1",
+                "SELECT id,title,text,color,html FROM sticky_notes WHERE id=?1",
                 [id],
                 |row| {
                     Ok(Note {
                         id: row.get(0)?,
                         title: row.get(1)?,
                         text: row.get(2)?,
+                        color: row.get(3)?,
+                        html: row.get(4)?,
                     })
                 },
             )
@@ -187,15 +193,33 @@ impl Database {
             .ok_or_else(|| "Sticky note no longer exists.".into())
     }
     pub fn update_sticky(&self, id: &str, title: &str, text: &str) -> Result<(), String> {
+        self.update_sticky_content(id, title, text, None, None)
+    }
+    /// Validate the complete snapshot before one atomic UPDATE. Legacy callers
+    /// retain their color and clear stale formatting when replacing plain text.
+    pub fn update_sticky_content(
+        &self,
+        id: &str,
+        title: &str,
+        text: &str,
+        color: Option<&str>,
+        html: Option<&str>,
+    ) -> Result<(), String> {
         valid_id(id)?;
         if title.len() > MAX_TITLE || text.len() > MAX_TEXT {
             return Err("Sticky title must be at most 256 UTF-8 bytes and text at most 64 KiB. Nothing was truncated.".into());
         }
+        if color.is_some_and(|value| !COLORS.contains(&value)) {
+            return Err("Invalid sticky color.".into());
+        }
+        if html.is_some_and(|value| value.len() > MAX_HTML) {
+            return Err("Sticky formatting must be at most 128 KiB. Nothing was truncated.".into());
+        }
         if self
             .lock()?
             .execute(
-                "UPDATE sticky_notes SET title=?2,text=?3,updated_at=?4 WHERE id=?1",
-                params![id, title, text, now()],
+                "UPDATE sticky_notes SET title=?2,text=?3,updated_at=?4,color=COALESCE(?5,color),html=?6 WHERE id=?1",
+                params![id, title, text, now(), color, html],
             )
             .map_err(db_error)?
             == 0

@@ -6,6 +6,37 @@ use std::fs;
 fn draft(content: &str) -> Value {
     json!({"id":"draft-1","content":content,"name":"draft.md","path":null,"savedContent":"","savedName":"draft.md"})
 }
+
+#[test]
+fn schema_seven_stickies_migrate_to_eight_without_touching_titles_or_maximum_plain_text() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("state.sqlite3");
+    let db = Database::open(&path).unwrap();
+    db.persist(StateUpdate { settings: Some(json!({"fontSize": 17})), draft: Some(draft("ordinary")), ..Default::default() }).unwrap();
+    drop(db);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.execute_batch("DROP TABLE sticky_notes; CREATE TABLE sticky_notes(id TEXT PRIMARY KEY, title TEXT NOT NULL CHECK(length(CAST(title AS BLOB))<=256), text TEXT NOT NULL CHECK(length(CAST(text AS BLOB))<=65536), updated_at INTEGER NOT NULL); PRAGMA user_version=7;").unwrap();
+    let id = "0123456789abcdef0123456789abcdef";
+    let body = "é".repeat(32768);
+    connection.execute("INSERT INTO sticky_notes(id,title,text,updated_at) VALUES(?1,?2,?3,42)", rusqlite::params![id, "<b>literal title</b>", body]).unwrap();
+    drop(connection);
+    let db = Database::open(&path).unwrap();
+    let note = db.read_sticky(id).unwrap();
+    assert_eq!(note.title, "<b>literal title</b>");
+    assert_eq!(note.text, body);
+    assert_eq!(note.color, "yellow");
+    assert!(note.html.is_none());
+    assert_eq!(db.list_stickies().unwrap()[0].updated_at, 42);
+    let state = db.bootstrap(None).unwrap();
+    assert_eq!(state.settings["fontSize"], 17);
+    assert_eq!(state.draft.unwrap()["content"], "ordinary");
+    drop(db);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 8);
+    // SQLite also rejects invalid color/markup if a future caller misses validation.
+    assert!(connection.execute("UPDATE sticky_notes SET color='red' WHERE id=?1", [id]).is_err());
+    assert!(connection.execute("UPDATE sticky_notes SET html=?2 WHERE id=?1", rusqlite::params![id, "x".repeat(131073)]).is_err());
+}
 fn script() -> ScriptInput {
     ScriptInput {
         id: "script-1".into(),

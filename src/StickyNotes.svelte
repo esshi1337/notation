@@ -42,13 +42,13 @@
 
 <section class="utility-panel" aria-label="Sticky notes">
   <div class="scripts-heading"><strong>Sticky notes</strong><button aria-label="Close sticky notes" onclick={close}>×</button></div>
-  <p class="panel-note">{desktop ? 'Independent always-on-top plain-text windows. Closing a sticky keeps it saved. Close sticky windows before exiting Notation, or minimize Notation to keep them visible.' : 'Sticky notes require the desktop app: browsers cannot create independent always-on-top native windows.'}</p>
+  <p class="panel-note">{desktop ? 'Independent always-on-top writing windows with bold, italic, bullets, and six paper colors. Closing a sticky keeps it saved. Close sticky windows before exiting Notation, or minimize Notation to keep them visible.' : 'Sticky notes require the desktop app: browsers cannot create independent always-on-top native windows.'}</p>
   <div class="panel-actions"><button disabled={!desktop || busy} onclick={create}>New sticky note</button><button disabled={!desktop || busy} onclick={() => action(refresh)}>Refresh notes</button></div>
   {#if error}<p role="alert" class="script-error">{error}</p>{/if}
   {#each notes as note (note.id)}
     <div class="sticky-row"><button disabled={busy} onclick={() => action(async () => { await invoke('open_sticky_note', { id: note.id }); })}>{note.title || 'Untitled sticky'}</button><button disabled={busy} aria-label={`Delete ${note.title || 'Untitled sticky'}`} onclick={() => remove(note)}>Delete</button></div>
   {/each}
   {#if desktop && !busy && !notes.length}<p class="panel-note">No saved sticky notes.</p>{/if}
-  <p class="panel-note">Up to 64 notes; title 256 UTF-8 bytes, text 64 KiB each.</p>
+  <p class="panel-note">Up to 64 saved notes.</p>
 </section>
 <style>.sticky-row { display: flex; gap: 6px; margin: 8px 0; }.sticky-row button:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; text-align: left; }</style>

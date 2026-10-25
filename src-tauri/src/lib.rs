@@ -632,9 +632,9 @@ mod desktop {
         database_work(database.get()?, move |db| db.read_sticky(&id)).await
     }
     #[tauri::command]
-    async fn update_sticky_note(window: tauri::WebviewWindow, id: String, title: String, text: String, database: State<'_, DatabaseState>) -> Result<(), String> {
+    async fn update_sticky_note(window: tauri::WebviewWindow, id: String, title: String, text: String, color: Option<String>, html: Option<String>, database: State<'_, DatabaseState>) -> Result<(), String> {
         sticky::authorize_note(window.label(), &id)?;
-        database_work(database.get()?, move |db| db.update_sticky(&id, &title, &text)).await
+        database_work(database.get()?, move |db| db.update_sticky_content(&id, &title, &text, color.as_deref(), html.as_deref())).await
     }
     #[tauri::command]
     async fn close_sticky_note(window: tauri::WebviewWindow, id: String) -> Result<(), String> {

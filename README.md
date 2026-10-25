@@ -249,11 +249,13 @@ The Linux x86-64 package bundles Pandoc and Typst, so conversion does not depend
 
 ## Linux sticky notes
 
-Run **New sticky note** from Commands (`Ctrl/Cmd+K`), or open **Sticky notes** in the sidebar. Each note opens in a separate resizable plain-text window that requests always-on-top. Edit its title and text; changes autosave to local SQLite independently of Markdown files and regular document drafts.
+Run **New sticky note** from Commands (`Ctrl/Cmd+K`), or open **Sticky notes** in the sidebar. Each note opens in a separate resizable writing window that requests always-on-top. Write directly on the paper; the small toolbar offers **Bold**, **Italic**, and **Bullets**, with `Ctrl/Cmd+B` and `Ctrl/Cmd+I` shortcuts and native undo. Choose yellow (default), green, blue, pink, purple, or gray paper. Text, formatting, and color autosave together to local SQLite independently of Markdown files and regular document drafts. There is no separate title field or normal save-status footer; the first nonempty line supplies the saved-list title. Paste and drop insert plain text only; links, images, arbitrary HTML, and custom styling are not supported.
+
+![Sticky-note writing surface with formatting and paper colors](docs/screenshots/sticky-note-formatting.png)
 
 **Close sticky** saves pending edits and keeps the note in the saved list. A save failure leaves the window open with **Retry**. Use **Refresh notes** to update the list and click a saved title to reopen it; reopening an already open note focuses its window. Close a note's window before using **Delete**, which asks for confirmation.
 
-Close sticky windows before exiting Notation, or minimize the main window to keep them visible. The library holds up to 64 notes, with titles limited to 256 UTF-8 bytes and text to 64 KiB per note. Sticky windows require the desktop app; browser mode explains this limitation.
+Close sticky windows before exiting Notation, or minimize the main window to keep them visible. The library holds up to 64 notes, with derived titles limited to 256 UTF-8 bytes, text to 64 KiB, and formatting to 128 KiB per note. Older notes keep their literal text: a distinct old title appears as a plain first line, including title-only notes, except the default “Untitled sticky.” Merely opening an older note does not rewrite it. If its combined title/body exceeds a limit, an error asks you to shorten it; the original saved content remains unchanged until a successful edit/save. Sticky windows require the desktop app; browser mode explains this limitation.
 
 Sticky support is merged into `main`. Storage and mocked-window tests passed, but real Linux compositor/window behavior and packaged AppImage verification remain outstanding; see the [audit and verification notes](docs/audits/2026-10-25-usability.md#remaining-verification).
 

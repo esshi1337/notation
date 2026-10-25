@@ -3,7 +3,7 @@ import { runCommand } from './commands';
 
 const id = '0123456789abcdef0123456789abcdef';
 
-async function stickyWindow(page: Page, options: { loadDelay?: number; failLoad?: boolean; failSave?: boolean; failDestroy?: boolean } = {}) {
+async function stickyWindow(page: Page, options: { loadDelay?: number; failLoad?: boolean; failSave?: boolean; failDestroy?: boolean; note?: { title: string; text: string; html?: string | null; color?: string }; listenerDelay?: number } = {}) {
   await page.addInitScript(({ id, options }) => {
     const callbacks = new Map<number, (event: unknown) => void>();
     let next = 1;
@@ -13,6 +13,7 @@ async function stickyWindow(page: Page, options: { loadDelay?: number; failLoad?
       failSave: !!options.failSave, failLoad: !!options.failLoad, failDestroy: !!options.failDestroy,
       delay: 0, active: 0, maxActive: 0, destroyed: false, closeHandler: 0,
       readDelays: [] as number[],
+      note: options.note ?? { title: 'Saved title', text: 'Saved body', html: null, color: 'yellow' },
     };
     Object.assign(window, { stickyMock: state, isTauri: true, __TAURI_INTERNALS__: {
       metadata: { currentWindow: { label: `sticky-${id}` }, currentWebview: { label: `sticky-${id}` } },
@@ -20,19 +21,19 @@ async function stickyWindow(page: Page, options: { loadDelay?: number; failLoad?
       unregisterCallback(n: number) { callbacks.delete(n); },
       async invoke(cmd: string, args: Record<string, unknown> = {}) {
         state.calls.push({ cmd, args });
-        if (cmd === 'plugin:event|listen') { state.closeHandler = Number(args.handler); return 1; }
+        if (cmd === 'plugin:event|listen') { await new Promise(resolve => setTimeout(resolve, options.listenerDelay ?? 0)); state.closeHandler = Number(args.handler); return 1; }
         if (cmd === 'plugin:event|unlisten') return;
         if (cmd === 'read_sticky_note') {
           await new Promise(resolve => setTimeout(resolve, state.readDelays.shift() ?? options.loadDelay ?? 0));
           if (state.failLoad) throw new Error('read unavailable');
-          return { id, title: 'Saved title', text: 'Saved body' };
+          return { id, ...state.note };
         }
         if (cmd === 'update_sticky_note') {
           state.active++; state.maxActive = Math.max(state.maxActive, state.active);
           await new Promise(resolve => setTimeout(resolve, state.delay));
           state.active--;
           if (state.failSave) throw new Error('disk full');
-          state.updates.push(args); return;
+            state.updates.push(args); Object.assign(state.note, args); return;
         }
         if (cmd === 'close_sticky_note') {
           if (state.failDestroy) throw new Error('destroy unavailable');
@@ -48,7 +49,7 @@ async function stickyWindow(page: Page, options: { loadDelay?: number; failLoad?
 }
 
 async function mockState(page: Page) {
-  return page.evaluate(() => (window as unknown as { stickyMock: { calls: { cmd: string }[]; updates: { title: string; text: string }[]; maxActive: number; destroyed: boolean } }).stickyMock);
+  return page.evaluate(() => (window as unknown as { stickyMock: { calls: { cmd: string }[]; updates: { title: string; text: string; html: string; color: string }[]; maxActive: number; active: number; destroyed: boolean } }).stickyMock);
 }
 async function configure(page: Page, values: Record<string, unknown>) {
   await page.evaluate(values => Object.assign((window as unknown as { stickyMock: object }).stickyMock, values), values);
@@ -114,23 +115,27 @@ test('isolated native entry disables initial editing, renders plaintext, and nev
   await expect(text).toBeDisabled();
   await expect(text).toBeEnabled();
   await text.fill('<img src=x onerror=alert(1)> **not rich text**');
-  await expect(page.getByRole('status')).toHaveText('Saved');
+  await expect.poll(async () => (await mockState(page)).updates.at(-1)?.text).toBe('<img src=x onerror=alert(1)> **not rich text**');
+  await expect(page.getByRole('textbox', { name: 'Sticky title' })).toHaveCount(0);
+  await expect(page.getByRole('status')).toHaveCount(0);
   await expect(page.locator('img')).toHaveCount(0);
   const state = await mockState(page);
   expect(state.updates.at(-1)?.text).toBe('<img src=x onerror=alert(1)> **not rich text**');
   expect(state.calls.every(call => ['plugin:event|listen', 'read_sticky_note', 'update_sticky_note'].includes(call.cmd))).toBe(true);
 });
 
-test('autosave serializes coalesced writes and close waits for latest title and text', async ({ page }) => {
+test('autosave serializes coalesced writes and close waits for latest text, format and color', async ({ page }) => {
   await stickyWindow(page);
   const text = page.getByRole('textbox', { name: 'Sticky text' });
   await expect(text).toBeEnabled();
   await configure(page, { delay: 650 });
   await text.fill('first');
-  await expect(page.getByRole('status')).toHaveText('Saving…');
+  await expect.poll(async () => (await mockState(page)).active).toBe(1);
   await text.fill('second');
   await text.fill('latest');
-  await page.getByRole('textbox', { name: 'Sticky title' }).fill('latest title');
+  await selectText(page);
+  await page.getByRole('button', { name: 'Bold', exact: true }).click();
+  await page.getByRole('button', { name: 'Blue paper' }).click();
   await page.evaluate(() => (window as unknown as { requestStickyClose: () => void }).requestStickyClose());
   await expect(text).toBeDisabled();
   expect((await mockState(page)).destroyed).toBe(false);
@@ -138,7 +143,8 @@ test('autosave serializes coalesced writes and close waits for latest title and 
   const state = await mockState(page);
   expect(state.maxActive).toBe(1);
   expect(state.updates).toHaveLength(2);
-  expect(state.updates.at(-1)).toMatchObject({ title: 'latest title', text: 'latest' });
+  expect(state.updates.at(-1)).toMatchObject({ title: 'latest', text: 'latest', color: 'blue' });
+  expect(state.updates.at(-1)?.html).toMatch(/<(b|strong)>latest<\/(b|strong)>/);
   expect(state.calls.at(-1)?.cmd).toBe('close_sticky_note');
 });
 
@@ -150,11 +156,11 @@ test('save failure preserves editable unsaved input and prevents close until ret
   await page.getByRole('button', { name: 'Close sticky', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('disk full');
   await expect(text).toBeEnabled();
-  await expect(text).toHaveValue('must not lose this');
+  await expect(text).toHaveText('must not lose this');
   expect((await mockState(page)).destroyed).toBe(false);
   await configure(page, { failSave: false });
   await page.getByRole('button', { name: 'Retry', exact: true }).click();
-  await expect(page.getByRole('status')).toHaveText('Saved');
+  await expect(page.getByRole('alert')).toHaveCount(0);
   await page.getByRole('button', { name: 'Close sticky', exact: true }).click();
   await expect.poll(async () => (await mockState(page)).destroyed).toBe(true);
   expect((await mockState(page)).updates.at(-1)?.text).toBe('must not lose this');
@@ -167,7 +173,7 @@ test('read errors keep editing disabled and can be retried; native destroy error
   await expect(text).toBeDisabled();
   await configure(page, { failLoad: false });
   await page.getByRole('button', { name: 'Retry', exact: true }).click();
-  await expect(text).toHaveValue('Saved body');
+  await expect(text).toHaveText('Saved title\nSaved body');
   await expect(text).toBeEnabled();
   await page.getByRole('button', { name: 'Close sticky', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('destroy unavailable');
@@ -189,8 +195,218 @@ test('rapid load retries cannot overwrite text entered after recovery', async ({
   const text = page.getByRole('textbox', { name: 'Sticky text' });
   await expect(text).toBeEnabled();
   await text.fill('Fresh input after recovery');
-  await expect(page.getByRole('status')).toHaveText('Saved');
+  await expect.poll(async () => (await mockState(page)).updates.at(-1)?.text).toBe('Fresh input after recovery');
   expect((await mockState(page)).calls.filter(call => call.cmd === 'read_sticky_note')).toHaveLength(2);
-  await expect(text).toHaveValue('Fresh input after recovery');
+  await expect(text).toHaveText('Fresh input after recovery');
   expect((await mockState(page)).updates.at(-1)?.text).toBe('Fresh input after recovery');
+});
+
+async function selectText(page: Page) {
+  const text = page.getByRole('textbox', { name: 'Sticky text' });
+  await text.focus();
+  await text.evaluate(editor => {
+    const range = document.createRange(); range.selectNodeContents(editor);
+    const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+  });
+}
+
+test('small toolbar preserves selection for pointer and keyboard, native undo and bullets toggle', async ({ page }) => {
+  await stickyWindow(page);
+  const text = page.getByRole('textbox', { name: 'Sticky text' });
+  await expect(text).toBeEnabled();
+  await text.fill('Format these words');
+  await selectText(page);
+  await page.getByRole('button', { name: 'Bold', exact: true }).click();
+  await expect(text.locator('b,strong')).toHaveText('Format these words');
+  await page.keyboard.press('Control+z');
+  await expect(text.locator('b,strong')).toHaveCount(0);
+  await page.keyboard.press('Control+b');
+  await expect(text.locator('b,strong')).toHaveText('Format these words');
+  // Keyboard activation moves focus out of the editor but must retain its range.
+  await page.getByRole('button', { name: 'Italic', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await expect(text.locator('i,em')).toHaveText('Format these words');
+  await page.keyboard.press('Control+i');
+  await expect(text.locator('i,em')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Bullets', exact: true }).click();
+  await expect(text.locator('ul > li')).toHaveText('Format these words');
+  await page.getByRole('button', { name: 'Bullets', exact: true }).click();
+  await expect(text.locator('ul')).toHaveCount(0);
+  await expect.poll(async () => (await mockState(page)).updates.at(-1)?.html).toMatch(/<(b|strong)>/);
+});
+
+test('all colors, formatted text and bullets survive reopening the component', async ({ page }) => {
+  await stickyWindow(page);
+  const text = page.getByRole('textbox', { name: 'Sticky text' });
+  await expect(text).toBeEnabled();
+  await text.fill('Saved formatting'); await selectText(page);
+  await page.getByRole('button', { name: 'Bold', exact: true }).click();
+  await page.getByRole('button', { name: 'Italic', exact: true }).click();
+  await page.getByRole('button', { name: 'Bullets', exact: true }).click();
+  for (const color of ['Green', 'Blue', 'Pink', 'Purple', 'Gray', 'Yellow']) {
+    await page.getByRole('button', { name: `${color} paper` }).click();
+    await expect(page.getByRole('button', { name: `${color} paper` })).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(async () => (await mockState(page)).updates.at(-1)?.color).toBe(color.toLowerCase());
+  }
+  const saved = (await mockState(page)).updates.at(-1)!;
+  expect(saved.text).toContain('Saved formatting');
+  await page.getByRole('button', { name: 'Close sticky', exact: true }).click();
+  await stickyWindow(page, { note: saved });
+  await expect(text.locator('ul > li')).toHaveText('Saved formatting');
+  await expect(text.locator('b,strong')).toHaveText('Saved formatting');
+  await expect(text.locator('i,em')).toHaveText('Saved formatting');
+  await expect(page.getByRole('button', { name: 'Yellow paper' })).toHaveAttribute('aria-pressed', 'true');
+  expect((await mockState(page)).updates).toHaveLength(0);
+});
+
+test('stored HTML is inert and paste/drop insert only literal plain text without remote resources', async ({ page }) => {
+  const requests: string[] = [];
+  page.on('request', request => { if (request.url().includes('sticky-attacker.invalid')) requests.push(request.url()); });
+  await stickyWindow(page, { note: { title: 'Ignored formatted title', text: 'fallback', color: 'pink', html: '<p style="background:url(https://sticky-attacker.invalid/css)" onclick="window.pwned=1">Safe <b>bold</b><img src="https://sticky-attacker.invalid/image" onerror="window.pwned=1"><a href="https://sticky-attacker.invalid/link">link text</a><script>window.pwned=1</script><iframe src="https://sticky-attacker.invalid/frame"></iframe></p>' } });
+  const text = page.getByRole('textbox', { name: 'Sticky text' });
+  await expect(text).toBeEnabled();
+  await expect(text.locator('b')).toHaveText('bold');
+  await expect(text.locator('img,a,script,iframe,[style],[onclick]')).toHaveCount(0);
+  await selectText(page);
+  for (const type of ['paste', 'drop']) {
+    await text.evaluate((editor, type) => {
+      const data = new DataTransfer();
+      data.setData('text/html', '<img src="https://sticky-attacker.invalid/paste" onerror="window.pwned=1"><b>rich</b>');
+      data.setData('text/plain', '<img src=x> literal ' + type);
+      editor.dispatchEvent(type === 'paste' ? new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }) : new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data }));
+    }, type);
+    await expect(text).toHaveText('<img src=x> literal ' + type);
+    await selectText(page);
+  }
+  await expect.poll(async () => (await mockState(page)).updates.at(-1)?.text).toBe('<img src=x> literal drop');
+  expect((await mockState(page)).updates.at(-1)?.html).not.toContain('<img');
+  expect(await page.evaluate(() => 'pwned' in window)).toBe(false);
+  expect(requests).toEqual([]);
+  // Unsupported rich beforeinput is canceled before it reaches the live DOM.
+  expect(await text.evaluate(editor => editor.dispatchEvent(new InputEvent('beforeinput', { inputType: 'formatUnderline', cancelable: true, bubbles: true })))).toBe(false);
+});
+
+test('legacy title-only, literal markup and maximum body are not rewritten or truncated on load', async ({ page }) => {
+  for (const note of [
+    { title: '<b>Title only</b>', text: '' },
+    { title: 'Distinct title', text: '<img src=x> literal body' },
+    { title: 'Same first line', text: 'Same first line\nBody' },
+    { title: 'Untitled sticky', text: 'Body without default title' },
+    { title: 'Distinct title', text: 'x'.repeat(65536) },
+  ]) {
+    await stickyWindow(page, { note });
+    const text = page.getByRole('textbox', { name: 'Sticky text' });
+    await expect(text).toBeEnabled();
+    const expected = note.title === 'Untitled sticky' || note.text.startsWith(note.title) ? note.text : note.title + (note.text ? '\n' + note.text : '');
+    await expect(text).toHaveText(expected);
+    await expect(text.locator('img,b')).toHaveCount(0);
+    expect((await mockState(page)).updates).toHaveLength(0);
+    if (note.text.length === 65536) {
+      await expect(page.getByRole('alert')).toContainText('Nothing was truncated');
+      await text.press('End'); await text.press('a');
+      await page.getByRole('button', { name: 'Close sticky', exact: true }).click();
+      await expect(page.getByRole('alert')).toContainText('Nothing was truncated');
+      expect((await mockState(page)).destroyed).toBe(false);
+      expect((await mockState(page)).updates).toHaveLength(0);
+    }
+  }
+});
+
+test('listener registration gates load and Unicode-derived titles stay within the byte limit', async ({ page }) => {
+  await stickyWindow(page, { listenerDelay: 700 });
+  const text = page.getByRole('textbox', { name: 'Sticky text' });
+  await expect(text).toBeDisabled();
+  expect((await mockState(page)).calls.some(call => call.cmd === 'read_sticky_note')).toBe(false);
+  await expect(text).toBeEnabled();
+  await text.fill('😀'.repeat(100) + '\nrest');
+  await expect.poll(async () => (await mockState(page)).updates.length).toBe(1);
+  expect((await mockState(page)).updates[0].title).toBe('😀'.repeat(64));
+});
+
+test('typing, paragraphs and line breaks retain the native editor and undo history across autosave', async ({ page }) => {
+  await stickyWindow(page, { note: { title: 'Untitled sticky', text: '' } });
+  const text = page.getByRole('textbox', { name: 'Sticky text' });
+  await expect(text).toBeEnabled();
+  const original = await text.elementHandle();
+  await text.focus(); await page.keyboard.type('First line');
+  await expect.poll(async () => (await mockState(page)).updates.at(-1)?.text).toBe('First line');
+  await text.press('Enter'); await page.keyboard.type('Second');
+  await text.press('Shift+Enter'); await page.keyboard.type('Third');
+  await expect.poll(async () => (await mockState(page)).updates.at(-1)?.text).toBe('First line\nSecond\nThird');
+  expect(await original!.evaluate(element => element === document.querySelector('[aria-label="Sticky text"]'))).toBe(true);
+  await text.press('Control+z');
+  await expect(text).not.toContainText('Third');
+  await text.press('Control+Shift+z');
+  await expect(text).toContainText('Third');
+});
+
+async function exposeDisposal(page: Page) {
+  // Test-only instrumentation of the real entry; no production debug API.
+  await page.route('**/src/main.ts', async route => {
+    const response = await route.fetch();
+    const body = (await response.text())
+      .replace('import { mount }', 'import { mount, unmount }')
+      .replace('mount(StickyNote, { target, props: { id } });', 'const instance = mount(StickyNote, { target, props: { id } }); Object.assign(window, { disposeSticky: () => unmount(instance) });');
+    await route.fulfill({ response, body });
+  });
+}
+
+async function disposeSticky(page: Page) {
+  await page.evaluate(async () => { await (window as unknown as { disposeSticky: () => Promise<void> }).disposeSticky(); });
+}
+
+test('disposal cancels debounce, unregisters close protection, and ignores a late save result', async ({ page }) => {
+  await exposeDisposal(page);
+  await stickyWindow(page);
+  const text = page.getByRole('textbox', { name: 'Sticky text' });
+  await expect(text).toBeEnabled();
+  await text.fill('canceled timer'); await disposeSticky(page);
+  // Wait beyond the debounce to check that no pending callback saves.
+  await page.waitForTimeout(450);
+  expect((await mockState(page)).updates).toHaveLength(0);
+  expect((await mockState(page)).calls.filter(call => call.cmd === 'plugin:event|unlisten')).toHaveLength(1);
+
+  await stickyWindow(page); await expect(text).toBeEnabled();
+  await configure(page, { delay: 650 });
+  await text.fill('in flight');
+  await expect.poll(async () => (await mockState(page)).active).toBe(1);
+  await text.fill('must not write after disposal'); await disposeSticky(page);
+  await expect.poll(async () => (await mockState(page)).active).toBe(0);
+  await page.waitForTimeout(450);
+  expect((await mockState(page)).updates.map(update => update.text)).toEqual(['in flight']);
+  expect((await mockState(page)).destroyed).toBe(false);
+});
+
+test('disposal ignores late reads and releases a close listener registered after disposal', async ({ page }) => {
+  await exposeDisposal(page);
+  for (const options of [{ loadDelay: 650 }, { listenerDelay: 650 }]) {
+    await stickyWindow(page, options);
+    await expect(page.getByRole('textbox', { name: 'Sticky text' })).toBeDisabled();
+    await disposeSticky(page);
+    await page.waitForTimeout(800);
+    await expect(page.getByRole('textbox', { name: 'Sticky text' })).toHaveCount(0);
+    const state = await mockState(page);
+    expect(state.updates).toHaveLength(0);
+    expect(state.calls.filter(call => call.cmd === 'plugin:event|unlisten')).toHaveLength(1);
+    if ('listenerDelay' in options) expect(state.calls.some(call => call.cmd === 'read_sticky_note')).toBe(false);
+  }
+});
+
+test('drops outside the writing surface cannot navigate the note and the guard is removed on disposal', async ({ page }) => {
+  await exposeDisposal(page);
+  await stickyWindow(page);
+  const text = page.getByRole('textbox', { name: 'Sticky text' });
+  await expect(text).toBeEnabled();
+  const original = await text.textContent();
+  const canceled = await page.evaluate(() => {
+    const data = new DataTransfer();
+    data.setData('text/uri-list', 'https://sticky-attacker.invalid/drop');
+    return !document.querySelector('header')!.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data }));
+  });
+  expect(canceled).toBe(true);
+  await expect(text).toHaveText(original!);
+  expect((await mockState(page)).updates).toHaveLength(0);
+  await disposeSticky(page);
+  expect(await page.evaluate(() => window.dispatchEvent(new DragEvent('drop', { cancelable: true })))).toBe(true);
 });

@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const MAX_CONTENT: usize = 4 * 1024 * 1024;
 const REVISION_LIMIT: usize = 50;
 const RUN_LIMIT: usize = 200;
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 pub fn now() -> i64 {
     SystemTime::now()
@@ -252,6 +252,27 @@ PRAGMA user_version=2;
         if version < 7 {
             let tx = connection.transaction().map_err(database_error)?;
             tx.execute_batch("CREATE TABLE IF NOT EXISTS sticky_notes(id TEXT PRIMARY KEY, title TEXT NOT NULL CHECK(length(CAST(title AS BLOB))<=256), text TEXT NOT NULL CHECK(length(CAST(text AS BLOB))<=65536), updated_at INTEGER NOT NULL); PRAGMA user_version=7;").map_err(database_error)?;
+            tx.commit().map_err(database_error)?;
+        }
+        if version < 8 {
+            let tx = connection.transaction().map_err(database_error)?;
+            // Also tolerate databases whose version was lowered by migration tests.
+            let columns: Vec<String> = {
+                let mut statement = tx
+                    .prepare("PRAGMA table_info(sticky_notes)")
+                    .map_err(database_error)?;
+                let rows = statement
+                    .query_map([], |row| row.get(1))
+                    .map_err(database_error)?;
+                rows.collect::<Result<_, _>>().map_err(database_error)?
+            };
+            if !columns.iter().any(|column| column == "color") {
+                tx.execute_batch("ALTER TABLE sticky_notes ADD COLUMN color TEXT NOT NULL DEFAULT 'yellow' CHECK(color IN ('yellow','green','blue','pink','purple','gray'));").map_err(database_error)?;
+            }
+            if !columns.iter().any(|column| column == "html") {
+                tx.execute_batch("ALTER TABLE sticky_notes ADD COLUMN html TEXT CHECK(html IS NULL OR length(CAST(html AS BLOB))<=131072);").map_err(database_error)?;
+            }
+            tx.execute_batch("PRAGMA user_version=8;").map_err(database_error)?;
             tx.commit().map_err(database_error)?;
         }
         Ok(Self {
