@@ -230,21 +230,25 @@ Preview; `Ctrl/Cmd+Shift+E` Explorer; `Ctrl/Cmd+Shift+F` Focus mode. Shortcut
 settings can search, record, disable, or reset bindings. Conflicts are rejected,
 editing shortcuts stay reserved, and window-manager shortcuts take precedence.
 
-## Sticky notes (draft, not shipped)
+## Sticky notes (Linux desktop)
 
-**Planned/draft:** [PR #14](https://github.com/esshi1337/notation/pull/14)
-proposes a **Sticky notes** sidebar panel with **New sticky note**, **Refresh
-notes**, and a saved-note list. Each note would open in its own always-on-top
-plain-text native window, save automatically, and close only after the latest text
-is written. The draft caps notes at 64, with a 256-byte title and 64 KiB of text
-each. Closing a sticky would keep it in the saved list for reopening. Close sticky
-windows before exiting Notation, or minimize the main window to keep them visible.
+Open **Sticky notes** in the sidebar, then **New sticky note**, or run **New
+sticky note** from Commands. Each note opens in its own resizable plain-text
+native window that requests always-on-top. Title and text autosave independently
+of regular documents; **Close sticky** flushes pending edits and keeps the note
+in the saved list. A failed save leaves the window open with **Retry**.
 
-Sticky notes are **not part of the shipped main build**. The PR is a draft because
-the native path still needs verification against a real compositor, GTK/WebKit
-runtime, and AppImage. A Rust type-check passed with a temporary dependency
-package, but that is not runtime evidence. Do not expect the panel or command in
-an installation built from main.
+Use **Refresh notes** to update the list and click a saved title to reopen it.
+Opening an already open note focuses its window. Close a note's window before
+using **Delete**, then confirm deletion. Close all sticky windows before exiting
+Notation, or minimize the main window to keep them visible. The library supports
+64 notes, with a 256-byte UTF-8 title and 64 KiB of text per note. Browser mode
+cannot create these native windows.
+
+[PR #14](https://github.com/esshi1337/notation/pull/14) is merged into `main`.
+Storage tests, mocked-window browser checks, and Rust type checking passed;
+real compositor/GTK/WebKit behavior and packaged AppImage verification remain
+outstanding. See the [audit notes](audits/2026-10-25-usability.md#remaining-verification).
 
 For technical notes, see [memory retention](memory-retention.md) and
 [performance](performance-report.md).
