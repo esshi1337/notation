@@ -241,17 +241,27 @@ editing shortcuts stay reserved, and window-manager shortcuts take precedence.
 ## Sticky notes (Linux desktop)
 
 Open **Sticky notes** in the sidebar, then **New sticky note**, or run **New
-sticky note** from Commands. Each note opens in its own resizable plain-text
-native window that requests always-on-top. Title and text autosave independently
-of regular documents; **Close sticky** flushes pending edits and keeps the note
-in the saved list. A failed save leaves the window open with **Retry**.
+sticky note** from Commands. Each note opens in its own resizable native window
+that requests always-on-top. Write directly on the paper, with no title form or
+normal save-status footer. Select text and use **Bold**, **Italic**, or **Bullets**;
+`Ctrl/Cmd+B` and `Ctrl/Cmd+I` also work, with native undo. Choose one of six paper
+colors: yellow (default), green, blue, pink, purple, or gray. Text, formatting,
+and color autosave together, independently of regular documents. Paste and drop
+insert plain text only, not links, images, or arbitrary HTML/styles.
+**Close sticky** flushes pending edits and keeps the note in the saved list.
+A failed save leaves the window open with **Retry**.
 
 Use **Refresh notes** to update the list and click a saved title to reopen it.
 Opening an already open note focuses its window. Close a note's window before
 using **Delete**, then confirm deletion. Close all sticky windows before exiting
 Notation, or minimize the main window to keep them visible. The library supports
-64 notes, with a 256-byte UTF-8 title and 64 KiB of text per note. Browser mode
-cannot create these native windows.
+64 notes, with a first-nonempty-line title of up to 256 UTF-8 bytes, 64 KiB of text,
+and 128 KiB of formatting per note. Older notes show a distinct old title as a
+literal first line, including title-only notes; “Untitled sticky” is not added.
+Opening a note does not rewrite it. If combining an old title/body exceeds a
+limit, nothing is truncated: shorten the text to save, and the original stored
+note remains intact until a successful save. Browser mode cannot create these
+native windows. Native window decorations still provide dragging and resizing.
 
 [PR #14](https://github.com/esshi1337/notation/pull/14) is merged into `main`.
 Storage tests, mocked-window browser checks, and Rust type checking passed;

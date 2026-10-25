@@ -1,6 +1,6 @@
 use notation_lib::sticky::{
     authorize_main, authorize_note, valid_id, Admission, StickyManager, MAX_NOTES, MAX_TEXT,
-    MAX_TITLE,
+    MAX_TITLE, MAX_HTML, COLORS,
 };
 use notation_lib::storage::{Database, StateUpdate};
 use serde_json::json;
@@ -9,7 +9,7 @@ use std::sync::{Arc, Barrier};
 const ID: &str = "0123456789abcdef0123456789abcdef";
 
 #[test]
-fn migration_seven_preserves_ordinary_state_and_independent_notes() {
+fn migration_six_to_eight_preserves_ordinary_state_and_independent_notes() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("state.sqlite3");
     let db = Database::open(&path).unwrap();
@@ -34,6 +34,8 @@ fn migration_seven_preserves_ordinary_state_and_independent_notes() {
     db.update_sticky(&a.id, "<b>plain title</b>", "<script>plain text</script>")
         .unwrap();
     assert_eq!(db.read_sticky(&b.id).unwrap().text, "");
+    assert_eq!(db.read_sticky(&b.id).unwrap().color, "yellow");
+    assert!(db.read_sticky(&b.id).unwrap().html.is_none());
     drop(db);
     let db = Database::open(&path).unwrap();
     assert_eq!(
@@ -42,6 +44,7 @@ fn migration_seven_preserves_ordinary_state_and_independent_notes() {
     );
     let metadata = serde_json::to_value(db.list_stickies().unwrap()).unwrap();
     assert!(metadata[0].get("text").is_none());
+    assert!(metadata[0].get("html").is_none());
     let state = db.bootstrap(None).unwrap();
     assert_eq!(state.settings["fontSize"], 19);
     assert_eq!(state.draft.unwrap()["content"], "ordinary");
@@ -50,6 +53,48 @@ fn migration_seven_preserves_ordinary_state_and_independent_notes() {
     assert!(db.update_sticky(&a.id, "", "").is_err());
     assert!(db.delete_sticky(&a.id).is_err());
     assert_eq!(db.list_stickies().unwrap().len(), 1);
+}
+
+#[test]
+fn formatted_snapshots_validate_all_fields_before_atomic_update_and_survive_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("state.sqlite3");
+    let db = Database::open(&path).unwrap();
+    let id = db.create_sticky().unwrap().id;
+    let boundary = "x".repeat(MAX_HTML);
+    for color in COLORS {
+        db.update_sticky_content(&id, "title", "fallback", Some(color), Some(&boundary)).unwrap();
+        let note = db.read_sticky(&id).unwrap();
+        assert_eq!(note.color, color);
+        assert_eq!(note.html.as_deref(), Some(boundary.as_str()));
+    }
+    let before = serde_json::to_value(db.read_sticky(&id).unwrap()).unwrap();
+    let metadata = serde_json::to_value(db.list_stickies().unwrap()).unwrap();
+    for (title, text, color, html) in [
+        ("changed".into(), "changed".into(), "red", "<b>changed</b>".into()),
+        ("changed".into(), "changed".into(), "Yellow", "<b>changed</b>".into()),
+        ("changed".into(), "changed".into(), "blue", "é".repeat(MAX_HTML / 2 + 1)),
+        ("t".repeat(MAX_TITLE + 1), "changed".into(), "blue", "ok".into()),
+        ("changed".into(), "x".repeat(MAX_TEXT + 1), "blue", "ok".into()),
+    ] {
+        assert!(db.update_sticky_content(&id, &title, &text, Some(color), Some(&html)).is_err());
+        assert_eq!(serde_json::to_value(db.read_sticky(&id).unwrap()).unwrap(), before);
+        assert_eq!(serde_json::to_value(db.list_stickies().unwrap()).unwrap(), metadata);
+    }
+    // Storage is bounded data, not trusted HTML: the UI must sanitize every read.
+    let untrusted = "<img src=https://invalid.example onerror=alert(1)>";
+    db.update_sticky_content(&id, "kept", "literal fallback", Some("purple"), Some(untrusted)).unwrap();
+    drop(db);
+    let db = Database::open(&path).unwrap();
+    let note = db.read_sticky(&id).unwrap();
+    assert_eq!(note.html.as_deref(), Some(untrusted));
+    assert_eq!(note.color, "purple");
+    assert_eq!(note.text, "literal fallback");
+    // Old plain-text callers preserve color but never retain stale formatting.
+    db.update_sticky(&id, "old API", "replacement").unwrap();
+    let note = db.read_sticky(&id).unwrap();
+    assert_eq!(note.color, "purple");
+    assert!(note.html.is_none());
 }
 
 #[test]
