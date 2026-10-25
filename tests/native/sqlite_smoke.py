@@ -158,6 +158,7 @@ def run(app: Path) -> None:
                 raise AssertionError(f"{error}; UI={diagnostics!r}; direct search_workspace={direct!r}; screenshot={screenshot}") from error
 
             print("Saving/running a native script and applying its output", flush=True)
+            smoke.enable_scripts(client)
             click(client, smoke.button(client, "Scripts"))
             script_dialog = client.find("[role='dialog'][aria-label='Scripts']")
             client.element_command(client.find("[aria-label='Script name']"), "/clear")

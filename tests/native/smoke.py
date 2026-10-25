@@ -303,6 +303,24 @@ def fill_control(client: Client, selector: str, text: str) -> str:
     return element_id
 
 
+def enable_scripts(client: Client) -> None:
+    """Opt in to Scripts through Settings → Editor, like a first-time user."""
+    client.element_command(button(client, "Settings"), "/click")
+    wait_for(client, "document.querySelector('dialog[aria-label=\\\"Settings\\\"]')?.open === true", "Settings dialog for scripts opt-in")
+    client.element_command(
+        client.find("//dialog[@aria-label='Settings']//button[@role='tab' and normalize-space(.)='Editor']", using="xpath"),
+        "/click",
+    )
+    toggle = client.find(
+        "//dialog[@aria-label='Settings']//label[contains(normalize-space(.), 'Enable scripts')]//input[@type='checkbox']",
+        using="xpath",
+    )
+    if attribute(client, toggle, "checked") not in (True, "true"):
+        client.element_command(toggle, "/click")
+    client.element_command(client.find("[aria-label='Close settings']"), "/click")
+    wait_for(client, "!document.querySelector('dialog[aria-label=\\\"Settings\\\"]')?.open", "Settings closed after scripts opt-in")
+
+
 def replace_editor_text(client: Client, element_id: str, text: str) -> None:
     client.element_command(element_id, "/click")
     client.send_keys(element_id, "\ue009a\ue000")
@@ -648,6 +666,7 @@ def run(app: Path) -> None:
             script_document = "hello script"
             replace_editor_text(client, editor, script_document)
             require(editor_text(client) == script_document, "Could not prepare the native script document")
+            enable_scripts(client)
             client.element_command(button(client, "Scripts"), "/click")
             wait_for(client, "document.querySelector('[role=\\\"dialog\\\"][aria-label=\\\"Scripts\\\"]')", "Scripts dialog")
             fill_control(client, '[aria-label="Script name"]', "Native smoke")

@@ -108,6 +108,7 @@
   let layout = $state<Layout>(initialView?.layout ?? (['source', 'preview', 'live'].includes(String(preferences.layout)) ? preferences.layout as Layout : 'split'));
   let agentEditsEnabled = $state(preferences.agentEditsEnabled !== false);
   let ui = $state(readUIPreferences(migrateSettings(preferences)));
+  let scriptsEnabled = $derived(ui.scriptsEnabled === true);
   let themePreview = $state<UserTheme | null>(null);
   // Mutable signal: recovery invalidates pending reads synchronously, even
   // while Settings and its draft remain mounted (no reactive effect needed).
@@ -178,8 +179,10 @@
   let wordCount = $derived(counts.words);
   const mac = /Mac|iPhone|iPad/u.test(navigator.platform);
   let commandItems = $derived<CommandItem[]>(COMMANDS.map((command) => ({
-    ...command, shortcut: formatShortcut(shortcutFor(command.id, shortcuts), mac),
-    disabled: (ui.performanceMode && ['view.split','view.preview','view.live'].includes(command.id)) || (command.id === 'view.language' && canvasDocument) || (!intelligenceEnabled && ['code.definition','code.references','code.rename','code.format'].includes(command.id)) || (codeDocument && (command.id.startsWith('block.') || command.id.startsWith('insert.') || ['panel.properties','panel.templates','panel.table','panel.export','view.split','view.preview','view.live'].includes(command.id))) || (active.hemingway && hemingwayCommandBlocked(command.id)) || ((busy || workspaceBusy) && ['file.new', 'file.newCanvas', 'file.open', 'file.save', 'file.saveAs', 'tab.close'].includes(command.id)) || (canvasDocument && (['panel.properties','panel.table','panel.templates','panel.export','block.actions'].includes(command.id) || command.id.startsWith('block.') || command.id.startsWith('fold.') || command.id.startsWith('insert.'))),
+    ...command,
+    ...(command.id === 'panel.scripts' && !scriptsEnabled ? { label: 'Scripts (enable in Settings → Editor)' } : {}),
+    shortcut: formatShortcut(shortcutFor(command.id, shortcuts), mac),
+    disabled: (command.id === 'panel.scripts' && !scriptsEnabled) || (ui.performanceMode && ['view.split','view.preview','view.live'].includes(command.id)) || (command.id === 'view.language' && canvasDocument) || (!intelligenceEnabled && ['code.definition','code.references','code.rename','code.format'].includes(command.id)) || (codeDocument && (command.id.startsWith('block.') || command.id.startsWith('insert.') || ['panel.properties','panel.templates','panel.table','panel.export','view.split','view.preview','view.live'].includes(command.id))) || (active.hemingway && hemingwayCommandBlocked(command.id)) || ((busy || workspaceBusy) && ['file.new', 'file.newCanvas', 'file.open', 'file.save', 'file.saveAs', 'tab.close'].includes(command.id)) || (canvasDocument && (['panel.properties','panel.table','panel.templates','panel.export','block.actions'].includes(command.id) || command.id.startsWith('block.') || command.id.startsWith('fold.') || command.id.startsWith('insert.'))),
     checked: command.id.startsWith('view.') ? command.id === 'view.hemingway' ? active.hemingway : command.id === 'view.focus' ? ui.focusMode : !active.hemingway && command.id === 'view.' + effectiveLayout : command.id.startsWith('panel.') ? panel === command.id.slice(6) && !ui.focusMode : undefined,
   })));
   let layoutItems = $derived(codeDocument ? commandItems.filter(command => command.id === 'view.source') : active.hemingway ? commandItems.filter(command => command.id === 'view.hemingway') : canvasDocument
@@ -187,10 +190,13 @@
     : commandItems.filter(command => ['view.source', 'view.split', 'view.preview', 'view.live'].includes(command.id)));
   let paletteItems = $derived(paletteScope === 'blocks' ? commandItems.filter((command) => command.group === 'Blocks' && command.id !== 'block.actions') : commandItems);
   const sidebarCommands: CommandId[] = ['panel.explorer', 'panel.workspace', 'panel.graph', 'panel.stickies', 'panel.git', 'panel.history', 'panel.properties', 'panel.templates', 'panel.table', 'panel.scripts'];
-  let sidebarItems = $derived(sidebarCommands.map(id => commandItems.find(item => item.id === id)!));
-  let visiblePanel = $derived(panel !== null && !ui.focusMode && (!['properties', 'templates', 'export', 'table'].includes(panel) || (!canvasDocument && !codeDocument && !active.hemingway)));
+  let sidebarItems = $derived(sidebarCommands.filter(id => id !== 'panel.scripts' || scriptsEnabled).map(id => commandItems.find(item => item.id === id)!));
+  let visiblePanel = $derived(panel !== null && !ui.focusMode && (panel !== 'scripts' || scriptsEnabled) && (!['properties', 'templates', 'export', 'table'].includes(panel) || (!canvasDocument && !codeDocument && !active.hemingway)));
   let appMenuItems = $derived(['Document', 'Application'].flatMap(group => commandItems.filter(command => command.group === group)));
 
+  $effect(() => {
+    if (!scriptsEnabled && panel === 'scripts') panel = null;
+  });
   $effect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.darkPreset = customTheme && theme === 'dark' ? customTheme.base.split('/')[1] : ui.darkPreset;
@@ -621,13 +627,17 @@
   async function recoverScript() {
     const cached = persistence.recovery?.scriptDraft;
     if (!cached) return;
+    if (!scriptsEnabled) { status = 'Enable scripts in Settings → Editor to restore these edits.'; return; }
     persistMetadata({ scriptDraft: cached, settings: { activeScriptId: cached.id || null } });
     status = 'Script edits restored from backup';
-    panel = null; await tick(); panel = 'scripts'; await flushPersistence();
+    panel = null; await tick();
+    if (!scriptsEnabled) return;
+    panel = 'scripts'; await flushPersistence();
   }
   async function runCommand(id: CommandId) {
     paletteOpen = false; appMenuOpen = false; layoutMenuOpen = false;
     if (id === 'app.commands') { await tick(); paletteScope = 'all'; paletteOpen = true; return; }
+    if (id === 'panel.scripts' && !scriptsEnabled) { status = 'Enable scripts in Settings → Editor to use the Scripts panel.'; return; }
     if (id === 'sticky.new') { ui.focusMode = false; stickyCreateRequest++; panel = 'stickies'; return; }
     if (ui.performanceMode && ['view.split','view.preview','view.live'].includes(id)) { status = 'Turn off Performance mode in Settings → Editor to use rendered views.'; return; }
     if (id === 'view.language') { if (!canvasDocument) languageTarget = activeId; return; }
@@ -822,7 +832,7 @@
   </header>
   {#if error}<div class="app-error" role="alert">{error}<button aria-label="Dismiss error" onclick={() => error = ''}>×</button></div>{/if}
   {#if persistence.state === 'error'}<div class="app-error" role="alert">{persistence.error}<button onclick={() => void retryPersistence()}>Retry saving app state</button></div>{/if}
-  {#if persistence.recovery?.draft || persistence.recovery?.scriptDraft || persistence.recovery?.session}<div class="recovery-banner" role="status"><div class="recovery-copy"><strong>Work available to restore</strong>{#if persistence.recovery.session}<span>Restore tabs replaces your current open tabs; unsaved tabs are confirmed first.</span>{:else if persistence.recovery.draft}<span>Restore document opens the draft and replaces its matching open tab.</span>{/if}{#if persistence.recovery.scriptDraft}<span>Restore script edits replaces the code in Scripts without running it or updating saved library scripts.</span>{/if}<span>Document files stay unchanged. Keep current work dismisses these options and keeps your current work.</span></div><div class="recovery-actions">{#if persistence.recovery.session}<button onclick={recoverSession}>Restore tabs</button>{:else if persistence.recovery.draft}<button onclick={recoverDraft}>Restore document</button>{/if}{#if persistence.recovery.scriptDraft}<button onclick={recoverScript}>Restore script edits</button>{/if}<button onclick={dismissRecovery}>Keep current work</button></div></div>{/if}
+  {#if persistence.recovery?.draft || persistence.recovery?.scriptDraft || persistence.recovery?.session}<div class="recovery-banner" role="status"><div class="recovery-copy"><strong>Work available to restore</strong>{#if persistence.recovery.session}<span>Restore tabs replaces your current open tabs; unsaved tabs are confirmed first.</span>{:else if persistence.recovery.draft}<span>Restore document opens the draft and replaces its matching open tab.</span>{/if}{#if persistence.recovery.scriptDraft}<span>{scriptsEnabled ? 'Restore script edits replaces the code in Scripts without running it or updating saved library scripts.' : 'Enable scripts in Settings → Editor to restore these edits.'}</span>{/if}<span>Document files stay unchanged. Keep current work dismisses these options and keeps your current work.</span></div><div class="recovery-actions">{#if persistence.recovery.session}<button onclick={recoverSession}>Restore tabs</button>{:else if persistence.recovery.draft}<button onclick={recoverDraft}>Restore document</button>{/if}{#if persistence.recovery.scriptDraft && scriptsEnabled}<button onclick={recoverScript}>Restore script edits</button>{/if}<button onclick={dismissRecovery}>Keep current work</button></div></div>{/if}
   <div class="content-area" data-sidebar-position={ui.sidebarPosition}>
     {#if !ui.focusMode}
       <aside class="app-sidebar" aria-label="Application tools">
@@ -830,7 +840,7 @@
         {#if visiblePanel}<div class="sidebar-panel" class:sidebar-graph={panel === 'graph'}>
           {#if panel === 'stickies'}<StickyNotes createRequest={stickyCreateRequest} created={() => stickyCreateRequest = 0} close={() => { panel = null; stickyCreateRequest = 0; }} />{/if}
           {#if panel === 'explorer' && !ui.focusMode}<Explorer workspace={activeWorkspace} currentPath={active.path} openFile={(path) => void openPath(path)} configure={() => panel = 'workspace'} close={() => panel = null} />{/if}
-          {#if panel === 'scripts' && !ui.focusMode}<Scripts lockedReason={active.hemingway ? HEMINGWAY_MESSAGE : ''} snapshot={scriptSnapshot} apply={applyScript} close={() => panel = null} />{:else if panel === 'workspace' && !ui.focusMode}<Workspace {catalog} action={workspaceAction} changing={workspaceBusy} currentPath={active.path} openDocument={openPath} close={() => panel = null} />{:else if panel === 'history' && !ui.focusMode}<History lockedReason={active.hemingway ? HEMINGWAY_MESSAGE : ''} currentContent={active.content} documentKey={active.path ?? active.id} snapshot={historySnapshot} restore={restoreRevision} close={() => panel = null} />{:else if panel === 'properties' && !ui.focusMode && !canvasDocument && !active.hemingway}<Properties content={active.content} documentId={active.lifetime} {standalone} apply={applyProperties} editSource={() => { layout = 'source'; void tick().then(() => editor?.reveal(0)); }} close={() => panel = null} />{:else if panel === 'templates' && !ui.focusMode && !canvasDocument && !active.hemingway}<Templates snapshot={scriptSnapshot} apply={applyTemplate} close={()=>panel=null} />{:else if panel === 'export' && !ui.focusMode && !canvasDocument && !active.hemingway}<Export snapshot={()=>({name:active.name,text:active.content,documentId:active.lifetime,path:active.path,sourcePath:active.path??active.id,standalone})} {theme} loadEmbed={loadEmbedded} close={()=>panel=null} />{:else if panel === 'table' && !ui.focusMode && !canvasDocument && !active.hemingway}<SmartTable content={active.content} documentId={active.lifetime} cursor={active.selection?.head ?? 0} {standalone} apply={applyTable} close={()=>panel=null} />{:else if panel === 'graph' && !ui.focusMode}{#key catalog.activeId}<Graph currentPath={active.path} open={(path)=>void openPath(path)} close={()=>panel=null} />{/key}{:else if panel === 'git' && !ui.focusMode}{#key catalog.activeId}<Git close={() => panel = null} />{/key}{/if}
+          {#if panel === 'scripts' && scriptsEnabled && !ui.focusMode}<Scripts lockedReason={active.hemingway ? HEMINGWAY_MESSAGE : ''} snapshot={scriptSnapshot} apply={applyScript} close={() => panel = null} />{:else if panel === 'workspace' && !ui.focusMode}<Workspace {catalog} action={workspaceAction} changing={workspaceBusy} currentPath={active.path} openDocument={openPath} close={() => panel = null} />{:else if panel === 'history' && !ui.focusMode}<History lockedReason={active.hemingway ? HEMINGWAY_MESSAGE : ''} currentContent={active.content} documentKey={active.path ?? active.id} snapshot={historySnapshot} restore={restoreRevision} close={() => panel = null} />{:else if panel === 'properties' && !ui.focusMode && !canvasDocument && !active.hemingway}<Properties content={active.content} documentId={active.lifetime} {standalone} apply={applyProperties} editSource={() => { layout = 'source'; void tick().then(() => editor?.reveal(0)); }} close={() => panel = null} />{:else if panel === 'templates' && !ui.focusMode && !canvasDocument && !active.hemingway}<Templates snapshot={scriptSnapshot} apply={applyTemplate} close={()=>panel=null} />{:else if panel === 'export' && !ui.focusMode && !canvasDocument && !active.hemingway}<Export snapshot={()=>({name:active.name,text:active.content,documentId:active.lifetime,path:active.path,sourcePath:active.path??active.id,standalone})} {theme} loadEmbed={loadEmbedded} close={()=>panel=null} />{:else if panel === 'table' && !ui.focusMode && !canvasDocument && !active.hemingway}<SmartTable content={active.content} documentId={active.lifetime} cursor={active.selection?.head ?? 0} {standalone} apply={applyTable} close={()=>panel=null} />{:else if panel === 'graph' && !ui.focusMode}{#key catalog.activeId}<Graph currentPath={active.path} open={(path)=>void openPath(path)} close={()=>panel=null} />{/key}{:else if panel === 'git' && !ui.focusMode}{#key catalog.activeId}<Git close={() => panel = null} />{/key}{/if}
         </div>{/if}
       </aside>
     {/if}

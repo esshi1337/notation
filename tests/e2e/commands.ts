@@ -9,6 +9,17 @@ export async function openSettings(page: Page) {
   await expect(page.getByRole('dialog', { name: 'Settings', exact: true })).toBeVisible();
 }
 
+/** Opt in to Scripts through Settings; the preference is off by default. */
+export async function enableScripts(page: Page) {
+  await openSettings(page);
+  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await settings.getByRole('tab', { name: 'Editor', exact: true }).click();
+  const toggle = settings.getByRole('checkbox', { name: 'Enable scripts', exact: true });
+  if (!(await toggle.isChecked())) await toggle.check();
+  await settings.getByRole('button', { name: 'Close settings' }).click();
+  await expect(settings).toHaveCount(0);
+}
+
 /** Run a visible application command through the searchable palette. */
 export async function runCommand(page: Page, label: string) {
   const palette = commandPalette(page);

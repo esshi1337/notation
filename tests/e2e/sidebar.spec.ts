@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { openSettings, runCommand, setSetting, expectSetting } from './commands';
+import { enableScripts, openSettings, runCommand, setSetting, expectSetting } from './commands';
 
 const sidebar = (page: Page) => page.getByRole('navigation', { name: 'App sidebar' });
 const source = (page: Page) => page.getByRole('textbox', { name: 'Document source' });
@@ -59,6 +59,7 @@ test('sidebar moves the active tool with it, preserves edits and undo, and persi
 
 test('sidebar supports keyboard navigation, panel toggling and Focus mode', async ({ page }) => {
   await page.goto('/');
+  await enableScripts(page);
   const explorer = sidebar(page).getByRole('button', { name: 'Explorer panel', exact: true });
   const workspace = sidebar(page).getByRole('button', { name: 'Workspace panel', exact: true });
   await explorer.focus(); await page.keyboard.press('ArrowDown');

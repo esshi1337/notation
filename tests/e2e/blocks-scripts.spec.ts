@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
-import { blurEditor, runCommand } from './commands';
+import { blurEditor, enableScripts, runCommand } from './commands';
 
 const source = (page: Page) => page.getByRole('textbox', { name: 'Document source' });
 const preview = (page: Page) => page.getByRole('region', { name: 'Document preview' });
@@ -21,6 +21,7 @@ async function action(page: Page, name: string) {
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await expect(source(page)).toBeVisible();
+  await enableScripts(page);
 });
 
 test('slash commands insert Markdown and undo as one edit', async ({ page }) => {

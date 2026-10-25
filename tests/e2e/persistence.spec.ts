@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { runCommand, expectSetting } from './commands';
+import { runCommand, expectSetting, enableScripts } from './commands';
 
 const source = (page: Page) => page.getByRole('textbox', { name: 'Document source' });
 const scripts = (page: Page) => page.getByRole('dialog', { name: 'Scripts', exact: true });
@@ -7,6 +7,7 @@ const scripts = (page: Page) => page.getByRole('dialog', { name: 'Scripts', exac
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await expect(source(page)).toBeVisible();
+  await enableScripts(page);
 });
 
 test('saves, selects, and deletes named scripts without running them', async ({ page }) => {
@@ -64,6 +65,7 @@ test('keeps legacy preferences, document recovery, and the existing script', asy
   await expect(settings.getByRole('spinbutton', { name: 'Font size' })).toHaveValue('17');
   await expect(settings.getByRole('checkbox', { name: 'Word wrap' })).not.toBeChecked();
   await page.keyboard.press('Escape');
+  await enableScripts(page);
   await runCommand(page, 'Scripts');
   await expect(scripts(page).getByRole('textbox', { name: 'Script name' })).toHaveValue('Legacy script');
   await expect(scripts(page).getByRole('textbox', { name: 'Script code' })).toHaveValue('return "legacy";');
@@ -117,6 +119,7 @@ test('restores script edits without running them or changing the saved library',
     }));
   });
   await page.reload();
+  await enableScripts(page);
   const banner = page.locator('.recovery-banner');
   await expect(banner).toContainText('Work available to restore');
   await expect(banner.getByRole('button', { name: 'Restore tabs' })).toHaveCount(0);
@@ -155,6 +158,7 @@ test('keeps current document and script work when the offer is dismissed, then r
   });
   await page.reload();
   await expect(source(page)).toHaveText('# Current work');
+  await enableScripts(page);
 
   const banner = page.locator('.recovery-banner');
   await expect(banner).toContainText('Work available to restore');
