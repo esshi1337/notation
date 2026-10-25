@@ -152,7 +152,7 @@
   let diskTarget = $derived(documents.find(tab => tab.id === comparingDisk));
   let renameId = $state<string | null>(null);
   let renameTarget = $derived(documents.find((tab) => tab.id === renameId));
-  let status = $state(initial.recovered ? 'Recovered your last session' : 'Ready');
+  let status = $state(initial.recovered ? 'Restored your previous work' : 'Ready');
   let error = $state('');
   let busy = $state(false);
   const launchRequests: LaunchRequest[] = [], launchOrder: string[] = [];
@@ -608,20 +608,21 @@
     if (old) documents = documents.map((tab) => tab.id === old.id ? recoveredTab : tab);
     else documents.push(recoveredTab);
     selectTab(recoveredTab.id);
-    status = 'Recovered cached draft'; await tick(); await flushPersistence();
+    status = 'Document restored from backup'; await tick(); await flushPersistence();
   }
   async function recoverSession() {
     const cached = persistence.recovery?.session;
     if (!cached) return;
     for (const tab of documents) if (!await canDiscard(tab)) return;
     const state = restoreTabs(cached, null, sample);
-    documents = state.tabs; workspaceViews = restoreWorkspaceViews(cached?.workspaceViews, state.tabs); visibleIds = state.tabs.map(tab => tab.id); activeId = state.activeTabId; status = 'Recovered cached tabs';
+    documents = state.tabs; workspaceViews = restoreWorkspaceViews(cached?.workspaceViews, state.tabs); visibleIds = state.tabs.map(tab => tab.id); activeId = state.activeTabId; status = 'Tabs restored from backup';
     await tick(); await flushPersistence();
   }
   async function recoverScript() {
     const cached = persistence.recovery?.scriptDraft;
     if (!cached) return;
     persistMetadata({ scriptDraft: cached, settings: { activeScriptId: cached.id || null } });
+    status = 'Script edits restored from backup';
     panel = null; await tick(); panel = 'scripts'; await flushPersistence();
   }
   async function runCommand(id: CommandId) {
@@ -821,7 +822,7 @@
   </header>
   {#if error}<div class="app-error" role="alert">{error}<button aria-label="Dismiss error" onclick={() => error = ''}>×</button></div>{/if}
   {#if persistence.state === 'error'}<div class="app-error" role="alert">{persistence.error}<button onclick={() => void retryPersistence()}>Retry saving app state</button></div>{/if}
-  {#if persistence.recovery?.draft || persistence.recovery?.scriptDraft || persistence.recovery?.session}<div class="recovery-banner" role="status"><span>A cached draft from an incomplete save is available.</span>{#if persistence.recovery.session}<button onclick={recoverSession}>Recover cached tabs</button>{:else if persistence.recovery.draft}<button onclick={recoverDraft}>Recover cached draft</button>{/if}{#if persistence.recovery.scriptDraft}<button onclick={recoverScript}>Recover cached script</button>{/if}<button onclick={dismissRecovery}>Dismiss cached recovery</button></div>{/if}
+  {#if persistence.recovery?.draft || persistence.recovery?.scriptDraft || persistence.recovery?.session}<div class="recovery-banner" role="status"><div class="recovery-copy"><strong>Work available to restore</strong>{#if persistence.recovery.session}<span>Restore tabs replaces your current open tabs; unsaved tabs are confirmed first.</span>{:else if persistence.recovery.draft}<span>Restore document opens the draft and replaces its matching open tab.</span>{/if}{#if persistence.recovery.scriptDraft}<span>Restore script edits replaces the code in Scripts without running it or updating saved library scripts.</span>{/if}<span>Document files stay unchanged. Keep current work dismisses these options and keeps your current work.</span></div><div class="recovery-actions">{#if persistence.recovery.session}<button onclick={recoverSession}>Restore tabs</button>{:else if persistence.recovery.draft}<button onclick={recoverDraft}>Restore document</button>{/if}{#if persistence.recovery.scriptDraft}<button onclick={recoverScript}>Restore script edits</button>{/if}<button onclick={dismissRecovery}>Keep current work</button></div></div>{/if}
   <div class="content-area" data-sidebar-position={ui.sidebarPosition}>
     {#if !ui.focusMode}
       <aside class="app-sidebar" aria-label="Application tools">
@@ -844,7 +845,7 @@
     </div>
 
   </div>
-  {#if ui.showStatusBar && !ui.focusMode}<footer class="statusbar"><span class="status-message" role="status">{busy ? 'Working…' : status}</span>{#if !canvasVisible}{#if !canvasDocument}<button class="document-language" aria-label="Change document language" title="Document language · automatic by file extension" onclick={() => languageTarget = activeId}>{languageOptions.find(item => item.value === activeLanguage)?.label ?? activeLanguage}{active.language ? ' · override' : ''}</button>{#if intelligenceEnabled && codeDocument}<span class="intelligence-status" role="status" title={intelligenceStates[activeId]?.message}>{intelligenceStates[activeId]?.state === 'error' ? 'Tools unavailable' : intelligenceStates[activeId]?.message ?? ''}</span>{/if}{/if}<span class="status-detail">{lineCount} {lineCount === 1 ? 'line' : 'lines'}<span class="status-divider">·</span>{wordCount} {wordCount === 1 ? 'word' : 'words'}</span>{/if}{#if ui.performanceMode}<span class="status-detail">Performance mode</span>{/if}<span class="save-state" data-state={saveState}>{#if saveState === 'saved'}<Icon name="check" size={12} {theme} />{/if}{saveState === 'error' ? dirty ? 'Unsaved changes' : 'App state not saved' : dirty ? 'Unsaved changes' : 'Saved'}</span>{#if nativeStore}<span class="database-state" data-state={persistence.state} hidden={persistence.state !== 'saving' && persistence.state !== 'error'} role="status">{persistence.state === 'saving' ? 'Saving app state…' : persistence.state === 'error' ? 'Recovery cache active' : ''}</span>{/if}{#if !desktop}<span class="browser-mode">Browser mode</span>{/if}</footer>{/if}
+  {#if ui.showStatusBar && !ui.focusMode}<footer class="statusbar"><span class="status-message" role="status">{busy ? 'Working…' : status}</span>{#if !canvasVisible}{#if !canvasDocument}<button class="document-language" aria-label="Change document language" title="Document language · automatic by file extension" onclick={() => languageTarget = activeId}>{languageOptions.find(item => item.value === activeLanguage)?.label ?? activeLanguage}{active.language ? ' · override' : ''}</button>{#if intelligenceEnabled && codeDocument}<span class="intelligence-status" role="status" title={intelligenceStates[activeId]?.message}>{intelligenceStates[activeId]?.state === 'error' ? 'Tools unavailable' : intelligenceStates[activeId]?.message ?? ''}</span>{/if}{/if}<span class="status-detail">{lineCount} {lineCount === 1 ? 'line' : 'lines'}<span class="status-divider">·</span>{wordCount} {wordCount === 1 ? 'word' : 'words'}</span>{/if}{#if ui.performanceMode}<span class="status-detail">Performance mode</span>{/if}<span class="save-state" data-state={saveState}>{#if saveState === 'saved'}<Icon name="check" size={12} {theme} />{/if}{saveState === 'error' ? dirty ? 'Unsaved changes' : 'App state not saved' : dirty ? 'Unsaved changes' : 'Saved'}</span>{#if nativeStore}<span class="database-state" data-state={persistence.state} hidden={persistence.state !== 'saving' && persistence.state !== 'error'} role="status">{persistence.state === 'saving' ? 'Saving app state…' : persistence.state === 'error' ? 'Changes not saved' : ''}</span>{/if}{#if !desktop}<span class="browser-mode">Browser mode</span>{/if}</footer>{/if}
   {#if fileNavigator}<FileNavigator mode={fileNavigator} files={[...new Set([...visibleDocuments.map(tab=>tab.path ?? tab.id), ...(activeWorkspace?.files ?? [])])]} label={(path)=>documents.find(tab=>tab.path===path || tab.id===path)?.name ?? path.split('/').pop() ?? path} read={readCodeFile} open={async (path,line) => { const tab=documents.find(tab=>tab.id===path || tab.path===path); if(tab){selectTab(tab.id); await tick(); if(line)editors[tab.id]?.revealLine(line);}else await openPath(path,line); }} close={()=>fileNavigator=null} />{/if}
   {#if symbolTarget}{@const target=editors[symbolTarget]}<RenameDocument name={target?.symbolName() ?? ''} label="Rename symbol" fieldLabel="Symbol name" rename={(name)=>{void target?.renameSymbol(name)?.then(count=>{status=`Renamed symbol in ${count} files · save each changed file to write to disk`;}).catch(cause=>error=String(cause));}} close={()=>symbolTarget=null} />{/if}
   {#if diskTarget?.path}{@const target=diskTarget}<DiskConflict path={target.path!} content={target.content} read={readDiskFile} reload={(content)=>{if(target.hemingway){error=HEMINGWAY_MESSAGE;return;}target.content=content;target.savedContent=content;target.updatedAt=Date.now();delete diskConflicts[target.id];comparingDisk=null;}} close={()=>comparingDisk=null} />{/if}

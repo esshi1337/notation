@@ -281,11 +281,11 @@ window.addEventListener('error', event => {
                            "'refusing to close a non-test window'); hl.dispatch(hl.dsp.window.close())")
                 dispatched = subprocess.run(["hyprctl", "eval", command], capture_output=True, text=True)
                 smoke.require(dispatched.returncode == 0, f"Discard-branch Super+Q failed: {dispatched.stderr.strip()}")
-                smoke.wait_for(client, "Array.from(document.querySelectorAll('dialog')).some(d => d.getAttribute('aria-label') === 'Unsaved recovery' && d.open)",
+                smoke.wait_for(client, "Array.from(document.querySelectorAll('dialog')).some(d => d.getAttribute('aria-label') === 'Changes not saved' && d.open)",
                                "discard-on-close dialog", timeout=20)
-                close_dialog = client.find("dialog[aria-label='Unsaved recovery']")
+                close_dialog = client.find("dialog[aria-label='Changes not saved']")
                 try:
-                    client.element_command(smoke.button(client, "Discard and close"), "/click")
+                    client.element_command(smoke.button(client, "Close anyway"), "/click")
                 except smoke.WebDriverError as error:
                     # The successful button action destroys this native window
                     # before WebKitWebDriver can answer the click request.

@@ -105,3 +105,109 @@ test('recovery-cache failures are visible while editing remains usable', async (
   await source(page).fill('# Still editable');
   await expect(source(page)).toHaveText('# Still editable');
 });
+
+test('restores script edits without running them or changing the saved library', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('notation.script-library', JSON.stringify([
+      { id: 'saved-script', name: 'Saved transform', code: 'return "saved";', cwd: null, updatedAt: Date.now() },
+    ]));
+    localStorage.setItem('notation.pending-recovery', JSON.stringify({
+      failedAt: Date.now(),
+      scriptDraft: { name: 'Recovered transform', code: 'throw new Error("recovered script must not run");', cwd: null, updatedAt: Date.now() },
+    }));
+  });
+  await page.reload();
+  const banner = page.locator('.recovery-banner');
+  await expect(banner).toContainText('Work available to restore');
+  await expect(banner.getByRole('button', { name: 'Restore tabs' })).toHaveCount(0);
+  await expect(banner.getByRole('button', { name: 'Restore document' })).toHaveCount(0);
+  await banner.getByRole('button', { name: 'Restore script edits' }).click();
+
+  const panel = scripts(page);
+  await expect(panel.getByRole('textbox', { name: 'Script code' })).toHaveValue('throw new Error("recovered script must not run");');
+  await expect(panel.getByRole('combobox', { name: 'Saved script' })).toHaveValue('');
+  await expect(panel.getByRole('combobox', { name: 'Saved script' }).locator('option').filter({ hasText: /^Saved transform$/ })).toHaveCount(1);
+  await expect(panel.getByRole('combobox', { name: 'Saved script' }).locator('option').filter({ hasText: /^Recovered transform$/ })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Apply to document' })).toBeDisabled();
+  await expect(panel.locator('.script-error')).toHaveCount(0);
+  await expect(page.locator('.status-message')).toContainText('Script edits restored from backup');
+  await expect(source(page)).toContainText('Welcome to Notation');
+});
+
+test('keeps current document and script work when the offer is dismissed, then restores a document', async ({ page }) => {
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem('recovery-test-seeded')) return;
+    sessionStorage.setItem('recovery-test-seeded', '1');
+    const updatedAt = Date.now();
+    localStorage.setItem('notation.session', JSON.stringify({
+      activeTabId: 'current-tab', updatedAt,
+      tabs: [{ id: 'current-tab', name: 'current.md', path: null, content: '# Current work', savedContent: '# Current work', savedName: 'current.md', updatedAt }],
+    }));
+    localStorage.setItem('notation.scripts', JSON.stringify({ name: 'Current script draft', code: 'return "current";', cwd: null }));
+    localStorage.setItem('notation.script-library', JSON.stringify([
+      { id: 'saved-script', name: 'Saved transform', code: 'return "saved";', cwd: null, updatedAt },
+    ]));
+    localStorage.setItem('notation.pending-recovery', JSON.stringify({
+      failedAt: updatedAt,
+      draft: { id: 'offered-document', name: 'offered.md', path: null, content: '# Offered document', savedContent: '# Offered document', savedName: 'offered.md', updatedAt },
+      scriptDraft: { name: 'Offered script', code: 'return "offered";', cwd: null, updatedAt },
+    }));
+  });
+  await page.reload();
+  await expect(source(page)).toHaveText('# Current work');
+
+  const banner = page.locator('.recovery-banner');
+  await expect(banner).toContainText('Work available to restore');
+  await expect(banner.getByRole('button', { name: 'Restore document' })).toBeVisible();
+  await expect(banner.getByRole('button', { name: 'Restore script edits' })).toBeVisible();
+  await expect(banner.getByRole('button', { name: 'Restore tabs' })).toHaveCount(0);
+  await banner.getByRole('button', { name: 'Keep current work' }).click();
+  await expect(banner).toHaveCount(0);
+  await expect(source(page)).toHaveText('# Current work');
+
+  await runCommand(page, 'Scripts');
+  const panel = scripts(page);
+  await expect(panel.getByRole('textbox', { name: 'Script name' })).toHaveValue('Current script draft');
+  await expect(panel.getByRole('textbox', { name: 'Script code' })).toHaveValue('return "current";');
+  await panel.getByRole('button', { name: 'Close scripts' }).click();
+
+  // The guarded init script keeps current work; offer a different document for restore.
+  await page.evaluate(() => {
+    const updatedAt = Date.now();
+    localStorage.setItem('notation.pending-recovery', JSON.stringify({
+      failedAt: updatedAt,
+      draft: { id: 'second-offer', name: 'second.md', path: null, content: '# Restored document', savedContent: '# Restored document', savedName: 'second.md', updatedAt },
+    }));
+  });
+  await page.reload();
+  await expect(source(page)).toHaveText('# Current work');
+  const nextBanner = page.locator('.recovery-banner');
+  await expect(nextBanner.getByRole('button', { name: 'Restore document' })).toBeVisible();
+  await nextBanner.getByRole('button', { name: 'Restore document' }).click();
+  await expect(source(page)).toHaveText('# Restored document');
+  await expect(page.locator('.status-message')).toContainText('Document restored from backup');
+  await expect(nextBanner).toHaveCount(0);
+});
+
+test('restores tabs from the recovery offer', async ({ page }) => {
+  await page.addInitScript(() => {
+    const updatedAt = Date.now();
+    localStorage.setItem('notation.pending-recovery', JSON.stringify({
+      failedAt: updatedAt,
+      session: {
+        activeTabId: 'session-tab', updatedAt,
+        tabs: [{ id: 'session-tab', name: 'session-backup.md', path: null, content: '# Session backup', savedContent: '# Session backup', savedName: 'session-backup.md', updatedAt }],
+      },
+    }));
+  });
+  await page.reload();
+  const banner = page.locator('.recovery-banner');
+  await expect(banner).toContainText('Restore tabs replaces your current open tabs');
+  await expect(banner.getByRole('button', { name: 'Restore document' })).toHaveCount(0);
+  await expect(banner.getByRole('button', { name: 'Restore script edits' })).toHaveCount(0);
+  await banner.getByRole('button', { name: 'Restore tabs' }).click();
+  await expect(page.getByRole('tab', { name: 'session-backup.md', exact: true })).toBeVisible();
+  await expect(source(page)).toHaveText('# Session backup');
+  await expect(page.locator('.status-message')).toContainText('Tabs restored from backup');
+  await expect(banner).toHaveCount(0);
+});
