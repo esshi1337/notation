@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 
-const server = await createServer({ cacheDir: 'node_modules/.vite-preferences-shortcuts', optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, hmr: false }, logLevel: 'error' });
+const server = await createServer({ cacheDir: 'node_modules/.vite/preferences-shortcuts', optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, hmr: false }, logLevel: 'error' });
 let passed = 0;
 function check(name, run) { run(); passed++; console.log('✓ ' + name); }
 try {
@@ -37,6 +37,35 @@ try {
     assert.equal(value.readingWidth, 1200);
     assert.equal(value.sidebarWidth, 180);
     assert.equal(value.showStatusBar, true);
+  });
+  check('theme presets accept only the built-in catalog and keep existing defaults', () => {
+    assert.equal(preferences.DEFAULT_UI_PREFERENCES.darkPreset, 'midnight');
+    assert.equal(preferences.DEFAULT_UI_PREFERENCES.lightPreset, 'default');
+    for (const darkPreset of preferences.DARK_PRESETS) assert.equal(preferences.readUIPreferences({ darkPreset }).darkPreset, darkPreset);
+    for (const lightPreset of preferences.LIGHT_PRESETS) assert.equal(preferences.readUIPreferences({ lightPreset }).lightPreset, lightPreset);
+    for (const darkPreset of [undefined, null, '', 'Amoled', 'dawn', 'amoled;display:none', 1, {}]) {
+      assert.equal(preferences.readUIPreferences({ darkPreset }).darkPreset, 'midnight', String(darkPreset));
+    }
+    for (const lightPreset of [undefined, null, '', 'Paper', 'parchment', 'default;display:none', 1, {}]) {
+      assert.equal(preferences.readUIPreferences({ lightPreset }).lightPreset, 'default', String(lightPreset));
+    }
+  });
+  check('theme presets serialize without a settings version bump or losing old preferences', () => {
+    const custom = { darkPreset: 'forest', lightPreset: 'paper', accentColor: '#AABBCC', editorFont: 'sans', tabSize: 3, lineHeight: 2 };
+    const restored = preferences.readUIPreferences(JSON.parse(JSON.stringify(custom)));
+    assert.equal(restored.darkPreset, 'forest');
+    assert.equal(restored.lightPreset, 'paper');
+    assert.equal(restored.accentColor, '#aabbcc');
+    assert.equal(restored.editorFont, 'sans');
+    assert.equal(restored.tabSize, 3);
+    assert.equal(restored.lineHeight, 2);
+    const legacy = preferences.migrateSettings({ darkPreset: 'charcoal' });
+    assert.equal(legacy.uiSettingsVersion, preferences.UI_SETTINGS_VERSION);
+    assert.equal(preferences.UI_SETTINGS_VERSION, 2);
+    const read = preferences.readUIPreferences(legacy);
+    assert.equal(read.darkPreset, 'charcoal');
+    assert.equal(read.lightPreset, 'default');
+    assert.equal(preferences.migrateSettings({ darkPreset: 'dusk', lightPreset: 'paper' }).uiSettingsVersion, 2);
   });
   check('language intelligence requires a new explicit opt-in, including upgrades', () => {
     for (const settings of [{}, {languageIntelligence: true}, {languageIntelligence: false}, {languageIntelligenceEnabled: 'true'}, {languageIntelligenceEnabled: 1}]) assert.equal(preferences.readUIPreferences(settings).languageIntelligenceEnabled, false);

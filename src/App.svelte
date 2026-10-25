@@ -169,6 +169,7 @@
   $effect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.darkPreset = ui.darkPreset;
+    document.documentElement.dataset.lightPreset = ui.lightPreset;
     document.documentElement.dataset.density = ui.density;
     persistMetadata({ settings: { uiSettingsVersion: UI_SETTINGS_VERSION, theme, fontSize, wrap, layout, agentEditsEnabled, ...ui, shortcuts } });
   });
@@ -734,7 +735,7 @@
   });
 </script>
 
-<main class="app" use:smoothScrolling={ui.smoothScrolling && !ui.performanceMode} data-performance-mode={ui.performanceMode} class:focus-mode={ui.focusMode} data-density={ui.density} data-dark-preset={ui.darkPreset} inert={closingWindow} style={preferencesStyle(ui) + ';--editor-font-size:' + fontSize + 'px'}>
+<main class="app" use:smoothScrolling={ui.smoothScrolling && !ui.performanceMode} data-performance-mode={ui.performanceMode} class:focus-mode={ui.focusMode} data-density={ui.density} data-dark-preset={ui.darkPreset} data-light-preset={ui.lightPreset} inert={closingWindow} style={preferencesStyle(ui) + ';--editor-font-size:' + fontSize + 'px'}>
   <header class="workspace-bar">
     <CompactMenu label="App menu" text="N" items={appMenuItems} execute={(id) => void runCommand(id)} bind:open={appMenuOpen} {theme} />
     <div class="workspace-control">

@@ -21,7 +21,8 @@
   const densityOptions = [{ value: 'compact', label: 'Compact' }, { value: 'comfortable', label: 'Comfortable' }];
   const sidebarRailWidthOptions = [{ value: 'narrow', label: 'Narrow' }, { value: 'standard', label: 'Standard' }, { value: 'wide', label: 'Wide' }];
   const sidebarPositionOptions = [{ value: 'left', label: 'Left' }, { value: 'right', label: 'Right' }];
-  const darkPresetOptions = [{ value: 'midnight', label: 'Midnight' }, { value: 'charcoal', label: 'Charcoal' }];
+  const darkPresetOptions = [{ value: 'midnight', label: 'Midnight' }, { value: 'charcoal', label: 'Charcoal' }, { value: 'amoled', label: 'AMOLED' }, { value: 'forest', label: 'Forest' }, { value: 'dusk', label: 'Dusk' }];
+  const lightPresetOptions = [{ value: 'default', label: 'Default' }, { value: 'paper', label: 'Paper' }];
   const editorFontOptions = [{ value: 'mono', label: 'IBM Plex Mono' }, { value: 'sans', label: 'Source Sans 3' }];
   const layoutOptions = [{ value: 'source', label: 'Source' }, { value: 'split', label: 'Split' }, { value: 'preview', label: 'Preview' }, { value: 'live', label: 'Live Preview' }];
   const toolPanelWidthPresets = [
@@ -111,6 +112,7 @@
   function resetAppearance() {
     theme = 'dark';
     prefs.darkPreset = DEFAULT_UI_PREFERENCES.darkPreset;
+    prefs.lightPreset = DEFAULT_UI_PREFERENCES.lightPreset;
     prefs.density = DEFAULT_UI_PREFERENCES.density;
     prefs.sidebarWidth = DEFAULT_UI_PREFERENCES.sidebarWidth;
     prefs.sidebarRailWidth = DEFAULT_UI_PREFERENCES.sidebarRailWidth;
@@ -181,6 +183,8 @@
           <SegmentedControl label="Theme" options={themeOptions} value={theme} onchange={(value) => theme = value as 'dark' | 'light'} />
           {#if theme === 'dark'}
             <SelectControl label="Dark preset" options={darkPresetOptions} value={prefs.darkPreset} onchange={(value) => prefs.darkPreset = value as UIPreferences['darkPreset']} {theme} />
+          {:else}
+            <SelectControl label="Light preset" options={lightPresetOptions} value={prefs.lightPreset} onchange={(value) => prefs.lightPreset = value as UIPreferences['lightPreset']} {theme} />
           {/if}
           <SegmentedControl label="Density" options={densityOptions} value={prefs.density} onchange={(value) => prefs.density = value as UIPreferences['density']} />
           <SegmentedControl label="Sidebar position" options={sidebarPositionOptions} value={prefs.sidebarPosition} onchange={(value) => prefs.sidebarPosition = value as UIPreferences['sidebarPosition']} />
