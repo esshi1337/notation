@@ -75,6 +75,7 @@ a static review alone cannot establish leak freedom.
 git add <scoped-files>
 git commit -m 'Preserve a draft after a failed save'
 scripts/notation-task pr --title 'Preserve a draft after a failed save' --body-file /tmp/pr.md
+# For unresolved validation or design questions, add --draft and do not merge.
 # After Astra inspects successful checks and resolved independent findings:
 scripts/notation-task record-review --checks-file /tmp/checks.txt --review-file /tmp/review.txt
 # When merging is part of the authorized task:
@@ -133,8 +134,13 @@ is shared only as a read-only dependency tree, without exposing its parent
 checkout; use a normal npm install for a portable independent clone.
 
 Vite caches, reports, Serena cache/memories and Cargo target output are temporary.
+Playwright writes below the disposable report mount points, generates PDF assets
+in a disposable `public/pdfjs` mount, and uses two workers. If installed, the
+fixed runner selects `/usr/bin/chromium`; otherwise Playwright needs its browser.
 Launch preparation may create empty, gitignored mount-point directories in the
-checkout; test and worker output goes into disposable mounts. Secret discovery
+checkout and empty cache mount-point directories in the selected dependency
+tree (including a shared symlink target); test and worker output goes into
+disposable mounts. Secret discovery
 does not traverse dependency trees, Git internals or masked agent history.
 Report results before exit: scratch artifacts vanish. A suite that needs
 additional writes fails rather than silently widening the sandbox. Every approved test runs in a nested sandbox with source read-only and no

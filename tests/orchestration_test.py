@@ -180,6 +180,23 @@ class Workflow(unittest.TestCase):
             with patch.object(workflow, 'run', return_value=branch), self.assertRaises(ValueError):
                 workflow.branch_issue()
 
+    def test_draft_pr_keeps_scope_and_clean_checks_and_requests_draft(self):
+        with tempfile.TemporaryDirectory() as directory:
+            body = Path(directory) / 'pr.txt'
+            body.write_text('Closes #1\n\n## Validation\nChecks pending\n\n## Review\nDraft pending review\n')
+            for draft in (False, True):
+                args = ['notation-task', 'pr', '--title', 'Scoped change', '--body-file', str(body)]
+                if draft:
+                    args.append('--draft')
+                with patch.object(sys, 'argv', args), \
+                        patch.object(workflow, 'branch_issue', return_value=('issue/1-test', 1)) as scoped, \
+                        patch.object(workflow, 'clean') as clean, patch.object(workflow, 'run'), \
+                        patch.object(workflow, 'gh', return_value='created') as gh, patch('builtins.print'):
+                    workflow.main()
+                    scoped.assert_called_once()
+                    clean.assert_called_once()
+                    self.assertEqual('--draft' in gh.call_args.args, draft)
+
 
 class Entrypoints(unittest.TestCase):
     def test_worker_rejects_unbounded_or_override_arguments_before_network(self):

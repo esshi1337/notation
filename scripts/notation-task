@@ -72,6 +72,7 @@ def main():
     pr = commands.add_parser('pr')
     pr.add_argument('--title', required=True)
     pr.add_argument('--body-file', required=True)
+    pr.add_argument('--draft', action='store_true')
     evidence = commands.add_parser('record-review', help='Advisor attests checked reports for this exact HEAD')
     evidence.add_argument('--checks-file', required=True)
     evidence.add_argument('--review-file', required=True)
@@ -110,7 +111,8 @@ def main():
         clean()
         run('git', 'push', '-u', 'origin', branch, capture=False)
         print(gh('pr', 'create', '--base', 'main', '--head', branch, '--assignee', OWNER,
-                 '--title', args.title, '--body-file', args.body_file))
+                 '--title', args.title, '--body-file', args.body_file,
+                 *(['--draft'] if args.draft else [])))
     elif args.command == 'record-review':
         branch_issue()
         clean()

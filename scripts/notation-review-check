@@ -29,7 +29,12 @@ def main():
     if len(sys.argv) != 2:
         raise ValueError('Exactly one fixed suite argument is required')
     command = suite_command(sys.argv[1])
-    argv = build(ROOT, 'security', command)
+    env = {}
+    if sys.argv[1] == 'e2e':
+        env['NOTATION_TEST_WORKERS'] = '2'
+        if Path('/usr/bin/chromium').is_file():
+            env['PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH'] = '/usr/bin/chromium'
+    argv = build(ROOT, 'security', command, env)
     exec_sandbox(argv)
 
 

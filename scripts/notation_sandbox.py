@@ -66,7 +66,7 @@ def build(root, role, command, extra_env=None, writes=()):
         argv += ['--ro-bind', str(git), '/work/.git']
     for name in writes:
         argv += ['--bind', str(root / name), '/work/' + name]
-    for name in ('test-results', 'playwright-report', '.serena/cache', '.serena/memories'):
+    for name in ('test-results', 'playwright-report', 'public/pdfjs', '.serena/cache', '.serena/memories'):
         target = root / name
         if any(part.is_symlink() for part in [target, *target.parents]):
             raise RuntimeError('Scratch directories must not contain symlink components')
