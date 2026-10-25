@@ -154,6 +154,12 @@ try {
     assert.equal(restored.smoothScrolling, true);
     assert.equal(restored.languageIntelligenceEnabled, true);
   });
+  check('scripts are opt-in and accept only an explicit true', () => {
+    for (const scriptsEnabled of [undefined, null, 'true', 1, 'yes', false, {}]) assert.equal(preferences.readUIPreferences({scriptsEnabled}).scriptsEnabled, false, String(scriptsEnabled));
+    assert.equal(preferences.DEFAULT_UI_PREFERENCES.scriptsEnabled, false);
+    assert.equal(preferences.readUIPreferences({scriptsEnabled: true}).scriptsEnabled, true);
+    assert.equal(preferences.readUIPreferences(JSON.parse(JSON.stringify({scriptsEnabled: true, performanceMode: true}))).scriptsEnabled, true);
+  });
   check('custom appearance survives serialization without losing boolean settings', () => {
     const custom = { darkPreset: 'charcoal', density: 'comfortable', accentColor: '#AABBCC', editorFont: 'sans', lineHeight: 2, readingWidth: 700, sidebarWidth: 320, sidebarRailWidth: 'wide', sidebarPosition: 'right', showStatusBar: false, showLineNumbers: false, focusMode: true, smoothScrolling: false };
     assert.deepEqual(preferences.readUIPreferences(JSON.parse(JSON.stringify(custom))), { ...preferences.DEFAULT_UI_PREFERENCES, ...custom, accentColor: '#aabbcc' });

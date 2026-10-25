@@ -1,12 +1,13 @@
 import { expect, test } from '@playwright/test';
-import { openSettings } from './commands';
+import { enableScripts, openSettings } from './commands';
 
 for (const theme of ['dark', 'light']) {
   test(`${theme} navigation gives tools and app actions separate homes`, async ({ page }) => {
     await page.addInitScript(theme => localStorage.setItem('notation.settings', JSON.stringify({ theme })), theme);
     await page.goto('/');
+    await enableScripts(page);
     const sidebar = page.getByRole('navigation', { name: 'App sidebar' });
-    const tools = ['Explorer', 'Workspace', 'Note graph', 'Git', 'History', 'Properties', 'Templates', 'Table editor', 'Scripts'];
+    const tools = ['Explorer', 'Workspace', 'Note graph', 'Sticky notes', 'Git', 'History', 'Properties', 'Templates', 'Table editor', 'Scripts'];
     await expect(sidebar.getByRole('button')).toHaveCount(tools.length);
     for (const name of tools) await expect(sidebar.getByRole('button', { name: `${name} panel`, exact: true })).toHaveCount(1);
     await expect(page.getByRole('button', { name: 'Open settings', exact: true })).toHaveCount(0);

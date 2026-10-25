@@ -74,7 +74,8 @@ offered, the banner lists only the work it can restore: **Restore tabs**
 replaces the current open tabs (unsaved tabs are confirmed first), **Restore
 document** opens the offered draft, or **Restore script edits** replaces the code
 in Scripts without running it. Document files stay unchanged, and **Keep current
-work** dismisses the offer.
+work** dismisses the offer. If scripts are disabled, the banner asks you to
+enable scripts in **Settings → Editor** before the script restore button appears.
 
 Closing a tab with unsaved edits asks first. If the window closes while app state
 cannot be saved, **Changes not saved** appears: **Keep open** lets you retry

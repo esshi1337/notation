@@ -130,6 +130,7 @@
     prefs.readingWidth = DEFAULT_UI_PREFERENCES.readingWidth; prefs.showLineNumbers = DEFAULT_UI_PREFERENCES.showLineNumbers;
     prefs.smoothScrolling = DEFAULT_UI_PREFERENCES.smoothScrolling;
     prefs.performanceMode = DEFAULT_UI_PREFERENCES.performanceMode;
+    prefs.scriptsEnabled = DEFAULT_UI_PREFERENCES.scriptsEnabled;
   }
   function resetDrafts() { drafts = Object.fromEntries(COMMANDS.map((item) => [item.id, shortcutFor(item.id, shortcuts)])); }
   function commitShortcut(id: CommandId) {
@@ -205,6 +206,8 @@
         <div class="settings-intro"><strong>Shape your writing space.</strong><p>Typography and layout, with a live specimen.</p></div>
         <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.performanceMode} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Performance mode</label>
         <p class="settings-help">For low-memory PCs: source-only editing, with syntax parsing, language intelligence and smooth scrolling paused. Your usual settings and undo history are preserved. Turn off to restore rendered views.</p>
+        <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.scriptsEnabled} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Enable scripts</label>
+        <p class="settings-help">Off by default. Shows the Scripts panel and its command. Scripts can read and write files and run commands as your user; opening the panel never runs them.</p>
         <div class="settings-fields">
           <SelectControl label="Editor font" options={editorFontOptions} value={prefs.editorFont} onchange={(value) => prefs.editorFont = value as UIPreferences['editorFont']} {theme} />
           <NumberControl label="Font size" bind:value={fontSize} min={10} max={24} step={1} defaultValue={14} unit="px" />

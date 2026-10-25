@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
-import { runCommand } from './commands';
+import { enableScripts, runCommand } from './commands';
 
 const source = (page: Page) => page.getByRole('textbox', { name: 'Document source', exact: true });
 const documents = (page: Page) => page.getByRole('tablist', { name: 'Documents', exact: true });
@@ -127,6 +127,7 @@ test('Hemingway state is independent per tab and restored with the session', asy
 test('script output cannot replace a Hemingway document and shows feedback', async ({ page }) => {
   const original = '# Protected source\n\nKeep this paragraph.\n';
   await source(page).fill(original);
+  await enableScripts(page);
   await runCommand(page, 'Hemingway mode');
   await runCommand(page, 'Scripts');
   const scripts = page.getByRole('dialog', { name: 'Scripts', exact: true });
