@@ -50,7 +50,8 @@ def build(root, role, command, extra_env=None, writes=()):
             argv += ['--ro-bind', str(source.resolve()), '/etc/' + name]
     dependencies = root / 'node_modules'
     if dependencies.exists():
-        destination = str(dependencies.resolve()) if dependencies.is_symlink() else '/work/node_modules'
+        # Resolve the link as seen from /work, not from the host checkout path.
+        destination = os.path.normpath(os.path.join('/work', os.readlink(dependencies))) if dependencies.is_symlink() else '/work/node_modules'
         argv += ['--ro-bind', str(dependencies.resolve()), destination]
         for cache in ('.vite', '.vite-temp', '.cache'):
             target = dependencies / cache
@@ -71,11 +72,16 @@ def build(root, role, command, extra_env=None, writes=()):
             raise RuntimeError('Scratch directories must not contain symlink components')
         target.mkdir(parents=True, exist_ok=True)
         argv += ['--tmpfs', '/work/' + name]
-    for secret in root.glob('.env*'):
-        if secret.name != '.env.example':
-            if secret.is_symlink() or not secret.is_file():
-                raise RuntimeError('Secret paths must be regular files, not symlinks or directories')
-            argv += ['--ro-bind', '/dev/null', '/work/' + secret.name]
+    # Dependencies, Git internals and masked agent history are not source trees.
+    # Do not follow directory links out of the checkout while finding secrets.
+    for directory, children, files in os.walk(root, followlinks=False):
+        children[:] = [name for name in children if name not in ('.git', 'node_modules', '.agent-state')]
+        for name in children + files:
+            if name.startswith('.env') and name != '.env.example':
+                secret = Path(directory) / name
+                if secret.is_symlink() or not secret.is_file():
+                    raise RuntimeError('Secret paths must be regular files, not symlinks or directories')
+                argv += ['--ro-bind', '/dev/null', '/work/' + secret.relative_to(root).as_posix()]
     env = {'HOME': '/agent-home', 'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8',
            'TMPDIR': '/tmp', 'XDG_DATA_HOME': '/agent-home/data',
            'XDG_STATE_HOME': '/agent-home/state', 'XDG_CACHE_HOME': '/agent-home/cache',

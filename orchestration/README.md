@@ -125,7 +125,7 @@ Only provider maps from OpenCodex's injected configuration enter the sandbox;
 host plugins, agents, MCP servers and permission overrides are discarded.
 Workers cannot modify `.git`, `.codex`, `.github`, `.githooks`, `.serena`,
 AGENTS, orchestration docs, model config, dependencies or launcher scripts.
-Repository `.env*` regular files except `.env.example` are masked; secret
+Repository `.env*` regular files at every source-directory depth except `.env.example` are masked; secret
 symlinks and directories are rejected. Bubblewrap receives its arguments via
 an anonymous memory descriptor, keeping injected credentials out of argv. Never put
 credentials in tracked source, Git URLs or prompts. A symlinked node_modules
@@ -133,6 +133,9 @@ is shared only as a read-only dependency tree, without exposing its parent
 checkout; use a normal npm install for a portable independent clone.
 
 Vite caches, reports, Serena cache/memories and Cargo target output are temporary.
+Launch preparation may create empty, gitignored mount-point directories in the
+checkout; test and worker output goes into disposable mounts. Secret discovery
+does not traverse dependency trees, Git internals or masked agent history.
 Report results before exit: scratch artifacts vanish. A suite that needs
 additional writes fails rather than silently widening the sandbox. Every approved test runs in a nested sandbox with source read-only and no
 model or GitHub credentials, including tests requested by Astra. Local

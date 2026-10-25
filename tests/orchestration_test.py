@@ -97,6 +97,62 @@ for name in ('src/other', '.git/config', 'src/new'):
         with self.assertRaises(RuntimeError):
             build(self.root, 'deepseek', ['/usr/bin/true'])
 
+    def test_root_and_nested_env_secrets_are_unreadable_but_examples_remain(self):
+        for name in ('.env', 'src/.env.local'):
+            (self.root / name).write_text('secret-canary')
+        (self.root / 'src/.env.example').write_text('example')
+        result = self.sandbox('security', '''
+from pathlib import Path
+for name in ('.env', 'src/.env.local'):
+    try: assert Path('/work', name).read_bytes() == b''
+    except PermissionError: pass
+assert Path('/work/src/.env.example').read_text() == 'example'
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_nested_secret_symlinks_and_directories_are_rejected(self):
+        secret = self.root / 'src/.env.private'
+        secret.symlink_to(self.host / 'personal-secret')
+        with self.assertRaises(RuntimeError):
+            build(self.root, 'security', ['/usr/bin/true'])
+        secret.unlink()
+        secret.mkdir()
+        with self.assertRaises(RuntimeError):
+            build(self.root, 'security', ['/usr/bin/true'])
+
+    def test_relative_dependency_symlink_preserves_access_without_exposing_parent(self):
+        dependencies = self.host / 'shared/modules'
+        dependencies.mkdir(parents=True)
+        (dependencies / 'package.json').write_text('{}')
+        (self.host / 'shared/private').write_text('private-canary')
+        (self.root / 'node_modules').symlink_to('../shared/modules')
+        code = f'''
+from pathlib import Path
+assert Path('/work/node_modules/package.json').read_text() == '{{}}'
+assert not Path({str(self.host / 'shared/private')!r}).exists()
+try: Path('/work/node_modules/package.json').write_text('bad')
+except OSError: pass
+else: raise AssertionError('dependency is writable')
+'''
+        result = self.sandbox('security', code)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_memfd_execution_preserves_arguments_and_closes_argument_descriptor(self):
+        code = '''
+import os, sys
+from pathlib import Path
+assert sys.argv[1:] == ['space value', '--option']
+for fd in Path('/proc/self/fd').iterdir():
+    try: target = os.readlink(fd)
+    except FileNotFoundError: continue
+    assert 'notation-sandbox-args' not in target, 'argument descriptor inherited'
+'''
+        argv = build(self.root, 'security', ['/usr/bin/python3', '-c', code, 'space value', '--option'])
+        runner = 'import json,sys; sys.path.insert(0,sys.argv[1]); from notation_sandbox import exec_sandbox; exec_sandbox(json.load(sys.stdin))'
+        result = subprocess.run([sys.executable, '-c', runner, str(ROOT / 'scripts')],
+                                input=json.dumps(argv), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 class Workflow(unittest.TestCase):
     def test_scoping_accepts_cli_and_github_form_headings(self):

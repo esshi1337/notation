@@ -133,7 +133,7 @@ prerequisites (`webkit2gtk-4.1`, `gtk3` on Arch).
 ```sh
 npm ci                 # install pinned dependencies
 npm run dev            # Vite dev server at http://127.0.0.1:1420
-npm run check          # svelte-check + tsc over src/
+npm run check          # svelte-check (Svelte and TypeScript diagnostics)
 npm run desktop        # Tauri dev with hot reload
 npm run desktop:build  # release AppImage build
 npm run test:e2e       # Playwright suite
