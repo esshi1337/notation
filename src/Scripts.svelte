@@ -42,7 +42,7 @@
     void loadRuns();
   }
   function newScript() {
-    selectedId = ''; scriptName = 'Untitled script'; code = ''; cwd = ''; output = null; error = ''; canApply = false; message = 'New script draft';
+    selectedId = ''; scriptName = 'Untitled script'; code = ''; cwd = ''; output = null; error = ''; canApply = false; message = 'New script — not saved to library';
   }
   async function save() {
     if (saving) return;
@@ -105,7 +105,8 @@
   <div class="scripts-heading"><strong>Scripts</strong><button aria-label="Close scripts" onclick={close}>×</button></div>
   <p class="script-permission">Scripts can read/write files and run commands as your user.</p>
   {#if !desktop}<p class="script-browser-note">Browser mode runs document transforms. Local files and system commands require the desktop app.</p>{/if}
-  <label>Saved script<select aria-label="Saved script" bind:value={selectedId} onchange={selectScript}><option value="">Unsaved draft</option>{#each library as script}<option value={script.id}>{script.name}</option>{/each}</select></label>
+  <p class="panel-note">Edits here are separate from your saved library until you choose Save script.</p>
+  <label>Saved script<select aria-label="Saved script" bind:value={selectedId} onchange={selectScript}><option value="">Not saved to library</option>{#each library as script}<option value={script.id}>{script.name}</option>{/each}</select></label>
   <div class="panel-actions"><button onclick={newScript} disabled={running || saving}>New script</button><button onclick={save} disabled={saving}>Save script</button><button onclick={remove} disabled={!selectedId || saving}>Delete script</button></div>
   <label>Script name<input aria-label="Script name" bind:value={scriptName} /></label>
   <label>Working directory<input aria-label="Working directory" placeholder="Document folder or home" bind:value={cwd} spellcheck="false" /></label>

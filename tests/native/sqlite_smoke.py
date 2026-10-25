@@ -250,12 +250,12 @@ def run(app: Path) -> None:
             session = client.create_session(app)
             print(f"SQLite recovery restart session started: {session}", flush=True)
             smoke.wait_for(client, "document.querySelector('main.app')", "restarted native app UI")
-            smoke.wait_for(client, "document.querySelector('.recovery-banner')?.innerText.includes('cached draft')", "pending recovery banner after restart")
+            smoke.wait_for(client, "document.querySelector('.recovery-banner')?.innerText.includes('Work available to restore')", "pending recovery banner after restart")
             with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as connection:
                 preserved = connection.execute("SELECT json FROM drafts WHERE id=1").fetchone()
             smoke.require(preserved is not None and json.loads(preserved[0]).get("content") == rev_b,
                           "Existing database draft was replaced before the user recovered the newer local cache")
-            click(client, smoke.button(client, "Recover cached draft"))
+            click(client, smoke.button(client, "Restore document"))
             smoke.wait_for(client, "Array.from(document.querySelectorAll('.cm-content')).some(e => e.innerText.includes('Newer cached recovery'))", "cached recovery applied after restart")
             smoke.wait_for(client, "document.querySelector('.database-state')?.dataset.state === 'saved'", "recovered draft persisted")
             smoke.wait_for(client, "JSON.parse(localStorage.getItem('notation.pending-recovery') || 'null') === null", "pending recovery cache cleared after successful save")

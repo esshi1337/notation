@@ -120,7 +120,7 @@ The disclosure button changes only the view. **Edit callout** exposes its source
 
 ## Local scripting
 
-Open **Scripts** to run a JavaScript function body. Execution is explicit: opening a note or restoring a saved script never runs code automatically. The native app embeds QuickJS, so a separate Node.js installation is unnecessary.
+Open **Scripts** to run a JavaScript function body. Execution is explicit: opening a note, loading a saved script, or restoring script edits never runs code automatically. The native app embeds QuickJS, so a separate Node.js installation is unnecessary.
 
 ```js
 console.log(api.context.document.name);
@@ -139,7 +139,7 @@ console.log(result.stdout);
 
 Scripts run with your filesystem and command permissions. File/system effects happen immediately; editor undo only reverses edits applied inside Notation. Each run has a separate worker process, a 15-second total limit, bounded memory/output, and a **Stop script** control. Browser development mode supports document transforms and logs, and explicitly rejects filesystem/command APIs.
 
-**Save script** adds a named entry to your library. The current script buffer is recovered separately, so unfinished edits do not replace its saved version. Native run history retains the latest 200 runs, including output and errors.
+**Save script** adds a named entry to your library. A new script starts as **Not saved to library**, and edits stay separate from your saved library until you choose **Save script**. Restoring script edits replaces the current buffer without running it. Native run history retains the latest 200 runs, including output and errors.
 
 ## Workspace and local data
 
@@ -153,7 +153,7 @@ Your `.md` and `.mmd` files remain authoritative. SQLite holds preferences, reco
 
 **History** previews previous versions and shows a unified diff against the current draft or another revision. Choose the comparison and context size; additions and removals are marked with `+` and `-`. Restoring applies an undoable editor change; save explicitly to update the file. History retains up to 50 revisions per document, including saved versions and periodic draft snapshots. It is not a substitute for backups.
 
-The database is `state.sqlite3` in Tauri's application-data directory (`$XDG_DATA_HOME/local.notation.app/`, or `~/.local/share/local.notation.app/` on Linux). Existing webview preferences, drafts, and scripts migrate on first startup; the old recovery cache remains available. Failed database writes show an error, and a pending cached draft can be recovered explicitly. Back up the application-data directory with Notation closed, alongside your note folders.
+The database is `state.sqlite3` in Tauri's application-data directory (`$XDG_DATA_HOME/local.notation.app/`, or `~/.local/share/local.notation.app/` on Linux). Existing webview preferences, drafts, and scripts migrate on first startup; the old recovery cache remains available. Failed saves show **Changes not saved**. A restore banner offers only the available work: **Restore tabs**, **Restore document**, or **Restore script edits**; document files stay unchanged, and **Keep current work** dismisses the offer. Back up the application-data directory with Notation closed, alongside your note folders.
 
 On Linux, each canonical application-data profile has one ordinary GUI owner. A second launch asks the existing window to show, unminimize, and request focus, then exits only after that handoff is acknowledged; compositors may still refuse focus. Profiles under separate `XDG_DATA_HOME` values run independently. Crash recovery does not require deleting lock files, and `--mcp`, `--script-worker`, and `--engine-worker` processes bypass GUI ownership.
 

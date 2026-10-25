@@ -393,12 +393,12 @@ def run(app: Path) -> None:
                 })
 
             emit_close_request()
-            smoke.wait_for(client, "document.querySelector('dialog[aria-label=\\\"Unsaved recovery\\\"]')?.open === true",
+            smoke.wait_for(client, "document.querySelector('dialog[aria-label=\\\"Changes not saved\\\"]')?.open === true",
                            "close recovery decision dialog", timeout=20)
             # A second native close request while the first decision is pending
             # must remain prevented instead of tearing the editor down.
             emit_close_request()
-            smoke.wait_for(client, "document.querySelector('dialog[aria-label=\\\"Unsaved recovery\\\"]')?.open === true",
+            smoke.wait_for(client, "document.querySelector('dialog[aria-label=\\\"Changes not saved\\\"]')?.open === true",
                            "recovery dialog survives repeated close")
             close_error = mcp.call("edit_document", {"tabId": tab_id, "expectedContent": edited_again,
                                                       "content": "# MCP must wait until recovery is resolved\n"}, expect_error=True)
@@ -407,7 +407,7 @@ def run(app: Path) -> None:
             smoke.require(smoke.editor_text(client) == close_text,
                           "Repeated close or pending MCP edit changed the unsaved document")
             client.element_command(smoke.button(client, "Keep open"), "/click")
-            smoke.wait_for(client, "!document.querySelector('dialog[aria-label=\\\"Unsaved recovery\\\"]')",
+            smoke.wait_for(client, "!document.querySelector('dialog[aria-label=\\\"Changes not saved\\\"]')",
                            "keep-open decision")
             smoke.require(smoke.editor_text(client) == close_text,
                           "Keep open discarded the in-memory document")

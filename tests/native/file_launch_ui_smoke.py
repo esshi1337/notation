@@ -63,7 +63,7 @@ def run(app: Path, output: Path):
                 client.send_keys(smoke.active_editor(client), '!')
                 pending_text += '!'
                 client.execute("setTimeout(() => window.__TAURI_INTERNALS__.invoke('plugin:window|close',{label:'main'}),50);return true")
-                smoke.wait_for(client, "document.querySelector('main.app').hasAttribute('inert') && document.body.innerText.includes('App state could not be saved')", 'close recovery decision', timeout=15)
+                smoke.wait_for(client, "document.querySelector('main.app').hasAttribute('inert') && document.querySelector('dialog.close-recovery-dialog')?.open === true", 'close recovery decision', timeout=15)
                 client.screenshot(output / 'close-recovery.png')
                 during_close = root / 'opened after close.txt'; during_close.write_text('The next owner receives this request.\n')
                 secondary = subprocess.Popen([str(app), str(during_close)], env=child_env, stdout=log, stderr=log, start_new_session=True)

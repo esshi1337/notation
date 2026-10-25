@@ -69,10 +69,17 @@ change the block at the cursor.
 **Save** writes the document file. `Ctrl/Cmd+S` writes the current file on desktop
 or downloads it in a browser; `Ctrl/Cmd+Shift+S` is Save As on desktop. Notation
 also autosaves recovery state, but that draft is not the exported file: it does
-not update the `.md`, `.mmd`, or `.canvas` file until you save. A recovery banner
-can restore cached tabs, a draft, or a script.
+not update the `.md`, `.mmd`, or `.canvas` file until you save. When recovery is
+offered, the banner lists only the work it can restore: **Restore tabs**
+replaces the current open tabs (unsaved tabs are confirmed first), **Restore
+document** opens the offered draft, or **Restore script edits** replaces the code
+in Scripts without running it. Document files stay unchanged, and **Keep current
+work** dismisses the offer.
 
-Closing a tab with unsaved edits asks first. Tabs, selection, cursor positions,
+Closing a tab with unsaved edits asks first. If the window closes while app state
+cannot be saved, **Changes not saved** appears: **Keep open** lets you retry
+saving or save document files, while **Close anyway** may lose recent document
+edits, script edits, or settings. Tabs, selection, cursor positions,
 and layouts restore after restart; undo history does not. Desktop **History** keeps up to
 50 revisions and can compare or restore one as an undoable change, but it is not
 a backup.

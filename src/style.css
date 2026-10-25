@@ -627,8 +627,10 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .script-runs { font-size: 10px; color: var(--muted); }
 .script-runs summary { cursor: pointer; }
 .script-runs button { display: block; width: 100%; font-size: 10px; text-align: left; padding: 5px 3px; }
-.recovery-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 7px 16px; background: var(--bar); border-bottom: 1px solid var(--border); font-size: 11px; color: var(--muted); }
-.recovery-banner span { margin-right: auto; }
+.recovery-banner { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; padding: 7px 16px; background: var(--bar); border-bottom: 1px solid var(--border); font-size: 11px; color: var(--muted); }
+.recovery-copy { display: flex; flex: 1 1 360px; flex-direction: column; gap: 2px; min-width: 0; line-height: 1.55; }
+.recovery-copy strong { color: var(--text); }
+.recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .recovery-banner button { border: 1px solid var(--border); font-size: 10px; padding: 4px 7px; }
 
 @media (max-width: 760px) {
