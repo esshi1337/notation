@@ -18,6 +18,18 @@ test('card deletion removes only connected edges and standard anchors follow nod
   assert.deepEqual(canvasAnchor(node,'right'),{x:250,y:100}); assert.deepEqual(canvasAnchor(node,'top'),{x:130,y:20});
   assert.deepEqual(parseCanvas(newCanvas()),{nodes:[],edges:[]});
 });
+test('resize and direct connection mutations retain unknown document, card and edge fields', () => {
+  const next = mutateCanvas(original, (canvas) => {
+    canvas.nodes[0].width = 360; canvas.nodes[0].height = 220;
+    canvas.edges.push({ id:'edge2', fromNode:'a', toNode:'b', fromSide:'right', toSide:'left' });
+  });
+  const value = parseCanvas(next);
+  assert.deepEqual(value.metadata,{app:'other',unknown:[1,2]});
+  assert.deepEqual(value.nodes[0].extension,{future:true});
+  assert.equal(value.nodes[0].width,360); assert.equal(value.nodes[0].height,220);
+  assert.equal(value.edges[1].id,'edge2'); assert.equal(value.edges[0].future,'retained');
+  assert.equal(next.replaceAll('\r\n','').includes('\n'),false);
+});
 test('invalid, dangling, duplicate and oversized Canvas data rejects without repairing away content', () => {
   for (const mutate of [value=>value.nodes.push({...value.nodes[0]}),value=>value.nodes[0].x=Infinity,value=>value.edges[0].toNode='missing',value=>value.nodes[0].width=0,value=>value.nodes[0].type='unknown']) {
     const value = JSON.parse(original); mutate(value); assert.throws(()=>parseCanvas(JSON.stringify(value)));
