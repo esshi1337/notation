@@ -550,7 +550,7 @@ test('tab switch and content change during a drag discard the preview without co
   expect(data.nodes[0].y).toBe(start.y);
 });
 
-test('text/plain drops create a bounded text card while file drops are ignored', async ({ page }) => {
+test('text/plain drops create a bounded text card while file drops cancel browser defaults', async ({ page }) => {
   await runCommand(page, 'New canvas');
   const view = canvas(page);
   const board = view.getByRole('application', { name: 'Canvas board', exact: true });
@@ -568,11 +568,19 @@ test('text/plain drops create a bounded text card while file drops are ignored',
   expect(Math.abs(data.nodes[0].x)).toBeLessThanOrEqual(1_000_000);
   expect(Math.abs(data.nodes[0].y)).toBeLessThanOrEqual(1_000_000);
 
-  await board.evaluate((element) => {
+  const fileEvents = await board.evaluate((element) => {
     const transfer = new DataTransfer();
     transfer.items.add(new File(['not a text card'], 'ignored.txt', { type: 'text/plain' }));
-    element.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    const drop = new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer });
+    element.dispatchEvent(drop);
+    // OS dragover can advertise Files while its protected file list is empty.
+    Object.defineProperty(transfer, 'files', { value: [] });
+    const over = new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: transfer });
+    element.dispatchEvent(over);
+    return { drop: drop.defaultPrevented, over: over.defaultPrevented, effect: transfer.dropEffect };
   });
+  expect(fileEvents).toEqual({ drop: true, over: true, effect: 'none' });
+  await expect(view.getByRole('status')).toContainText('Use Add note card or Add media card');
   data = await canvasData(page);
   expect(data.nodes).toHaveLength(1);
 });

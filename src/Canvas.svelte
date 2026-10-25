@@ -61,7 +61,7 @@
       const next = mutateCanvas(source.text, mutate);
       if (!apply(next, source)) throw new Error('Canvas changed. Try the action again.');
       error = ''; message = 'Canvas updated.'; return { text: next, documentId: source.documentId };
-    } catch (cause) { error = cause instanceof Error ? cause.message : String(cause); return null; }
+    } catch (cause) { message = ''; error = cause instanceof Error ? cause.message : String(cause); return null; }
   }
   function matches(source: Snapshot) { return source.documentId === documentId && source.text === content; }
   function commitGeometry(id: string, resize: boolean, mutate: (value: CanvasDocument) => void, source: Snapshot = { text: content, documentId }) {
@@ -186,9 +186,17 @@
     if (!canvas.nodes.some((item) => item.id === connectSource)) { connectSource = ''; error = 'The source card was removed.'; return; }
     if (commit((value) => value.edges.push({ id: crypto.randomUUID(), fromNode: connectSource, toNode: node.id, fromSide: 'right', toSide: 'left' }))) { connectSource = ''; message = 'Connected ' + canvasNodeTitle(node) + '.'; }
   }
-  function dragover(event: DragEvent) { if (!event.dataTransfer || event.dataTransfer.files.length || ![...event.dataTransfer.types].includes('text/plain')) return; event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; }
+  function dragover(event: DragEvent) {
+    const transfer = event.dataTransfer;
+    if (!transfer) return;
+    if (transfer.files.length || [...transfer.types].includes('Files')) { event.preventDefault(); transfer.dropEffect = 'none'; return; }
+    if (![...transfer.types].includes('text/plain')) return;
+    event.preventDefault(); transfer.dropEffect = 'copy';
+  }
   function drop(event: DragEvent) {
-    if (!event.dataTransfer || event.dataTransfer.files.length || ![...event.dataTransfer.types].includes('text/plain')) return;
+    if (!event.dataTransfer) return;
+    if (event.dataTransfer.files.length || [...event.dataTransfer.types].includes('Files')) { event.preventDefault(); message = 'Use Add note card or Add media card to link a file.'; return; }
+    if (![...event.dataTransfer.types].includes('text/plain')) return;
     const text = event.dataTransfer.getData('text/plain');
     if (!text.trim()) return;
     event.preventDefault();
