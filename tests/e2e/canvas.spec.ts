@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { runCommand } from './commands';
 
@@ -17,6 +17,45 @@ async function exportCanvas(page: Page) {
   const path = await download.path();
   if (!path) throw new Error('Canvas export did not provide a file.');
   return readFile(path, 'utf8');
+}
+
+type CanvasJSON = {
+  nodes: { id: string; type: string; x: number; y: number; width: number; height: number; text?: string; file?: string; label?: string; extension?: unknown }[];
+  edges: { id: string; fromNode: string; toNode: string; label?: string }[];
+  [key: string]: unknown;
+};
+
+async function canvasData(page: Page) {
+  return JSON.parse(await exportCanvas(page)) as CanvasJSON;
+}
+
+async function addLabeledCard(view: ReturnType<typeof canvas>, label: string, text = 'New card') {
+  await addCanvasCard(view, 'Add text card');
+  const card = view.getByRole('article', { name: 'Canvas card: New card', exact: true });
+  await expect(card).toBeVisible();
+  await card.getByRole('button', { name: 'Edit card: New card', exact: true }).click();
+  const inspector = view.getByRole('complementary', { name: 'Canvas inspector', exact: true });
+  await inspector.getByRole('textbox', { name: 'Card label', exact: true }).fill(label);
+  await inspector.getByRole('textbox', { name: 'Card text', exact: true }).fill(text);
+  await inspector.getByRole('button', { name: 'Apply card', exact: true }).click();
+  await expect(view.getByRole('article', { name: 'Canvas card: ' + label, exact: true })).toBeVisible();
+}
+
+async function drag(page: Page, target: Locator, x: number, y: number) {
+  const box = await target.boundingBox();
+  if (!box) throw new Error('Drag target has no box.');
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + x, box.y + box.height / 2 + y, { steps: 8 });
+  await page.mouse.up();
+}
+
+async function startDrag(page: Page, target: Locator, x: number, y: number) {
+  const box = await target.boundingBox();
+  if (!box) throw new Error('Drag target has no box.');
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + x, box.y + box.height / 2 + y, { steps: 8 });
 }
 
 test.beforeEach(async ({ page }) => {
@@ -68,4 +107,472 @@ test('invalid canvas JSON is preserved and offers Source repair', async ({ page 
   await expect(canvas(page).getByRole('alert')).toContainText(/unique/i);
   await expect(canvas(page).getByRole('button', { name: 'Add card', exact: true })).toBeDisabled();
   expect(await exportCanvas(page)).toBe(invalid);
+});
+
+test('pointer drag moves cards at 100% and 120% with one-step undo and redo', async ({ page }) => {
+  await runCommand(page, 'New canvas');
+  const view = canvas(page);
+  const board = view.getByRole('application', { name: 'Canvas board', exact: true });
+  await addCanvasCard(view, 'Add text card');
+  await expect(view.getByRole('article', { name: 'Canvas card: New card', exact: true })).toBeVisible();
+  const start = (await canvasData(page)).nodes[0];
+  if (!start) throw new Error('Missing card.');
+
+  await drag(page, view.getByRole('button', { name: 'Move card: New card', exact: true }), 64, 48);
+  await expect(view.getByRole('status')).toContainText('Canvas updated');
+  let data = await canvasData(page);
+  expect(data.nodes[0].x).toBe(start.x + 64);
+  expect(data.nodes[0].y).toBe(start.y + 48);
+  const moved = data.nodes[0];
+
+  await board.focus();
+  await page.keyboard.press('ControlOrMeta+z');
+  data = await canvasData(page);
+  expect(data.nodes[0].x).toBe(start.x);
+  expect(data.nodes[0].y).toBe(start.y);
+
+  await board.focus();
+  await page.keyboard.press('ControlOrMeta+Shift+z');
+  data = await canvasData(page);
+  expect(data.nodes[0].x).toBe(moved.x);
+  expect(data.nodes[0].y).toBe(moved.y);
+
+  await view.getByRole('button', { name: 'Zoom in', exact: true }).click();
+  await expect(view.locator('.canvas-zoom')).toHaveText('120%');
+  await drag(page, view.getByRole('button', { name: 'Move card: New card', exact: true }), 60, 36);
+  data = await canvasData(page);
+  expect(data.nodes[0].x).toBe(moved.x + 50);
+  expect(data.nodes[0].y).toBe(moved.y + 30);
+});
+
+test('corner resize previews at 100% and 120%, clamps minimum sizes, and commits once', async ({ page }) => {
+  await runCommand(page, 'New canvas');
+  const view = canvas(page);
+  const board = view.getByRole('application', { name: 'Canvas board', exact: true });
+  await addCanvasCard(view, 'Add text card');
+  await expect(view.getByRole('article', { name: 'Canvas card: New card', exact: true })).toBeVisible();
+  const handle = view.getByRole('button', { name: 'Resize card: New card', exact: true });
+  const start = (await canvasData(page)).nodes[0];
+  expect(start.width).toBe(280);
+  expect(start.height).toBe(180);
+
+  await drag(page, handle, 40, 30);
+  await expect(view.getByRole('status')).toContainText('Canvas updated');
+  let data = await canvasData(page);
+  expect(data.nodes[0].width).toBe(320);
+  expect(data.nodes[0].height).toBe(210);
+
+  await board.focus();
+  await page.keyboard.press('ControlOrMeta+z');
+  data = await canvasData(page);
+  expect(data.nodes[0].width).toBe(280);
+  expect(data.nodes[0].height).toBe(180);
+
+  await board.focus();
+  await page.keyboard.press('ControlOrMeta+Shift+z');
+  data = await canvasData(page);
+  expect(data.nodes[0].width).toBe(320);
+  expect(data.nodes[0].height).toBe(210);
+
+  await view.getByRole('button', { name: 'Zoom in', exact: true }).click();
+  await expect(view.locator('.canvas-zoom')).toHaveText('120%');
+  await drag(page, handle, 60, 36);
+  data = await canvasData(page);
+  expect(data.nodes[0].width).toBe(370);
+  expect(data.nodes[0].height).toBe(240);
+
+  const box = await handle.boundingBox();
+  if (!box) throw new Error('Resize handle has no box.');
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(5, 5, { steps: 8 });
+  await page.mouse.up();
+  data = await canvasData(page);
+  expect(data.nodes[0].width).toBe(120);
+  expect(data.nodes[0].height).toBe(80);
+
+  await board.focus();
+  await page.keyboard.press('ControlOrMeta+z');
+  data = await canvasData(page);
+  expect(data.nodes[0].width).toBe(370);
+  expect(data.nodes[0].height).toBe(240);
+});
+
+for (const gesture of ['move', 'resize', 'ArrowRight', 'Alt+ArrowDown']) {
+  test(`${gesture} preserves inspector drafts, applies new geometry, and keeps edit undo separate`, async ({ page }) => {
+    await runCommand(page, 'New canvas');
+    const view = canvas(page);
+    const board = view.getByRole('application', { name: 'Canvas board', exact: true });
+    await addCanvasCard(view, 'Add text card');
+    const start = (await canvasData(page)).nodes[0];
+    const inspector = view.getByRole('complementary', { name: 'Canvas inspector', exact: true });
+    const text = inspector.getByRole('textbox', { name: 'Card text', exact: true });
+    const label = inspector.getByRole('textbox', { name: 'Card label', exact: true });
+    await text.fill('Unapplied body');
+    await label.fill('Unapplied name');
+    await inspector.getByRole('spinbutton', { name: 'Card width', exact: true }).fill('410');
+    await inspector.getByRole('spinbutton', { name: 'Card height', exact: true }).fill('270');
+    const resizing = gesture === 'resize' || gesture.startsWith('Alt');
+    if (gesture === 'move' || gesture === 'resize') {
+      await drag(page, view.getByRole('button', { name: `${resizing ? 'Resize' : 'Move'} card: New card`, exact: true }), 30, 20);
+    } else {
+      await board.focus();
+      await page.keyboard.press(gesture);
+    }
+    await expect(text).toHaveValue('Unapplied body');
+    await expect(label).toHaveValue('Unapplied name');
+    const geometry = { ...start };
+    if (gesture === 'move') { geometry.x += 30; geometry.y += 20; }
+    if (gesture === 'resize') { geometry.width += 30; geometry.height += 20; }
+    if (gesture === 'ArrowRight') geometry.x += 1;
+    if (gesture === 'Alt+ArrowDown') geometry.height += 1;
+    expect((await canvasData(page)).nodes[0]).toEqual(geometry);
+    await expect(inspector.getByRole('spinbutton', { name: 'Card width', exact: true })).toHaveValue(String(resizing ? geometry.width : 410));
+    await expect(inspector.getByRole('spinbutton', { name: 'Card height', exact: true })).toHaveValue(String(resizing ? geometry.height : 270));
+    await text.fill('After gesture edit');
+    await inspector.getByRole('button', { name: 'Apply card', exact: true }).click();
+    await expect(view.getByRole('alert')).toHaveCount(0);
+    const edited = { ...geometry, text: 'After gesture edit', label: 'Unapplied name', width: resizing ? geometry.width : 410, height: resizing ? geometry.height : 270 };
+    expect((await canvasData(page)).nodes[0]).toEqual(edited);
+    await board.focus();
+    await page.keyboard.press('ControlOrMeta+z');
+    expect((await canvasData(page)).nodes[0]).toEqual(geometry);
+    await board.focus();
+    await page.keyboard.press('ControlOrMeta+z');
+    expect((await canvasData(page)).nodes[0]).toEqual(start);
+    await board.focus();
+    await page.keyboard.press('ControlOrMeta+Shift+z');
+    expect((await canvasData(page)).nodes[0]).toEqual(geometry);
+    await board.focus();
+    await page.keyboard.press('ControlOrMeta+Shift+z');
+    expect((await canvasData(page)).nodes[0]).toEqual(edited);
+  });
+}
+
+test('same-card move and resize preserve pending file and label edits through Apply', async ({ page }) => {
+  await runCommand(page, 'New canvas');
+  const view = canvas(page);
+  await addCanvasCard(view, 'Add note card');
+  const inspector = view.getByRole('complementary', { name: 'Canvas inspector', exact: true });
+  await inspector.getByRole('textbox', { name: 'Card file', exact: true }).fill('pending.md');
+  await inspector.getByRole('textbox', { name: 'Card label', exact: true }).fill('Pending note');
+  const start = (await canvasData(page)).nodes[0];
+  await drag(page, view.getByRole('button', { name: 'Move card: Note', exact: true }), 20, 10);
+  await drag(page, view.getByRole('button', { name: 'Resize card: Note', exact: true }), 30, 20);
+  await expect(inspector.getByRole('textbox', { name: 'Card file', exact: true })).toHaveValue('pending.md');
+  await expect(inspector.getByRole('textbox', { name: 'Card label', exact: true })).toHaveValue('Pending note');
+  await inspector.getByRole('button', { name: 'Apply card', exact: true }).click();
+  await expect(view.locator('.app-error')).toHaveCount(0);
+  expect((await canvasData(page)).nodes[0]).toMatchObject({ file: 'pending.md', label: 'Pending note', x: start.x + 20, y: start.y + 10, width: start.width + 30, height: start.height + 20 });
+});
+
+test('cancelled and failed geometry gestures preserve drafts, dimensions, and source', async ({ page }) => {
+  const initial = { nodes: [{ id: 'limit', type: 'text', text: 'Original', x: 999990, y: 0, width: 280, height: 180 }], edges: [] };
+  await page.locator('input[type=file]').setInputFiles({ name: 'limit.canvas', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(initial)) });
+  const view = canvas(page);
+  await view.getByRole('button', { name: 'Fit canvas', exact: true }).click();
+  await view.getByRole('button', { name: 'Edit card: Original', exact: true }).click();
+  const inspector = view.getByRole('complementary', { name: 'Canvas inspector', exact: true });
+  await inspector.getByRole('textbox', { name: 'Card text', exact: true }).fill('Draft');
+  await inspector.getByRole('textbox', { name: 'Card label', exact: true }).fill('Draft label');
+  await inspector.getByRole('spinbutton', { name: 'Card width', exact: true }).fill('410');
+  await inspector.getByRole('spinbutton', { name: 'Card height', exact: true }).fill('270');
+  for (const action of ['Move', 'Resize']) {
+    await startDrag(page, view.getByRole('button', { name: `${action} card: Original`, exact: true }), 60, 40);
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+    expect(await canvasData(page)).toEqual(initial);
+  }
+  // Moving beyond the schema's coordinate limit is a real failed commit.
+  await drag(page, view.getByRole('button', { name: 'Move card: Original', exact: true }), 60, 40);
+  await expect(view.getByRole('alert')).toBeVisible();
+  expect(await canvasData(page)).toEqual(initial);
+  await expect(inspector.getByRole('textbox', { name: 'Card text', exact: true })).toHaveValue('Draft');
+  await expect(inspector.getByRole('textbox', { name: 'Card label', exact: true })).toHaveValue('Draft label');
+  await expect(inspector.getByRole('spinbutton', { name: 'Card width', exact: true })).toHaveValue('410');
+  await expect(inspector.getByRole('spinbutton', { name: 'Card height', exact: true })).toHaveValue('270');
+  await inspector.getByRole('button', { name: 'Apply card', exact: true }).click();
+  await expect(view.getByRole('alert')).toHaveCount(0);
+  expect((await canvasData(page)).nodes[0]).toMatchObject({ text: 'Draft', label: 'Draft label', width: 410, height: 270, x: 999990, y: 0 });
+});
+
+for (const timing of ['during gesture', 'before gesture', 'after owned commit']) {
+  test(`external source change ${timing} never rebases inspector drafts`, async ({ page }) => {
+    await runCommand(page, 'New canvas');
+    const view = canvas(page);
+    await addCanvasCard(view, 'Add text card');
+    const start = (await canvasData(page)).nodes[0];
+    const inspector = view.getByRole('complementary', { name: 'Canvas inspector', exact: true });
+    await inspector.getByRole('textbox', { name: 'Card text', exact: true }).fill('Private draft');
+    await inspector.getByRole('textbox', { name: 'Card label', exact: true }).fill('Private label');
+    await inspector.getByRole('spinbutton', { name: 'Card width', exact: true }).fill('410');
+    const handle = view.getByRole('button', { name: 'Resize card: New card', exact: true });
+    if (timing !== 'before gesture') await startDrag(page, handle, 30, 20);
+    // Dispatch to the real (hidden) source editor without unmounting Canvas. For the
+    // race case, inject an external edit synchronously after its next owned delta.
+    await page.locator('.cm-content').evaluate((element, race) => {
+      type View = { state: { doc: { length: number; toString(): string } }; dispatch: (transaction: { changes: { from: number; to: number; insert: string } }) => void };
+      const editor = (element as unknown as { cmTile: { root: { view: View } } }).cmTile.root.view;
+      const external = () => {
+        const data = JSON.parse(editor.state.doc.toString());
+        data.nodes[0].text = 'External body';
+        data.nodes[0].label = 'External label';
+        editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: JSON.stringify(data) } });
+      };
+      if (race) {
+        const dispatch = editor.dispatch.bind(editor);
+        editor.dispatch = (transaction) => { editor.dispatch = dispatch; dispatch(transaction); external(); };
+      } else external();
+    }, timing === 'after owned commit');
+    if (timing === 'before gesture') {
+      await drag(page, view.getByRole('button', { name: 'Resize card: External label', exact: true }), 30, 20);
+    } else await page.mouse.up();
+    await expect(inspector.getByRole('textbox', { name: 'Card text', exact: true })).toHaveValue('Private draft');
+    await expect(inspector.getByRole('textbox', { name: 'Card label', exact: true })).toHaveValue('Private label');
+    await expect(inspector.getByRole('spinbutton', { name: 'Card width', exact: true })).toHaveValue('410');
+    const external = await canvasData(page);
+    expect(external.nodes[0]).toMatchObject({ text: 'External body', label: 'External label', x: start.x, y: start.y, width: timing === 'during gesture' ? start.width : start.width + 30, height: timing === 'during gesture' ? start.height : start.height + 20 });
+    await inspector.getByRole('button', { name: 'Apply card', exact: true }).click();
+    await expect(view.getByRole('alert')).toContainText('Canvas changed');
+    expect(await canvasData(page)).toEqual(external);
+  });
+}
+
+test('history change then own move does not make a stale draft applicable', async ({ page }) => {
+  await runCommand(page, 'New canvas');
+  const view = canvas(page);
+  const board = view.getByRole('application', { name: 'Canvas board', exact: true });
+  await addLabeledCard(view, 'Saved', 'Saved body');
+  await view.getByRole('button', { name: 'Edit card: Saved', exact: true }).click();
+  const inspector = view.getByRole('complementary', { name: 'Canvas inspector', exact: true });
+  await inspector.getByRole('textbox', { name: 'Card text', exact: true }).fill('Private draft');
+  await board.focus();
+  await page.keyboard.press('ControlOrMeta+z');
+  await drag(page, view.getByRole('button', { name: 'Move card: New card', exact: true }), 30, 20);
+  await expect(inspector.getByRole('textbox', { name: 'Card text', exact: true })).toHaveValue('Private draft');
+  const beforeApply = await canvasData(page);
+  await inspector.getByRole('button', { name: 'Apply card', exact: true }).click();
+  await expect(view.getByRole('alert')).toContainText('Canvas changed');
+  expect(await canvasData(page)).toEqual(beforeApply);
+});
+
+test('Space-drag over connect and Open original buttons pans without activating them', async ({ page }) => {
+  await runCommand(page, 'New canvas');
+  const view = canvas(page);
+  const board = view.getByRole('application', { name: 'Canvas board', exact: true });
+  await addCanvasCard(view, 'Add note card');
+  const inspector = view.getByRole('complementary', { name: 'Canvas inspector', exact: true });
+  await inspector.getByRole('textbox', { name: 'Card file', exact: true }).fill('missing.md');
+  await inspector.getByRole('button', { name: 'Apply card', exact: true }).click();
+  const original = await canvasData(page);
+  const tabs = await page.getByRole('tab').count();
+  const card = view.getByRole('article', { name: 'Canvas card: Note', exact: true });
+  for (const name of ['Connect card: Note', 'Open card file: missing.md']) {
+    await board.focus();
+    const before = await card.boundingBox();
+    await page.keyboard.down('Space');
+    await drag(page, view.getByRole('button', { name, exact: true }), 25, 15);
+    await page.keyboard.up('Space');
+    const after = await card.boundingBox();
+    if (!before || !after) throw new Error('Missing card box.');
+    expect(Math.round(after.x - before.x)).toBe(25);
+    expect(Math.round(after.y - before.y)).toBe(15);
+    await expect(view.getByRole('button', { name: 'Connect card: Note', exact: true })).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect(await page.getByRole('tab').count()).toBe(tabs);
+    expect(await canvasData(page)).toEqual(original);
+  }
+});
+
+test('Escape, pointercancel, and lost pointer capture discard drag previews', async ({ page }) => {
+  await runCommand(page, 'New canvas');
+  const view = canvas(page);
+  const board = view.getByRole('application', { name: 'Canvas board', exact: true });
+  await addCanvasCard(view, 'Add text card');
+  await expect(view.getByRole('article', { name: 'Canvas card: New card', exact: true })).toBeVisible();
+  const title = view.getByRole('button', { name: 'Move card: New card', exact: true });
+  const start = (await canvasData(page)).nodes[0];
+  const inspector = view.getByRole('complementary', { name: 'Canvas inspector', exact: true });
+  await inspector.getByRole('textbox', { name: 'Card text', exact: true }).fill('Cancelled gesture draft');
+  await inspector.getByRole('textbox', { name: 'Card label', exact: true }).fill('Cancelled label');
+  await inspector.getByRole('spinbutton', { name: 'Card width', exact: true }).fill('410');
+
+  await startDrag(page, title, 80, 60);
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  let data = await canvasData(page);
+  expect(data.nodes[0].x).toBe(start.x);
+  expect(data.nodes[0].y).toBe(start.y);
+
+  await page.evaluate(() => {
+    const boardElement = document.querySelector('[aria-label="Canvas board"]');
+    boardElement?.addEventListener('pointerdown', (event) => { (window as unknown as { notationPointerId: number }).notationPointerId = (event as PointerEvent).pointerId; }, { once: true, capture: true });
+  });
+  await startDrag(page, title, 80, 60);
+  const pointerId = await page.evaluate(() => (window as unknown as { notationPointerId: number }).notationPointerId);
+  await page.evaluate((id) => { document.querySelector('[aria-label="Canvas board"]')?.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId: id })); }, pointerId);
+  await page.mouse.up();
+  data = await canvasData(page);
+  expect(data.nodes[0].x).toBe(start.x);
+  expect(data.nodes[0].y).toBe(start.y);
+
+  await page.evaluate(() => {
+    const boardElement = document.querySelector('[aria-label="Canvas board"]');
+    boardElement?.addEventListener('pointerdown', (event) => { (window as unknown as { notationPointerId: number }).notationPointerId = (event as PointerEvent).pointerId; }, { once: true, capture: true });
+  });
+  await startDrag(page, title, 80, 60);
+  const lostPointerId = await page.evaluate(() => (window as unknown as { notationPointerId: number }).notationPointerId);
+  await page.evaluate((id) => { document.querySelector('[aria-label="Canvas board"]')?.dispatchEvent(new PointerEvent('lostpointercapture', { bubbles: true, pointerId: id })); }, lostPointerId);
+  await page.mouse.up();
+  data = await canvasData(page);
+  expect(data.nodes[0].x).toBe(start.x);
+  expect(data.nodes[0].y).toBe(start.y);
+  await expect(inspector.getByRole('textbox', { name: 'Card text', exact: true })).toHaveValue('Cancelled gesture draft');
+  await expect(inspector.getByRole('textbox', { name: 'Card label', exact: true })).toHaveValue('Cancelled label');
+  await expect(inspector.getByRole('spinbutton', { name: 'Card width', exact: true })).toHaveValue('410');
+  await board.focus();
+});
+
+test('per-card connect buttons create, cancel, and clear source connections without the inspector', async ({ page }) => {
+  await runCommand(page, 'New canvas');
+  const view = canvas(page);
+  await addLabeledCard(view, 'Alpha');
+  await addLabeledCard(view, 'Beta');
+  const alphaConnect = view.getByRole('button', { name: 'Connect card: Alpha', exact: true });
+  const betaConnect = view.getByRole('button', { name: 'Connect card: Beta', exact: true });
+
+  await alphaConnect.click();
+  await expect(alphaConnect).toHaveAttribute('aria-pressed', 'true');
+  await alphaConnect.click();
+  await expect(alphaConnect).toHaveAttribute('aria-pressed', 'false');
+  await alphaConnect.click();
+  await page.keyboard.press('Escape');
+  await expect(alphaConnect).toHaveAttribute('aria-pressed', 'false');
+
+  await alphaConnect.click();
+  await betaConnect.click();
+  await expect(view.getByRole('status')).toContainText('Connected Beta');
+  let data = await canvasData(page);
+  expect(data.edges).toHaveLength(1);
+  const alpha = data.nodes.find(node => node.label === 'Alpha')!;
+  const beta = data.nodes.find(node => node.label === 'Beta')!;
+  expect(data.edges[0].fromNode).toBe(alpha.id);
+  expect(data.edges[0].toNode).toBe(beta.id);
+
+  await betaConnect.click();
+  await betaConnect.click();
+  expect((await canvasData(page)).edges).toHaveLength(1);
+
+  await view.getByRole('button', { name: 'Edit card: Alpha', exact: true }).click();
+  const inspector = view.getByRole('complementary', { name: 'Canvas inspector', exact: true });
+  await alphaConnect.click();
+  await expect(alphaConnect).toHaveAttribute('aria-pressed', 'true');
+  await inspector.getByRole('button', { name: 'Delete card', exact: true }).click();
+  await expect(view.getByRole('article', { name: 'Canvas card: Alpha', exact: true })).toHaveCount(0);
+  await expect(betaConnect).toHaveAttribute('aria-pressed', 'false');
+  await betaConnect.click();
+  await expect(betaConnect).toHaveAttribute('aria-pressed', 'true');
+  expect((await canvasData(page)).edges).toHaveLength(0);
+});
+
+test('Space and middle-button panning over cards leave card coordinates alone and preserve inspector typing', async ({ page }) => {
+  await runCommand(page, 'New canvas');
+  const view = canvas(page);
+  const board = view.getByRole('application', { name: 'Canvas board', exact: true });
+  await addCanvasCard(view, 'Add text card');
+  const card = view.getByRole('article', { name: 'Canvas card: New card', exact: true });
+  await expect(card).toBeVisible();
+  const inspector = view.getByRole('complementary', { name: 'Canvas inspector', exact: true });
+  const textarea = inspector.getByRole('textbox', { name: 'Card text', exact: true });
+  await textarea.fill('');
+  await textarea.pressSequentially('two words');
+  await expect(textarea).toHaveValue('two words');
+  const beforeText = await canvasData(page);
+  const start = beforeText.nodes[0];
+
+  await board.click({ position: { x: 20, y: 20 } });
+  const title = view.getByRole('button', { name: 'Move card: New card', exact: true });
+  const beforeSpace = await card.boundingBox();
+  await page.keyboard.down('Space');
+  await drag(page, title, 70, 50);
+  await page.keyboard.up('Space');
+  const afterSpace = await card.boundingBox();
+  if (!beforeSpace || !afterSpace) throw new Error('Canvas card has no box.');
+  expect(Math.round(afterSpace.x - beforeSpace.x)).toBe(70);
+  expect(Math.round(afterSpace.y - beforeSpace.y)).toBe(50);
+  let data = await canvasData(page);
+  expect(data.nodes[0].x).toBe(start.x);
+  expect(data.nodes[0].y).toBe(start.y);
+
+  const beforeMiddle = await card.boundingBox();
+  const titleBox = await title.boundingBox();
+  if (!beforeMiddle || !titleBox) throw new Error('Canvas card has no box.');
+  await page.mouse.move(titleBox.x + titleBox.width / 2, titleBox.y + titleBox.height / 2);
+  await page.mouse.down({ button: 'middle' });
+  await page.mouse.move(titleBox.x + titleBox.width / 2 - 40, titleBox.y + titleBox.height / 2 - 30, { steps: 6 });
+  await page.mouse.up({ button: 'middle' });
+  const afterMiddle = await card.boundingBox();
+  if (!afterMiddle) throw new Error('Canvas card has no box.');
+  expect(Math.round(afterMiddle.x - beforeMiddle.x)).toBe(-40);
+  expect(Math.round(afterMiddle.y - beforeMiddle.y)).toBe(-30);
+  data = await canvasData(page);
+  expect(data.nodes[0].x).toBe(start.x);
+  expect(data.nodes[0].y).toBe(start.y);
+  await expect(textarea).toHaveValue('two words');
+});
+
+test('tab switch and content change during a drag discard the preview without committing', async ({ page }) => {
+  await runCommand(page, 'New canvas');
+  const view = canvas(page);
+  const board = view.getByRole('application', { name: 'Canvas board', exact: true });
+  await addLabeledCard(view, 'Alpha');
+  const start = (await canvasData(page)).nodes[0];
+
+  await runCommand(page, 'New canvas');
+  await page.keyboard.press('ControlOrMeta+PageUp');
+  await expect(view.getByRole('article', { name: 'Canvas card: Alpha', exact: true })).toBeVisible();
+  const title = view.getByRole('button', { name: 'Move card: Alpha', exact: true });
+  await startDrag(page, title, 80, 60);
+  await page.keyboard.press('ControlOrMeta+PageDown');
+  await page.mouse.up();
+  await page.keyboard.press('ControlOrMeta+PageUp');
+  await expect(view.getByRole('article', { name: 'Canvas card: Alpha', exact: true })).toBeVisible();
+  let data = await canvasData(page);
+  expect(data.nodes[0].x).toBe(start.x);
+  expect(data.nodes[0].y).toBe(start.y);
+
+  await board.focus();
+  await startDrag(page, title, 80, 60);
+  await page.keyboard.press('ControlOrMeta+z');
+  await page.mouse.up();
+  data = await canvasData(page);
+  expect(data.nodes[0].x).toBe(start.x);
+  expect(data.nodes[0].y).toBe(start.y);
+});
+
+test('text/plain drops create a bounded text card while file drops are ignored', async ({ page }) => {
+  await runCommand(page, 'New canvas');
+  const view = canvas(page);
+  const board = view.getByRole('application', { name: 'Canvas board', exact: true });
+  await expect(board).toBeVisible();
+  await board.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const transfer = new DataTransfer();
+    transfer.setData('text/plain', 'Dropped note');
+    element.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, clientX: rect.left + 240, clientY: rect.top + 180, dataTransfer: transfer }));
+  });
+  await expect(view.getByRole('article', { name: 'Canvas card: Dropped note', exact: true })).toBeVisible();
+  let data = await canvasData(page);
+  expect(data.nodes).toHaveLength(1);
+  expect(data.nodes[0]).toMatchObject({ type: 'text', text: 'Dropped note', width: 280, height: 180 });
+  expect(Math.abs(data.nodes[0].x)).toBeLessThanOrEqual(1_000_000);
+  expect(Math.abs(data.nodes[0].y)).toBeLessThanOrEqual(1_000_000);
+
+  await board.evaluate((element) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['not a text card'], 'ignored.txt', { type: 'text/plain' }));
+    element.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+  });
+  data = await canvasData(page);
+  expect(data.nodes).toHaveLength(1);
 });
