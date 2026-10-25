@@ -550,6 +550,114 @@ test('tab switch and content change during a drag discard the preview without co
   expect(data.nodes[0].y).toBe(start.y);
 });
 
+test('empty note cards link an open note through search, Apply, and Open original', async ({ page }) => {
+  await page.locator('input[type=file]').setInputFiles({ name: 'Target.md', mimeType: 'text/markdown', buffer: Buffer.from('# Target\n\nSearchable body.') });
+  await expect(page.getByRole('tab', { name: 'Target.md', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await runCommand(page, 'New canvas');
+  const view = canvas(page);
+  await addCanvasCard(view, 'Add note card');
+  let card = view.getByRole('article', { name: 'Canvas card: Note', exact: true });
+  await expect(card.getByRole('button', { name: 'Choose note', exact: true })).toBeVisible();
+  await expect(card.getByRole('button', { name: /^Open card file:/u })).toHaveCount(0);
+
+  await view.getByRole('textbox', { name: 'Card label', exact: true }).fill('Pending note');
+  await card.getByRole('button', { name: 'Choose note', exact: true }).click();
+  const inspector = view.getByRole('complementary', { name: 'Canvas inspector', exact: true });
+  const file = inspector.getByRole('textbox', { name: 'Card file', exact: true });
+  await expect(file).toBeFocused();
+  await expect(inspector.getByRole('textbox', { name: 'Card label', exact: true })).toHaveValue('Pending note');
+  await expect(inspector.getByText(/then Apply card/)).toBeVisible();
+  await expect(inspector.getByText(/Missing notes can be created explicitly/u)).toBeVisible();
+
+  await inspector.getByLabel('Find note', { exact: true }).fill('tar');
+  await inspector.getByRole('button', { name: 'Search notes', exact: true }).click();
+  const result = inspector.getByRole('button', { name: 'Use note: Target.md', exact: true });
+  await expect(result).toContainText('Target');
+  await result.click();
+  await expect(file).toHaveValue('Target.md');
+  await inspector.getByRole('button', { name: 'Apply card', exact: true }).click();
+  await expect(view.getByRole('status')).toContainText('Canvas updated');
+  card = view.getByRole('article', { name: 'Canvas card: Pending note', exact: true });
+  await expect(card.getByRole('button', { name: 'Open card file: Target.md', exact: true })).toBeVisible();
+
+  await card.getByRole('button', { name: 'Open card file: Target.md', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Target.md', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.app-error')).toHaveCount(0);
+});
+
+test('note linking rejects blank paths and reports missing browser targets', async ({ page }) => {
+  await runCommand(page, 'New canvas');
+  const view = canvas(page);
+  await addCanvasCard(view, 'Add note card');
+  await view.getByRole('button', { name: 'Choose note', exact: true }).click();
+  const inspector = view.getByRole('complementary', { name: 'Canvas inspector', exact: true });
+  const file = inspector.getByRole('textbox', { name: 'Card file', exact: true });
+
+  await file.fill('   ');
+  await inspector.getByRole('button', { name: 'Apply card', exact: true }).click();
+  await expect(view.locator('.app-error')).toContainText('Enter a note path or clear Card file');
+  expect((await canvasData(page)).nodes[0].file).toBe('');
+
+  await inspector.getByLabel('Find note', { exact: true }).fill('Missing');
+  await inspector.getByRole('button', { name: 'Search notes', exact: true }).click();
+  await expect(inspector.getByRole('alert')).toContainText('No open or indexed note matches');
+
+  await file.fill('Elsewhere.md');
+  await inspector.getByRole('button', { name: 'Apply card', exact: true }).click();
+  await expect(card(view, 'Note').getByRole('button', { name: 'Open card file: Elsewhere.md', exact: true })).toBeVisible();
+  await card(view, 'Note').getByRole('button', { name: 'Open card file: Elsewhere.md', exact: true }).click();
+  await expect(page.locator('.app-error').filter({ hasText: 'No open tab matches [[Elsewhere.md]]' })).toBeVisible();
+});
+
+function card(view: ReturnType<typeof canvas>, name: string) {
+  return view.getByRole('article', { name: 'Canvas card: ' + name, exact: true });
+}
+
+test('duplicate matching browser tabs are offered separately and error explicitly', async ({ page }) => {
+  await page.locator('input[type=file]').setInputFiles({ name: 'Target.md', mimeType: 'text/markdown', buffer: Buffer.from('# Target') });
+  await page.locator('input[type=file]').setInputFiles({ name: 'Target', mimeType: 'text/markdown', buffer: Buffer.from('Target without extension') });
+  await expect(page.getByRole('tab', { name: 'Target', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await runCommand(page, 'New canvas');
+  const view = canvas(page);
+  await addCanvasCard(view, 'Add note card');
+  await view.getByRole('button', { name: 'Choose note', exact: true }).click();
+  const inspector = view.getByRole('complementary', { name: 'Canvas inspector', exact: true });
+
+  await inspector.getByLabel('Find note', { exact: true }).fill('target');
+  await inspector.getByRole('button', { name: 'Search notes', exact: true }).click();
+  await expect(inspector.getByRole('button', { name: 'Use note: Target', exact: true })).toBeVisible();
+  await expect(inspector.getByRole('button', { name: 'Use note: Target.md', exact: true })).toBeVisible();
+  await inspector.getByRole('button', { name: 'Use note: Target', exact: true }).click();
+  await inspector.getByRole('button', { name: 'Apply card', exact: true }).click();
+  await card(view, 'Note').getByRole('button', { name: 'Open card file: Target', exact: true }).click();
+  await expect(page.locator('.app-error').filter({ hasText: 'Multiple open tabs match [[Target]]' })).toBeVisible();
+});
+
+test('manually configured note paths and heading subpaths open without rewriting the canvas', async ({ page }) => {
+  await page.locator('input[type=file]').setInputFiles({ name: 'Nested.md', mimeType: 'text/markdown', buffer: Buffer.from('# Nested\n\n## Deep heading\n\nBody.') });
+  await expect(page.getByRole('tab', { name: 'Nested.md', exact: true })).toHaveAttribute('aria-selected', 'true');
+  const linked = { nodes: [{ id: 'linked', type: 'file', file: 'Nested.md', subpath: '#Deep heading', label: 'Linked', x: 0, y: 0, width: 280, height: 180 }], edges: [] };
+  await page.locator('input[type=file]').setInputFiles({ name: 'linked.canvas', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(linked)) });
+  await expect(page.getByRole('tab', { name: 'linked.canvas', exact: true })).toHaveAttribute('aria-selected', 'true');
+  const view = canvas(page);
+  expect((await canvasData(page)).nodes[0]).toMatchObject({ file: 'Nested.md', subpath: '#Deep heading' });
+
+  await view.getByRole('button', { name: 'Open card file: Nested.md', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Nested.md', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.editor-tab-host:not([hidden]) .cm-activeLine').filter({ hasText: 'Deep heading' })).toBeVisible();
+});
+
+test('nested workspace paths stay intact and surface the browser limitation', async ({ page }) => {
+  const linked = { nodes: [{ id: 'nested', type: 'file', file: 'notes/Nested.md', subpath: '#Deep heading', label: 'Nested note', x: 0, y: 0, width: 280, height: 180 }], edges: [] };
+  await page.locator('input[type=file]').setInputFiles({ name: 'nested.canvas', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(linked)) });
+  await expect(page.getByRole('tab', { name: 'nested.canvas', exact: true })).toHaveAttribute('aria-selected', 'true');
+  const view = canvas(page);
+  expect((await canvasData(page)).nodes[0]).toMatchObject({ file: 'notes/Nested.md', subpath: '#Deep heading' });
+  await view.getByRole('button', { name: 'Open card file: notes/Nested.md', exact: true }).click();
+  await expect(page.locator('.app-error').filter({ hasText: 'No open tab matches [[notes/Nested.md]]' })).toBeVisible();
+  expect((await canvasData(page)).nodes[0]).toMatchObject({ file: 'notes/Nested.md', subpath: '#Deep heading' });
+});
+
 test('text/plain drops create a bounded text card while file drops cancel browser defaults', async ({ page }) => {
   await runCommand(page, 'New canvas');
   const view = canvas(page);

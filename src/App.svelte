@@ -506,6 +506,28 @@
     }
     return documents.filter((tab) => !tab.name.endsWith('.mmd') && tab.name.toLowerCase().includes((context.kind === 'heading' ? context.note : context.query).toLowerCase())).map((tab) => ({ path: tab.path || tab.id, name: tab.name, title: tab.name.replace(/\.md$/iu, ''), relativePath: tab.name, link: tab.name.replace(/\.md$/iu, ''), aliases: [], headings: referenceTargets(tab.content) }));
   }
+  async function canvasNoteCandidates(query: string) {
+    const needle = query.trim().toLowerCase().slice(0, 200);
+    const found = new Map<string, { file: string; name: string; title: string; detail: string }>();
+    for (const tab of documents) {
+      if (tab.name.toLowerCase().endsWith('.canvas')) continue;
+      const title = tab.name.replace(/\.(?:md|markdown)$/iu, '');
+      if (needle && !tab.name.toLowerCase().includes(needle) && !title.toLowerCase().includes(needle)) continue;
+      // Browser tabs have no native path. Desktop workspace notes come from the index below,
+      // which provides the workspace-relative path required by Canvas file nodes.
+      if (desktop) continue;
+      found.set(tab.name, { file: tab.name, name: tab.name, title, detail: 'Open tab' });
+    }
+    if (desktop) {
+      const notes = await invoke<WikiCandidate[]>('wiki_candidates', { query: needle, sourcePath: null, limit: 50 });
+      for (const note of notes) {
+        const file = (note.relativePath || '').trim();
+        if (!file || found.has(file)) continue;
+        found.set(file, { file, name: note.name || file, title: note.title || note.name || file, detail: 'Workspace note' });
+      }
+    }
+    return [...found.values()].slice(0, 50);
+  }
   async function jumpToWiki(tab: DocumentTab, heading: string | null) {
     selectTab(tab.id);
     if (!heading) { await tick(); if (layout !== 'preview') editors[tab.id]?.focus(); return; }
@@ -545,7 +567,8 @@
       if (!desktop) {
         const matches = documents.filter((tab) => tab.name === link.note || tab.name.replace(/\.md$/iu, '') === link.note);
         if (matches.length === 1) { await jumpToWiki(matches[0], link.heading); return; }
-        throw new Error('Opening or creating workspace notes requires the desktop app. Open the target file to navigate between browser tabs.');
+        if (matches.length > 1) throw new Error('Multiple open tabs match [[' + link.note + ']]. Close the duplicate tab before following this link.');
+        throw new Error('No open tab matches [[' + link.note + ']]. Opening or creating workspace notes requires the desktop app. Open the target file to navigate between browser tabs.');
       }
       const resolution = await invoke<WikiResolution>('resolve_wiki_link', { target, sourcePath: relativePath === '' ? null : relativePath && !documents.some(tab=>tab.id===relativePath) ? relativePath : source.path });
       if (ticket !== wikiSerial || !documents.some((tab) => tab.id === sourceId)) return;
@@ -794,7 +817,7 @@
         {#each documents as tab (tab.lifetime)}<div class="editor-tab-host" hidden={tab.id !== activeId}><Editor bind:this={editors[tab.id]} value={tab.content} codeLanguage={ui.performanceMode ? 'plaintext' : detectLanguage(tab.name, tab.language)} intelligenceEnabled={desktop && intelligenceEnabled} tabSize={ui.tabSize} indentWithTabs={ui.indentWithTabs} onIntelligence={(value) => intelligenceStates[tab.id] = value} hemingway={tab.hemingway} initialSelection={tab.selection} active={tab.id === activeId} {wrap} showLineNumbers={ui.showLineNumbers} appearance={[fontSize, ui.editorFont, ui.lineHeight, ui.readingWidth].join(':')} live={tab.id === activeId && effectiveLayout === 'live' && !canvasDocument} standalone={tab.name.toLowerCase().endsWith('.mmd')} {theme} folds={tab.folds} cells={cellsFor(tab)} sourcePath={tab.path ?? tab.id} loadEmbed={loadEmbedded} onOpenPath={(path) => void openPath(path)} onOpenWiki={(target, path) => void openWiki(target, tab.id, path)} onEditProperties={() => editProperties(tab.id)} wikiCandidates={(context) => candidatesFor(tab.id, context)} onChange={(value) => { tab.content = value; tab.updatedAt = Date.now(); }} onSelection={(selection) => tab.selection = selection} /></div>{/each}
       </section>
       <section class="pane preview-pane" aria-label="Preview pane" hidden={effectiveLayout === 'source' || effectiveLayout === 'live' || canvasVisible || active.hemingway}>{#if effectiveLayout === 'split'}<div class="pane-heading"><span>PREVIEW</span></div>{/if}{#if !active.hemingway && !canvasVisible && (effectiveLayout === 'split' || effectiveLayout === 'preview')}<Preview documentId={active.lifetime} content={active.content} {standalone} {theme} folds={active.folds} onToggleTask={togglePreviewTask} onEditSource={(from) => void editSource(from)} cells={cellsFor(active)} sourcePath={active.path ?? active.id} loadEmbed={loadEmbedded} onOpenPath={(path) => void openPath(path)} onOpenWiki={wikiHandler(activeId)} onEditProperties={propertiesHandler(activeId)} />{/if}</section>
-      {#if canvasVisible}<Canvas content={active.content} documentId={active.lifetime} path={active.path} apply={applyCanvas} openNote={(file,subpath)=>void openWiki(file+(subpath||''),activeId,'')} renderCard={renderCanvasCard} undo={()=>editor?.undoEdit()} redo={()=>editor?.redoEdit()} />{/if}
+      {#if canvasVisible}<Canvas content={active.content} documentId={active.lifetime} path={active.path} apply={applyCanvas} openNote={(file,subpath)=>void openWiki(file+(subpath||''),activeId,'')} noteCandidates={canvasNoteCandidates} renderCard={renderCanvasCard} undo={()=>editor?.undoEdit()} redo={()=>editor?.redoEdit()} />{/if}
     </div>
 
   </div>
