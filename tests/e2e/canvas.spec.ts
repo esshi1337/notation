@@ -556,16 +556,18 @@ test('empty note cards link an open note through search, Apply, and Open origina
   await runCommand(page, 'New canvas');
   const view = canvas(page);
   await addCanvasCard(view, 'Add note card');
-  const card = view.getByRole('article', { name: 'Canvas card: Note', exact: true });
+  let card = view.getByRole('article', { name: 'Canvas card: Note', exact: true });
   await expect(card.getByRole('button', { name: 'Choose note', exact: true })).toBeVisible();
   await expect(card.getByRole('button', { name: /^Open card file:/u })).toHaveCount(0);
 
+  await view.getByRole('textbox', { name: 'Card label', exact: true }).fill('Pending note');
   await card.getByRole('button', { name: 'Choose note', exact: true }).click();
   const inspector = view.getByRole('complementary', { name: 'Canvas inspector', exact: true });
   const file = inspector.getByRole('textbox', { name: 'Card file', exact: true });
   await expect(file).toBeFocused();
+  await expect(inspector.getByRole('textbox', { name: 'Card label', exact: true })).toHaveValue('Pending note');
   await expect(inspector.getByText(/then Apply card/)).toBeVisible();
-  await expect(inspector.getByText(/existing wiki navigation/u)).toBeVisible();
+  await expect(inspector.getByText(/Missing notes can be created explicitly/u)).toBeVisible();
 
   await inspector.getByLabel('Find note', { exact: true }).fill('tar');
   await inspector.getByRole('button', { name: 'Search notes', exact: true }).click();
@@ -575,6 +577,7 @@ test('empty note cards link an open note through search, Apply, and Open origina
   await expect(file).toHaveValue('Target.md');
   await inspector.getByRole('button', { name: 'Apply card', exact: true }).click();
   await expect(view.getByRole('status')).toContainText('Canvas updated');
+  card = view.getByRole('article', { name: 'Canvas card: Pending note', exact: true });
   await expect(card.getByRole('button', { name: 'Open card file: Target.md', exact: true })).toBeVisible();
 
   await card.getByRole('button', { name: 'Open card file: Target.md', exact: true }).click();

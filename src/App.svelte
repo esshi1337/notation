@@ -515,7 +515,7 @@
       if (needle && !tab.name.toLowerCase().includes(needle) && !title.toLowerCase().includes(needle)) continue;
       // Browser tabs have no native path. Desktop workspace notes come from the index below,
       // which provides the workspace-relative path required by Canvas file nodes.
-      if (desktop && tab.path) continue;
+      if (desktop) continue;
       found.set(tab.name, { file: tab.name, name: tab.name, title, detail: 'Open tab' });
     }
     if (desktop) {

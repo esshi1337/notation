@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'vite';
-const server=await createServer({cacheDir:'node_modules/.vite-workspace-features',optimizeDeps:{noDiscovery:true,include:[]},server:{middlewareMode:true,hmr:false},logLevel:'error'});
+const server=await createServer({cacheDir:'node_modules/.vite/workspace-features',optimizeDeps:{noDiscovery:true,include:[]},server:{middlewareMode:true,hmr:false},logLevel:'error'});
 let count=0;function test(name,fn){fn();count++;console.log('✓ '+name);}
 try{
   const {scanBlockReferences,referenceContent}=await server.ssrLoadModule('/src/block-references.ts');
