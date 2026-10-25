@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "sticky-window",
+  "description": "Sticky windows listen for close requests; a caller-bound native command destroys only their own window after saving. Core destroy/close accept arbitrary target labels and are intentionally not granted.",
+  "windows": ["sticky-*"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

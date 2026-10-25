@@ -25,6 +25,7 @@
   import { CellSession } from './cells';
   import SmartTable from './SmartTable.svelte';
   import Graph from './Graph.svelte';
+  import StickyNotes from './StickyNotes.svelte';
   import { referenceContent, scanBlockReferences } from './block-references';
   import type { EmbedDocument } from './render-content';
   import Properties from './Properties.svelte';
@@ -63,7 +64,8 @@
   const fence = String.fromCharCode(96).repeat(3);
   const sample = '# Welcome to Notation\n\nA small space for Markdown and Mermaid. Write on the left, see it on the right.\n\n## Follow an idea\n\n' + fence + 'mermaid\nflowchart LR\n  A[An idea] --> B[Make a note]\n  B --> C[Connect the dots]\n' + fence + '\n\n- Open a .md or .mmd file\n- Use **Ctrl/Cmd + S** to save\n- Use **Ctrl/Cmd + F** to find in your source\n';
   type Layout = 'split' | 'source' | 'preview' | 'live';
-  type Panel = 'explorer' | 'workspace' | 'git' | 'history' | 'scripts' | 'properties' | 'graph' | 'table' | 'export' | 'templates' | null;
+  type Panel = 'explorer' | 'workspace' | 'git' | 'history' | 'scripts' | 'properties' | 'graph' | 'stickies' | 'table' | 'export' | 'templates' | null;
+  let stickyCreateRequest = $state(0);
   type DocumentResult = { path: string; content: string; warning?: string };
   type LaunchRequest = { id: string; paths: string[] };
   const MAX_LAUNCH_FILES = 64, MAX_LAUNCH_QUEUE = 16, MAX_LAUNCH_DEDUP = 128;
@@ -184,7 +186,7 @@
     ? commandItems.filter(command => ['view.source', 'view.preview'].includes(command.id)).map(command => ({ ...command, label: command.id === 'view.preview' ? 'Canvas' : 'Source', checked: command.id === (canvasVisible ? 'view.preview' : 'view.source') }))
     : commandItems.filter(command => ['view.source', 'view.split', 'view.preview', 'view.live'].includes(command.id)));
   let paletteItems = $derived(paletteScope === 'blocks' ? commandItems.filter((command) => command.group === 'Blocks' && command.id !== 'block.actions') : commandItems);
-  const sidebarCommands: CommandId[] = ['panel.explorer', 'panel.workspace', 'panel.graph', 'panel.git', 'panel.history', 'panel.properties', 'panel.templates', 'panel.table', 'panel.scripts'];
+  const sidebarCommands: CommandId[] = ['panel.explorer', 'panel.workspace', 'panel.graph', 'panel.stickies', 'panel.git', 'panel.history', 'panel.properties', 'panel.templates', 'panel.table', 'panel.scripts'];
   let sidebarItems = $derived(sidebarCommands.map(id => commandItems.find(item => item.id === id)!));
   let visiblePanel = $derived(panel !== null && !ui.focusMode && (!['properties', 'templates', 'export', 'table'].includes(panel) || (!canvasDocument && !codeDocument && !active.hemingway)));
   let appMenuItems = $derived(['Document', 'Application'].flatMap(group => commandItems.filter(command => command.group === group)));
@@ -625,6 +627,7 @@
   async function runCommand(id: CommandId) {
     paletteOpen = false; appMenuOpen = false; layoutMenuOpen = false;
     if (id === 'app.commands') { await tick(); paletteScope = 'all'; paletteOpen = true; return; }
+    if (id === 'sticky.new') { ui.focusMode = false; stickyCreateRequest++; panel = 'stickies'; return; }
     if (ui.performanceMode && ['view.split','view.preview','view.live'].includes(id)) { status = 'Turn off Performance mode in Settings → Editor to use rendered views.'; return; }
     if (id === 'view.language') { if (!canvasDocument) languageTarget = activeId; return; }
     if (id === 'view.zoomIn' || id === 'view.zoomOut' || id === 'view.zoomReset') {
@@ -736,7 +739,8 @@
           } catch (cause) {
             const reopenError = await reopenLaunches();
             closing = false; closingWindow = false;
-            persistence = { state: 'error', error: 'Could not close the window after saving app state. ' + String(cause) + reopenError };
+            if (String(cause).includes('Close sticky windows first')) error = String(cause);
+            else persistence = { state: 'error', error: 'Could not close the window after saving app state. ' + String(cause) + reopenError };
           }
         });
       }).catch((cause: unknown) => { persistence = { state: 'error', error: 'Close-time database flush unavailable. Recovery cache remains active. ' + String(cause) }; });
@@ -805,6 +809,7 @@
       <aside class="app-sidebar" aria-label="Application tools">
         <Sidebar items={sidebarItems} execute={(id) => void runCommand(id)} {theme} />
         {#if visiblePanel}<div class="sidebar-panel" class:sidebar-graph={panel === 'graph'}>
+          {#if panel === 'stickies'}<StickyNotes createRequest={stickyCreateRequest} created={() => stickyCreateRequest = 0} close={() => { panel = null; stickyCreateRequest = 0; }} />{/if}
           {#if panel === 'explorer' && !ui.focusMode}<Explorer workspace={activeWorkspace} currentPath={active.path} openFile={(path) => void openPath(path)} configure={() => panel = 'workspace'} close={() => panel = null} />{/if}
           {#if panel === 'scripts' && !ui.focusMode}<Scripts lockedReason={active.hemingway ? HEMINGWAY_MESSAGE : ''} snapshot={scriptSnapshot} apply={applyScript} close={() => panel = null} />{:else if panel === 'workspace' && !ui.focusMode}<Workspace {catalog} action={workspaceAction} changing={workspaceBusy} currentPath={active.path} openDocument={openPath} close={() => panel = null} />{:else if panel === 'history' && !ui.focusMode}<History lockedReason={active.hemingway ? HEMINGWAY_MESSAGE : ''} currentContent={active.content} documentKey={active.path ?? active.id} snapshot={historySnapshot} restore={restoreRevision} close={() => panel = null} />{:else if panel === 'properties' && !ui.focusMode && !canvasDocument && !active.hemingway}<Properties content={active.content} documentId={active.lifetime} {standalone} apply={applyProperties} editSource={() => { layout = 'source'; void tick().then(() => editor?.reveal(0)); }} close={() => panel = null} />{:else if panel === 'templates' && !ui.focusMode && !canvasDocument && !active.hemingway}<Templates snapshot={scriptSnapshot} apply={applyTemplate} close={()=>panel=null} />{:else if panel === 'export' && !ui.focusMode && !canvasDocument && !active.hemingway}<Export snapshot={()=>({name:active.name,text:active.content,documentId:active.lifetime,path:active.path,sourcePath:active.path??active.id,standalone})} {theme} loadEmbed={loadEmbedded} close={()=>panel=null} />{:else if panel === 'table' && !ui.focusMode && !canvasDocument && !active.hemingway}<SmartTable content={active.content} documentId={active.lifetime} cursor={active.selection?.head ?? 0} {standalone} apply={applyTable} close={()=>panel=null} />{:else if panel === 'graph' && !ui.focusMode}{#key catalog.activeId}<Graph currentPath={active.path} open={(path)=>void openPath(path)} close={()=>panel=null} />{/key}{:else if panel === 'git' && !ui.focusMode}{#key catalog.activeId}<Git close={() => panel = null} />{/key}{/if}
         </div>{/if}

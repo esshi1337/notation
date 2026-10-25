@@ -14,6 +14,7 @@ pub mod launch;
 pub mod mcp;
 pub mod search_graph;
 pub mod storage;
+pub mod sticky;
 pub mod wiki;
 pub mod workspace;
 pub mod workspace_catalog;
@@ -24,7 +25,7 @@ mod desktop {
     use super::instance;
     use super::{
         assets, automation, documents, engines, explorer, frontmatter, git, language_server, launch,
-        mcp, search_graph, storage, wiki, workspace,
+        mcp, search_graph, storage, sticky, wiki, workspace,
     };
     use serde_json::Value;
     use tauri::{Emitter, Manager, State};
@@ -584,6 +585,67 @@ mod desktop {
         .await
     }
     #[tauri::command]
+    async fn list_sticky_notes(window: tauri::WebviewWindow, database: State<'_, DatabaseState>) -> Result<Vec<sticky::Metadata>, String> {
+        sticky::authorize_main(window.label())?;
+        database_work(database.get()?, |db| db.list_stickies()).await
+    }
+    #[tauri::command]
+    async fn create_sticky_note(window: tauri::WebviewWindow, database: State<'_, DatabaseState>, manager: State<'_, sticky::StickyManager>) -> Result<sticky::Metadata, String> {
+        sticky::authorize_main(window.label())?;
+        let admission = manager.lock()?;
+        admission.check_open()?;
+        database.get()?.create_sticky()
+    }
+    #[tauri::command]
+    async fn delete_sticky_note(window: tauri::WebviewWindow, id: String, database: State<'_, DatabaseState>, manager: State<'_, sticky::StickyManager>) -> Result<(), String> {
+        sticky::authorize_main(window.label())?;
+        // Serialize deletion with reservation. Never hold this lock across window APIs.
+        let admission = manager.lock()?;
+        admission.check_delete(&id)?;
+        database.get()?.delete_sticky(&id)
+    }
+    #[tauri::command]
+    async fn read_sticky_note(window: tauri::WebviewWindow, id: String, database: State<'_, DatabaseState>) -> Result<sticky::Note, String> {
+        sticky::authorize_note(window.label(), &id)?;
+        database_work(database.get()?, move |db| db.read_sticky(&id)).await
+    }
+    #[tauri::command]
+    async fn update_sticky_note(window: tauri::WebviewWindow, id: String, title: String, text: String, database: State<'_, DatabaseState>) -> Result<(), String> {
+        sticky::authorize_note(window.label(), &id)?;
+        database_work(database.get()?, move |db| db.update_sticky(&id, &title, &text)).await
+    }
+    #[tauri::command]
+    async fn close_sticky_note(window: tauri::WebviewWindow, id: String) -> Result<(), String> {
+        sticky::authorize_note(window.label(), &id)?;
+        window.destroy().map_err(|error| error.to_string())
+    }
+    #[tauri::command]
+    async fn open_sticky_note(window: tauri::WebviewWindow, id: String, app: tauri::AppHandle, database: State<'_, DatabaseState>, manager: State<'_, sticky::StickyManager>) -> Result<(), String> {
+        sticky::authorize_main(window.label())?;
+        let reserved = {
+            let mut admission = manager.lock()?;
+            // Existence and reservation are atomic with respect to deletion.
+            database.get()?.read_sticky(&id)?;
+            admission.reserve(&id)?
+        };
+        let label = format!("sticky-{id}");
+        if !reserved {
+            let existing = app.get_webview_window(&label).ok_or("Sticky window is still opening. Try again shortly.")?;
+            existing.unminimize().map_err(|e| e.to_string())?;
+            return existing.set_focus().map_err(|e| e.to_string());
+        }
+        // No parent/owner: these windows stay independent when main is minimized.
+        let result = tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(format!("index.html?sticky={id}").into()))
+            .title("Sticky note — Notation").inner_size(340.0, 380.0).min_inner_size(240.0, 200.0)
+            .resizable(true).always_on_top(true).build();
+        if let Err(error) = result {
+            manager.lock()?.release(&id);
+            return Err(format!("Could not open sticky window: {error}"));
+        }
+        Ok(())
+    }
+
+    #[tauri::command]
     fn launch_ready(
         ready: bool,
         launches: State<'_, launch::LaunchQueue>,
@@ -592,10 +654,13 @@ mod desktop {
     }
     #[tauri::command]
     fn set_launch_closing(
+        window: tauri::WebviewWindow,
         closing: bool,
         launches: State<'_, launch::LaunchQueue>,
+        stickies: State<'_, sticky::StickyManager>,
     ) -> Result<(), String> {
-        launches.set_closing(closing)
+        sticky::authorize_main(window.label())?;
+        stickies.lock()?.close_with(closing, || launches.set_closing(closing))
     }
     #[tauri::command]
     fn complete_launch_request(
@@ -665,6 +730,16 @@ mod desktop {
         let app = tauri::Builder::default()
             .manage(automation::ScriptManager::default())
             .manage(launches.clone())
+            .manage(sticky::StickyManager::default())
+            .on_window_event(|window, event| {
+                if matches!(event, tauri::WindowEvent::Destroyed) {
+                    if let Some(id) = window.label().strip_prefix("sticky-") {
+                        if let Ok(mut admission) = window.state::<sticky::StickyManager>().lock() {
+                            admission.release(id);
+                        }
+                    }
+                }
+            })
             .setup(|app| {
                 #[cfg(target_os = "linux")]
                 let data_directory: Result<std::path::PathBuf, String> = Ok(app
@@ -705,7 +780,8 @@ mod desktop {
                 Ok(())
             })
             .plugin(tauri_plugin_dialog::init())
-            .invoke_handler(tauri::generate_handler![
+            .invoke_handler({
+                let commands: fn(tauri::ipc::Invoke) -> bool = tauri::generate_handler![
                 read_document,
                 read_launch_document,
                 resolve_document_path,
@@ -766,8 +842,22 @@ mod desktop {
                 query_properties,
                 resolve_wiki_link,
                 wiki_candidates,
-                create_wiki_note
-            ])
+                create_wiki_note,
+                list_sticky_notes, create_sticky_note, open_sticky_note, delete_sticky_note,
+                read_sticky_note, update_sticky_note, close_sticky_note
+                ];
+                move |invoke: tauri::ipc::Invoke| {
+                    // Custom app commands have no generated ACL. Keep sticky webviews
+                    // out of ordinary drafts, files, scripts and lifecycle commands too.
+                    if invoke.message.webview_ref().label().starts_with("sticky-")
+                        && !matches!(invoke.message.command(), "read_sticky_note" | "update_sticky_note" | "close_sticky_note")
+                    {
+                        invoke.resolver.reject("Sticky windows may only read, update and close their own note.");
+                        return true;
+                    }
+                    commands(invoke)
+                }
+            })
             .build(tauri::generate_context!())
             .expect("Notation could not start");
         // Configured webviews are created on RunEvent::Ready. Claim ownership
