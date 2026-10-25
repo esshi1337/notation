@@ -1,6 +1,70 @@
-# Notation
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/readme/notation-wordmark-dark.svg">
+    <img alt="Notation" src="docs/readme/notation-wordmark-light.svg" width="360">
+  </picture>
+</h1>
 
-A local-first Markdown, Mermaid, and Canvas editor built with Svelte, CodeMirror 6, and a Rust/Tauri backend. It runs as a Linux desktop application, with a browser mode for development.
+<p align="center">
+  A local-first editor for Markdown, Mermaid, math and Canvas.<br>
+  Plain-text files on your own disk, in a native Linux window. No account, no sync service.
+</p>
+
+<p align="center">
+  <a href="#desktop-application">Install</a>
+  &nbsp;&middot;&nbsp;
+  <a href="docs/user-guide.md">User guide</a>
+  &nbsp;&middot;&nbsp;
+  <a href="docs/examples.md">Examples</a>
+  &nbsp;&middot;&nbsp;
+  <a href="#development">Development</a>
+</p>
+
+<p align="center">
+  <img src="docs/readme/hero.png" width="100%" alt="Notation in Split view: Markdown source on the left; the rendered document with a callout, task list, Mermaid flowchart and KaTeX math on the right">
+</p>
+
+Built with Svelte 5, CodeMirror 6 and a Rust/Tauri 2 backend. It ships as a standalone Linux AppImage, with a browser mode for development.
+
+| Area | Highlights |
+| --- | --- |
+| **Write** | Source, Split, Preview and Live Preview modes; tasks, callouts, tables, folding, wiki links and properties |
+| **Diagram** | Mermaid and Graphviz render inline; LaTeX math through bundled KaTeX, with no network |
+| **Organize** | Workspaces, an explorer, a note graph, history, templates and Canvas boards |
+| **Export** | HTML, self-contained webpages, PDF, DOCX and slides, with Pandoc and Typst bundled in the AppImage |
+| **Desktop** | Native sticky note windows, a Git view for the active file, and an MCP connection for agents |
+
+### Write the way you read
+
+Live Preview renders Markdown in place and shows the source only on the line you are editing. Checkboxes toggle with a click, diagrams and equations render inline, and switching modes keeps your selection and undo history.
+
+<p align="center">
+  <img src="docs/readme/live-preview.png" width="100%" alt="Live Preview on the Paper theme, showing rendered tasks, a Mermaid flowchart, display math and a table">
+</p>
+
+### Lay ideas out on a Canvas
+
+Canvas boards are [JSON Canvas](https://jsoncanvas.org) files. Drag, resize and connect cards, label the connections, and link cards to notes in your workspace.
+
+<p align="center">
+  <img src="docs/readme/canvas.png" width="100%" alt="A Canvas board with five cards for a release plan connected by arrows">
+</p>
+
+### Every action is a command
+
+Press <kbd>Ctrl</kbd>+<kbd>K</kbd> to search every command. View modes, panels, blocks and documents are all a few keystrokes away, and you can rebind any shortcut in Settings.
+
+<p align="center">
+  <img src="docs/readme/command-palette.png" width="100%" alt="The command palette filtered to view commands, with keyboard shortcuts listed beside each one">
+</p>
+
+### Seven presets, or your own CSS
+
+Five dark and two light presets ship with the app. Local user themes add your own CSS on top of any preset, with live preview, import and export.
+
+<p align="center">
+  <img src="docs/readme/themes.png" width="100%" alt="The same document rendered in the Midnight, Charcoal, AMOLED, Default, Paper, Forest and Dusk themes">
+</p>
 
 ## Product guide
 
