@@ -1,6 +1,10 @@
 # Notation
 
-A small Markdown and Mermaid editor built with Svelte, CodeMirror 6, and a Rust/Tauri backend. Markdown and diagrams are the focus of this first implementation.
+A local-first Markdown, Mermaid, and Canvas editor built with Svelte, CodeMirror 6, and a Rust/Tauri backend. It runs as a Linux desktop application, with a browser mode for development.
+
+## Product guide
+
+New to Notation? Read the [user guide](docs/user-guide.md) for a task-oriented tour and [examples](docs/examples.md) for research, Canvas, and theme workflows. Recent additions include the AMOLED, Forest, Dusk, and Paper presets; local user themes with preview, import, and export; and Canvas direct resize, connection, and note-linking controls.
 
 ## Desktop application
 
@@ -45,18 +49,19 @@ npm run desktop
 
 On Arch Linux, building Tauri requires `webkit2gtk-4.1` and `gtk3`; `webkitgtk-6.0` is a different API and does not replace that dependency. The AppImage bundles WebKitGTK for runtime use. Desktop mode uses native open/save dialogs and Rust file operations. The desktop Cargo feature is explicit so core file-operation tests can run without GTK/WebKit.
 
-## First milestone
+## Editing basics
 
-- Edit Markdown and standalone `.mmd` diagrams.
-- Preview Markdown with Mermaid fences, including localized diagram errors.
-- Switch between source, preview, split, and inline Live Preview layouts.
-- Choose a theme, font size, and word wrapping.
-- Restore the current draft and preferences from local application storage.
+- Edit Markdown, standalone `.mmd` diagrams, and JSON Canvas boards.
+- Preview Mermaid and other diagram fences, KaTeX math, and note embeds, with localized errors.
+- Switch between Source, Split, Preview, and inline Live Preview.
+- Choose a Dark or Light mode and preset, a custom local theme, font size, and word wrapping.
+- Restore open tabs, drafts, and preferences from local application storage.
+- Use workspaces, wiki links, properties, search, note graph, tables, citations, templates, queries, and executable cells.
 - Use CodeMirror editing commands, including undo/redo and find.
 
 Press **F2**, double-click a tab, or run **Rename document** to change its name. Use `.mmd` for a standalone diagram, or `.md` for Markdown with fenced `mermaid` blocks. `Ctrl/Cmd+S` saves; `Ctrl/Cmd+Shift+S` opens Save As in desktop mode.
 
-Desktop drafts and preferences use SQLite, with a webview recovery cache. Browser development mode uses local storage. Astro execution, IDE features, plugins, and a general custom-theme system are outside this milestone.
+Desktop drafts and preferences use SQLite, with a webview recovery cache. Browser development mode uses local storage. Astro execution and plugins are outside the current product.
 
 ## Hemingway mode
 
@@ -266,7 +271,7 @@ The interface uses one compact tab row. Press **Ctrl/Cmd+K** or use **Commands**
 
 Open **Explorer** to browse the selected workspace’s referenced files. Full file paths appear on hover and in **Workspace → Referenced files**, including when filenames repeat in different locations. Migrated folder workspaces retain expandable directory browsing; hidden/build directories and symlinks are omitted from those listings.
 
-**Settings → Appearance** controls theme, dark-only presets, interface density, sidebar position and width presets, status bar, and focus mode. Theme, density, and position use segmented controls; Compact and Comfortable change interface spacing and control sizes. Sidebar width changes the narrow icon strip with Narrow, Standard, and Wide presets. Tool panel width separately sizes the open tool beside it, including Note graph; an existing custom panel width is preserved until a panel preset is chosen. Both settings are saved across restarts. The app sidebar opens Explorer, Workspace, Note graph, Git, History, Properties, Templates, Table editor, and Scripts. Settings and Export live in the Notation menu, and Git has a distinct branch icon. Choose **Sidebar position → Left / Right** to move the navigation and its open tool together. The side is saved across restarts. Click the selected tool again to close it, or use Focus mode to hide the sidebar. In narrow windows, the tool overlays the editor to preserve writing width. Arrow Up/Down and Home/End navigate the sidebar buttons. **Editor** controls font family/size (bundled Source Sans 3 and IBM Plex Mono), line height, reading width, wrapping, layout, line numbers, and smooth scrolling. Smooth scrolling eases mouse-wheel steps, including small and fractional high-resolution mouse input, in documents and panels; turn it off for immediate native scrolling. System reduced-motion preferences disable the animation. If animation misses its frame budget, the rest of that wheel gesture switches to immediate scrolling instead of accumulating delays. The Editor section includes custom number steppers and a live typography/layout specimen. Each section has its own reset; these resets preserve documents, scripts, and recovery data.
+**Settings → Appearance** controls the built-in Dark or Light mode, its preset (Dark: Midnight, Charcoal, AMOLED, Forest, Dusk; Light: Default, Paper), local user themes, interface density, sidebar position and width presets, status bar, and focus mode. Theme, density, and position use segmented controls; Compact and Comfortable change interface spacing and control sizes. Sidebar width changes the narrow icon strip with Narrow, Standard, and Wide presets. Tool panel width separately sizes the open tool beside it, including Note graph; an existing custom panel width is preserved until a panel preset is chosen. Both settings are saved across restarts. The app sidebar opens Explorer, Workspace, Note graph, Git, History, Properties, Templates, Table editor, and Scripts. Settings and Export live in the Notation menu, and Git has a distinct branch icon. Choose **Sidebar position → Left / Right** to move the navigation and its open tool together. The side is saved across restarts. Click the selected tool again to close it, or use Focus mode to hide the sidebar. In narrow windows, the tool overlays the editor to preserve writing width. Arrow Up/Down and Home/End navigate the sidebar buttons. **Editor** controls font family/size (bundled Source Sans 3 and IBM Plex Mono), line height, reading width, wrapping, layout, line numbers, and smooth scrolling. Smooth scrolling eases mouse-wheel steps, including small and fractional high-resolution mouse input, in documents and panels; turn it off for immediate native scrolling. System reduced-motion preferences disable the animation. If animation misses its frame budget, the rest of that wheel gesture switches to immediate scrolling instead of accumulating delays. The Editor section includes custom number steppers and a live typography/layout specimen. Each section has its own reset; these resets preserve documents, scripts, and recovery data.
 
 Settings keeps the same window-relative size across sections. Long sections scroll inside the dialog; the Shortcuts list scrolls independently while its search and close controls stay visible.
 
