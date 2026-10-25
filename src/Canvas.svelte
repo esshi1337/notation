@@ -6,12 +6,15 @@
   type Snapshot = { text: string; documentId: number };
   type Drag = { kind: 'move' | 'resize' | 'pan'; pointerId: number; id: string | null; x: number; y: number; panX: number; panY: number; width: number; height: number; zoom: number; snapshot: Snapshot };
   const MIN_WIDTH = 120, MIN_HEIGHT = 80, MAX_SIZE = 1_000_000, MAX_DROP_TEXT = 20_000;
-  let { content, documentId, path, apply, openNote, renderCard, undo, redo }: { content: string; documentId: number; path?: string | null; apply: (next: string, snapshot: Snapshot) => boolean; openNote: (file: string, subpath?: string) => void; renderCard?: (host: HTMLElement, markdown: string, sourcePath?: string, current?: () => boolean) => Promise<void>; undo?: () => void; redo?: () => void } = $props();
+  type NoteCandidate = { file: string; name?: string; title?: string; detail?: string };
+  let { content, documentId, path, apply, openNote, noteCandidates, renderCard, undo, redo }: { content: string; documentId: number; path?: string | null; apply: (next: string, snapshot: Snapshot) => boolean; openNote: (file: string, subpath?: string) => void; noteCandidates?: (query: string) => Promise<NoteCandidate[]>; renderCard?: (host: HTMLElement, markdown: string, sourcePath?: string, current?: () => boolean) => Promise<void>; undo?: () => void; redo?: () => void } = $props();
   let parseError = $state(false);
   let canvas = $state<CanvasDocument>({ nodes: [], edges: [] }), error = $state(''), message = $state('');
   let selectedId = $state(''), selected = $derived(canvas.nodes.find((node) => node.id === selectedId));
   let zoom = $state(1), panX = $state(40), panY = $state(40), drag = $state<Drag | null>(null), dx = $state(0), dy = $state(0), spaceHeld = $state(false);
   let cardText = $state(''), cardFile = $state(''), cardLabel = $state(''), cardURL = $state(''), cardWidth = $state(280), cardHeight = $state(180);
+  let noteQuery = $state(''), noteResults = $state<NoteCandidate[]>([]), noteSearchError = $state(''), noteSearchBusy = $state(false), noteSerial = 0;
+  let fileField = $state<HTMLInputElement>();
   let formSnapshot: Snapshot | null = null, loadedId = -1;
   let fromCard = $state(''), toCard = $state(''), edgeLabel = $state(''), connectOpen = $state(false), connectSource = $state('');
   let viewport: HTMLDivElement, addMenuHost: HTMLDivElement, addTrigger: HTMLButtonElement;
@@ -50,9 +53,9 @@
         const next = parseCanvas(text);
         canvas = next; parseError = false; error = '';
         if (connectSource && !next.nodes.some((node) => node.id === connectSource)) connectSource = '';
-        if (identity !== loadedId) { loadedId = identity; selectedId = ''; zoom = 1; panX = 40; panY = 40; connectSource = ''; cancelGesture(); }
+        if (identity !== loadedId) { loadedId = identity; selectedId = ''; resetNoteSearch(); zoom = 1; panX = 40; panY = 40; connectSource = ''; cancelGesture(); }
       }
-      catch (cause) { canvas = { nodes: [], edges: [] }; selectedId = ''; connectSource = ''; parseError = true; error = cause instanceof Error ? cause.message : String(cause); }
+      catch (cause) { canvas = { nodes: [], edges: [] }; selectedId = ''; resetNoteSearch(); connectSource = ''; parseError = true; error = cause instanceof Error ? cause.message : String(cause); }
     });
   });
   function commit(mutate: (value: CanvasDocument) => void, source: Snapshot = { text: content, documentId }) {
@@ -78,9 +81,38 @@
       if (resize) { cardWidth = node.width; cardHeight = node.height; }
     });
   }
+  function resetNoteSearch() { noteSerial++; noteQuery = ''; noteResults = []; noteSearchError = ''; noteSearchBusy = false; }
   function select(node: CanvasNode) {
+    resetNoteSearch();
     selectedId = node.id; cardText = node.text ?? ''; cardFile = node.file ?? ''; cardLabel = node.label ?? ''; cardURL = node.url ?? ''; cardWidth = node.width; cardHeight = node.height;
     formSnapshot = { text: content, documentId };
+  }
+  function linkNote(node: CanvasNode) {
+    select(node);
+    message = 'Choose an open or indexed note, or enter a workspace-relative path, then Apply card.';
+    void tick().then(() => { if (selectedId === node.id) fileField?.focus(); });
+  }
+  async function searchNotes() {
+    if (!selected || selected.type !== 'file' || !noteCandidates) return;
+    const id = selected.id, serial = ++noteSerial, query = noteQuery.trim().slice(0, 200), source = { text: content, documentId };
+    noteSearchBusy = true; noteSearchError = ''; noteResults = [];
+    try {
+      const results = await noteCandidates(query);
+      // Ignore a response once the card, tab, source, or inspector form changed.
+      if (serial !== noteSerial || selectedId !== id || source.text !== content || source.documentId !== documentId || !formSnapshot || formSnapshot.text !== source.text || formSnapshot.documentId !== source.documentId) return;
+      noteResults = results;
+      if (!results.length) noteSearchError = query ? 'No open or indexed note matches "' + query + '". Enter a workspace-relative path above, then Apply card.' : 'No open or indexed notes are available. Enter a workspace-relative path above, then Apply card.';
+    } catch (cause) {
+      if (serial === noteSerial && selectedId === id) noteSearchError = 'Could not search notes: ' + (cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      if (serial === noteSerial) noteSearchBusy = false;
+    }
+  }
+  function chooseNote(id: string, file: string) {
+    if (selectedId !== id || !selected || selected.type !== 'file' || !file.trim()) return;
+    cardFile = file.trim();
+    noteResults = []; noteSearchError = '';
+    message = 'Selected ' + cardFile + '. Apply card to save the link, then Open original.';
   }
   function add(type: 'text' | 'file' | 'group', variant = '') {
     addOpen = false; addTrigger?.focus();
@@ -97,10 +129,12 @@
   }
   function applyCard() {
     if (!selected || !formSnapshot) return;
+    if (selected.type === 'file' && cardFile && !cardFile.trim()) { error = 'Enter a note path or clear Card file to leave this card unlinked.'; return; }
+    if (selected.type === 'file' && /[\r\n]/u.test(cardFile)) { error = 'Note paths cannot contain line breaks.'; return; }
     const id = selected.id;
-    if (commit((value) => { const node = value.nodes.find((item) => item.id === id)!; node.width = Math.round(Number(cardWidth)); node.height = Math.round(Number(cardHeight)); if (node.type === 'text') node.text = cardText; if (node.type === 'file') node.file = cardFile; if (node.type === 'link') node.url = cardURL; if (cardLabel) node.label = cardLabel; else delete node.label; }, formSnapshot)) { formSnapshot = null; selectedId = ''; }
+    if (commit((value) => { const node = value.nodes.find((item) => item.id === id)!; node.width = Math.round(Number(cardWidth)); node.height = Math.round(Number(cardHeight)); if (node.type === 'text') node.text = cardText; if (node.type === 'file') { node.file = cardFile.trim(); } if (node.type === 'link') node.url = cardURL; if (cardLabel) node.label = cardLabel; else delete node.label; }, formSnapshot)) { formSnapshot = null; selectedId = ''; resetNoteSearch(); }
   }
-  function remove() { if (selected && commit((value) => removeCanvasNode(value, selected.id))) selectedId = ''; }
+  function remove() { if (selected && commit((value) => removeCanvasNode(value, selected.id))) { selectedId = ''; resetNoteSearch(); } }
   function begin(event: PointerEvent, node?: CanvasNode) {
     if (drag || (event.button !== 0 && event.button !== 1)) return;
     const pan = !node || event.button === 1 || spaceHeld;
@@ -212,7 +246,13 @@
     const file = node.file || '';
     if (/\.(?:png|jpe?g|gif|webp|avif|svg|bmp)$/iu.test(file)) return '![](' + encodeURI(file).replace(/[()]/gu, (value) => '%' + value.charCodeAt(0).toString(16)) + ')';
     if (/\.(?:md|markdown)$/iu.test(file) && !file.includes(']]')) return '![[' + file + (node.subpath || '') + ']]';
-    return file || 'Choose a file in the card editor.';
+    return file || 'Choose a note in the card editor.';
+  }
+  function openFile(node: CanvasNode) {
+    const file = (node.file || '').trim();
+    if (!file) { linkNote(node); return; }
+    if (/[\r\n]/u.test(file) || file.includes(']]')) { error = 'This card path is not a valid note target. Edit Card file and Apply card.'; return; }
+    openNote(file, node.subpath);
   }
   function openLink(url: string) { try { const target = new URL(url); if (!['https:','http:','mailto:'].includes(target.protocol)) throw new Error('Only HTTP, HTTPS, and mail links can open from the canvas.'); window.open(target.href, '_blank', 'noopener,noreferrer'); } catch (cause) { error = String(cause); } }
 </script>
@@ -229,14 +269,14 @@
         <svg class="canvas-edges" width="1" height="1" aria-label="Canvas connections"><defs><marker id={'canvas-arrow-' + documentId} markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto-start-reverse"><path d="M0,0 L6,3 L0,6" fill="var(--muted)" /></marker></defs>{#each canvas.edges as edge}<g>{#if canvas.nodes.some((node) => node.id === edge.fromNode) && canvas.nodes.some((node) => node.id === edge.toNode)}{@const from = canvasAnchor(placed(canvas.nodes.find((node) => node.id === edge.fromNode)!), edge.fromSide || 'right')}{@const to = canvasAnchor(placed(canvas.nodes.find((node) => node.id === edge.toNode)!), edge.toSide || 'left')}<line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="var(--muted)" stroke-width="1.5" marker-start={edge.fromEnd === 'arrow' ? 'url(#canvas-arrow-' + documentId + ')' : undefined} marker-end={edge.toEnd === 'none' ? undefined : 'url(#canvas-arrow-' + documentId + ')'} /><text x={(from.x + to.x) / 2} y={(from.y + to.y) / 2 - 7} fill="var(--muted)" font-size="11">{edge.label || ''}</text>{/if}</g>{/each}</svg>
         {#each canvas.nodes as node (node.id)}<article class="canvas-node" class:canvas-group={node.type === 'group'} class:selected={selectedId === node.id} class:connecting={connectSource === node.id} aria-label={'Canvas card: ' + canvasNodeTitle(node)} style={'left:' + placed(node).x + 'px;top:' + placed(node).y + 'px;width:' + placed(node).width + 'px;height:' + placed(node).height + 'px'} onpointerdown={(event) => cardPointer(event,node)}>
           <div class="canvas-node-heading"><button class="canvas-move" aria-label={'Move card: ' + canvasNodeTitle(node)} onpointerdown={(event) => { event.stopPropagation(); begin(event,node); }}>{canvasNodeTitle(node)}</button><button class="canvas-connect" aria-label={'Connect card: ' + canvasNodeTitle(node)} aria-pressed={connectSource === node.id} title="Connect this card to another" onclick={() => connectCard(node)}>⇢</button><button aria-label={'Edit card: ' + canvasNodeTitle(node)} onclick={() => select(node)}>⋯</button></div>
-          {#if node.type === 'text'}<CanvasCard markdown={node.text || ''} sourcePath={path ?? undefined} render={renderCard} />{:else if node.type === 'file'}<div class="canvas-file"><button disabled={!node.file} onclick={() => openNote(node.file!,node.subpath)} aria-label={'Open card file: ' + (node.file || '')}>Open original</button><CanvasCard markdown={fileMarkdown(node)} sourcePath="" render={renderCard} /></div>{:else if node.type === 'link'}<button class="canvas-link" onclick={() => openLink(node.url || '')}>{node.url}</button>{/if}
+          {#if node.type === 'text'}<CanvasCard markdown={node.text || ''} sourcePath={path ?? undefined} render={renderCard} />{:else if node.type === 'file'}<div class="canvas-file">{#if node.file?.trim()}<button onclick={() => openFile(node)} aria-label={'Open card file: ' + node.file}>Open original</button>{:else}<button type="button" onclick={() => linkNote(node)}>Choose note</button>{/if}<CanvasCard markdown={fileMarkdown(node)} sourcePath="" render={renderCard} /></div>{:else if node.type === 'link'}<button class="canvas-link" onclick={() => openLink(node.url || '')}>{node.url}</button>{/if}
           <button type="button" class="canvas-resize" aria-label={'Resize card: ' + canvasNodeTitle(node)} title="Resize card" onpointerdown={(event) => { event.stopPropagation(); if (spaceHeld || event.button === 1) begin(event,node); else beginResize(event,node); }}></button>
         </article>{/each}
       </div>
       {#if !canvas.nodes.length && !error}<p class="canvas-empty">Add a card to start this canvas. Drag a title to move, drag the corner to resize, or drag empty space to pan.</p>{/if}
     </div>
     {#if selected || connectOpen}<aside class="canvas-inspector" aria-label="Canvas inspector">
-      {#if selected}<div class="scripts-heading"><strong>Edit card</strong><button aria-label="Close card editor" onclick={() => selectedId = ''}>×</button></div><label>Card label<input aria-label="Card label" bind:value={cardLabel} /></label>{#if selected.type === 'text'}<label>Card text<textarea aria-label="Card text" bind:value={cardText}></textarea></label>{:else if selected.type === 'file'}<label>Card file<input aria-label="Card file" bind:value={cardFile} /></label>{:else if selected.type === 'link'}<label>Card URL<input aria-label="Card URL" bind:value={cardURL} /></label>{/if}<div class="canvas-size"><label>Width<input type="number" aria-label="Card width" bind:value={cardWidth} min="1" max="1000000" /></label><label>Height<input type="number" aria-label="Card height" bind:value={cardHeight} min="1" max="1000000" /></label></div><div class="panel-actions"><button onclick={applyCard}>Apply card</button><button onclick={remove}>Delete card</button></div>{/if}
+      {#if selected}<div class="scripts-heading"><strong>Edit card</strong><button aria-label="Close card editor" onclick={() => { selectedId = ''; resetNoteSearch(); }}>×</button></div><label>Card label<input aria-label="Card label" bind:value={cardLabel} /></label>{#if selected.type === 'text'}<label>Card text<textarea aria-label="Card text" bind:value={cardText}></textarea></label>{:else if selected.type === 'file'}<label>Card file<input aria-label="Card file" placeholder="notes/example.md" bind:this={fileField} bind:value={cardFile} /></label><p class="canvas-note-help">Enter a workspace-relative path, choose a search result, then Apply card. Open original uses existing wiki navigation and keeps any #heading subpath.</p>{#if noteCandidates}<div class="canvas-note-search"><label>Find note<input type="search" aria-label="Find note" maxlength="200" bind:value={noteQuery} onkeydown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void searchNotes(); } }} /></label><button type="button" disabled={noteSearchBusy} onclick={() => void searchNotes()}>{noteSearchBusy ? 'Searching…' : 'Search notes'}</button></div>{#if noteSearchError}<p class="canvas-note-status" role="alert">{noteSearchError}</p>{/if}{#if noteResults.length}<ul class="canvas-note-results" aria-label="Note results">{#each noteResults as note (note.file)}<li><button type="button" aria-label={'Use note: ' + note.file} onclick={() => chooseNote(selectedId, note.file)}><strong>{note.title || note.name || note.file}</strong><span>{note.file}{note.detail ? ' · ' + note.detail : ''}</span></button></li>{/each}</ul>{/if}{/if}{:else if selected.type === 'link'}<label>Card URL<input aria-label="Card URL" bind:value={cardURL} /></label>{/if}<div class="canvas-size"><label>Width<input type="number" aria-label="Card width" bind:value={cardWidth} min="1" max="1000000" /></label><label>Height<input type="number" aria-label="Card height" bind:value={cardHeight} min="1" max="1000000" /></label></div><div class="panel-actions"><button onclick={applyCard}>Apply card</button><button onclick={remove}>Delete card</button></div>{/if}
       {#if connectOpen}<strong>Connection</strong><label>From card<select aria-label="From card" bind:value={fromCard}><option value="">Choose a card</option>{#each canvas.nodes as node}<option value={node.id}>{canvasNodeTitle(node)}</option>{/each}</select></label><label>To card<select aria-label="To card" bind:value={toCard}><option value="">Choose a card</option>{#each canvas.nodes as node}<option value={node.id}>{canvasNodeTitle(node)}</option>{/each}</select></label><label>Connection label<input aria-label="Connection label" bind:value={edgeLabel} /></label><button onclick={connect}>Add connection</button>{/if}
       {#if canvas.edges.length}<details><summary>Connections</summary>{#each canvas.edges as edge}<div class="canvas-edge-row"><span>{edge.label || edge.fromNode.slice(0,8) + ' → ' + edge.toNode.slice(0,8)}</span><button aria-label={'Delete connection: ' + edge.id} onclick={() => commit((value) => value.edges = value.edges.filter((item) => item.id !== edge.id))}>×</button></div>{/each}</details>{/if}
     </aside>{/if}
@@ -247,4 +287,13 @@
 <style>
   .canvas-view{display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;flex:1;background:var(--bg)}.canvas-tools{display:flex;align-items:center;gap:4px;padding:5px 7px;border-bottom:1px solid var(--border);flex-wrap:nowrap;min-height:32px}.canvas-tools button{font-size:10px;padding:3px 6px}.canvas-help{margin:0;padding:3px 8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.canvas-tool-space{flex:1}.canvas-zoom{font-size:10px;color:var(--muted);min-width:32px;text-align:center}.canvas-area{display:flex;flex:1;min-height:0;overflow:hidden}.canvas-viewport{position:relative;flex:1;overflow:hidden;touch-action:none;outline:none}.canvas-plane{position:absolute;left:0;top:0;transform-origin:0 0}.canvas-edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}.canvas-node{position:absolute;display:flex;flex-direction:column;border:1px solid var(--border);background:var(--panel);overflow:hidden;box-shadow:0 2px 12px #0002}.canvas-node.selected{border-color:var(--muted)}.canvas-node-heading{display:flex;align-items:center;border-bottom:1px solid var(--border);height:27px;flex-shrink:0;background:var(--bar)}.canvas-node-heading button{border:0;border-radius:0;height:100%;padding:3px 7px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.canvas-move{flex:1;cursor:grab;text-align:left;touch-action:none}.canvas-connect{flex:0 0 auto;cursor:pointer}.canvas-connect[aria-pressed=true]{background:var(--muted);color:var(--bg)}.canvas-node.connecting{border-color:var(--muted);box-shadow:0 0 0 1px var(--muted),0 2px 12px #0002}.canvas-resize{position:absolute;right:0;bottom:0;width:16px;height:16px;padding:0;border:0;border-radius:0;background:linear-gradient(135deg,transparent 0 46%,var(--muted) 46% 54%,transparent 54% 65%,var(--muted) 65% 73%,transparent 73%);cursor:nwse-resize;touch-action:none;opacity:.7;z-index:2}.canvas-resize:hover,.canvas-resize:focus-visible{opacity:1}.canvas-group{background:transparent;border-style:dashed;pointer-events:none;box-shadow:none}.canvas-group .canvas-node-heading,.canvas-group .canvas-resize{pointer-events:auto}.canvas-file{min-height:0;display:flex;flex-direction:column;flex:1;overflow:hidden}.canvas-file>button{font-size:10px;align-self:flex-start;margin:6px 8px}.canvas-link{margin:12px;overflow-wrap:anywhere;white-space:normal}.canvas-inspector{width:220px;flex-shrink:0;overflow:auto;border-left:1px solid var(--border);padding:12px;display:flex;flex-direction:column;gap:10px;background:var(--panel)}.canvas-inspector label{display:grid;gap:5px;font-size:11px;color:var(--muted)}.canvas-inspector input,.canvas-inspector select,.canvas-inspector textarea{width:100%;min-width:0;background:var(--bg);color:var(--text);border:1px solid var(--border);padding:6px;font:11px/1.5 inherit}.canvas-inspector textarea{min-height:120px;resize:vertical;font-family:'IBM Plex Mono',monospace}.canvas-size{display:grid;grid-template-columns:1fr 1fr;gap:7px}.canvas-empty{position:absolute;left:24px;top:20px;color:var(--muted);font-size:12px;pointer-events:none;max-width:310px;line-height:1.7}.canvas-message{padding:4px 10px;border-top:1px solid var(--border);font-size:10px;color:var(--muted)}.canvas-edge-row{display:flex;gap:5px;align-items:center;font-size:10px;padding:5px 0}.canvas-edge-row span{flex:1;overflow-wrap:anywhere}
 .canvas-add-menu{position:relative}.canvas-add-menu [role=menu]{position:absolute;left:0;top:calc(100% + 4px);z-index:10;width:180px;padding:4px;background:var(--menu);border:1px solid var(--border);border-radius:4px;box-shadow:0 8px 24px #0005}.canvas-add-menu [role=menuitem]{display:block;width:100%;text-align:left;padding:6px 8px}.canvas-tools button:disabled{cursor:default}@media(max-width:800px){.canvas-inspector{width:200px;padding:10px}}
+  .canvas-note-help{margin:4px 0;color:var(--muted);font-size:10px;line-height:1.4}
+  .canvas-note-search{display:flex;align-items:flex-end;gap:4px;margin:4px 0}
+  .canvas-note-search label{flex:1;min-width:0}
+  .canvas-note-status{margin:4px 0;color:var(--muted);font-size:10px;line-height:1.4}
+  .canvas-note-results{list-style:none;margin:4px 0;padding:0;max-height:160px;overflow:auto;border:1px solid var(--border);border-radius:4px}
+  .canvas-note-results li+li{border-top:1px solid var(--border)}
+  .canvas-note-results button{display:block;width:100%;text-align:left;padding:5px 7px}
+  .canvas-note-results strong,.canvas-note-results span{display:block;overflow:hidden;text-overflow:ellipsis}
+  .canvas-note-results span{font-size:9px;color:var(--muted)}
 </style>
