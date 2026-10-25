@@ -82,7 +82,7 @@ export function shortcutFor(id: CommandId, overrides: ShortcutOverrides): string
   return overrides[id] ?? COMMANDS.find((command) => command.id === id)!.defaultShortcut;
 }
 
-const reserved = new Set(['Mod+A', 'Mod+C', 'Mod+V', 'Mod+X', 'Mod+Z', 'Mod+Shift+Z', 'Mod+Y', 'Mod+Q', 'Mod+R', 'Mod+Shift+R', 'Mod+Alt+Delete']);
+const reserved = new Set(['Mod+A', 'Mod+C', 'Mod+V', 'Mod+X', 'Mod+Z', 'Mod+Shift+Z', 'Mod+Y', 'Mod+Q', 'Mod+R', 'Mod+Shift+R', 'Mod+Alt+Delete', 'Mod+Shift+F12']);
 
 export function validateShortcut(id: CommandId, binding: string, overrides: ShortcutOverrides): string | null {
   const normalized = normalizeShortcut(binding);

@@ -8,13 +8,15 @@
   import SegmentedControl from './SegmentedControl.svelte';
   import SelectControl from './SelectControl.svelte';
   import NumberControl from './NumberControl.svelte';
+  import ThemeEditor from './ThemeEditor.svelte';
+  import type { UserTheme } from './themes';
   import { COMMANDS, formatShortcut, normalizeShortcut, shortcutFor, shortcutFromEvent, validateShortcut } from './shortcuts';
   import type { CommandId, ShortcutOverrides } from './shortcuts';
 
   type Layout = 'split' | 'source' | 'preview' | 'live';
   type Section = 'Appearance' | 'Editor' | 'Shortcuts' | 'Agents';
   type AgentStatus = { available: boolean; ready: boolean; socketPath?: string; command?: string; args?: string[]; error?: string };
-  let { theme = $bindable(), fontSize = $bindable(), wrap = $bindable(), layout = $bindable(), prefs = $bindable(), shortcuts = $bindable(), agentEditsEnabled = $bindable(), close }: { theme: 'dark' | 'light'; fontSize: number; wrap: boolean; layout: Layout; prefs: UIPreferences; shortcuts: ShortcutOverrides; agentEditsEnabled: boolean; close: () => void } = $props();
+  let { builtInTheme = $bindable(), theme, fontSize = $bindable(), wrap = $bindable(), layout = $bindable(), prefs = $bindable(), shortcuts = $bindable(), agentEditsEnabled = $bindable(), close, onpreview, disableTheme, themeImportReset }: { builtInTheme: 'dark' | 'light'; theme: 'dark' | 'light'; fontSize: number; wrap: boolean; layout: Layout; prefs: UIPreferences; shortcuts: ShortcutOverrides; agentEditsEnabled: boolean; close: () => void; onpreview: (theme: UserTheme | null) => void; disableTheme: () => void; themeImportReset: { generation: number } } = $props();
 
   const sections: Section[] = ['Appearance', 'Editor', 'Shortcuts', 'Agents'];
   const themeOptions = [{ value: 'dark', label: 'Dark' }, { value: 'light', label: 'Light' }];
@@ -110,7 +112,8 @@
     copyError = '';
   });
   function resetAppearance() {
-    theme = 'dark';
+    disableTheme();
+    builtInTheme = 'dark';
     prefs.darkPreset = DEFAULT_UI_PREFERENCES.darkPreset;
     prefs.lightPreset = DEFAULT_UI_PREFERENCES.lightPreset;
     prefs.density = DEFAULT_UI_PREFERENCES.density;
@@ -180,8 +183,8 @@
       {#if section === 'Appearance'}
         <div class="settings-intro"><strong>Make room for your thoughts.</strong><p>A quiet workspace, adjusted to you.</p></div>
         <div class="settings-fields">
-          <SegmentedControl label="Theme" options={themeOptions} value={theme} onchange={(value) => theme = value as 'dark' | 'light'} />
-          {#if theme === 'dark'}
+          <SegmentedControl label="Theme" options={themeOptions} value={builtInTheme} onchange={(value) => builtInTheme = value as 'dark' | 'light'} />
+          {#if builtInTheme === 'dark'}
             <SelectControl label="Dark preset" options={darkPresetOptions} value={prefs.darkPreset} onchange={(value) => prefs.darkPreset = value as UIPreferences['darkPreset']} {theme} />
           {:else}
             <SelectControl label="Light preset" options={lightPresetOptions} value={prefs.lightPreset} onchange={(value) => prefs.lightPreset = value as UIPreferences['lightPreset']} {theme} />
@@ -195,6 +198,7 @@
             <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.focusMode} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Focus mode</label>
           </div>
         </div>
+        <ThemeEditor bind:prefs base={`${builtInTheme}/${builtInTheme === 'dark' ? prefs.darkPreset : prefs.lightPreset}`} {onpreview} disable={disableTheme} {themeImportReset} />
         <button type="button" class="settings-reset" onclick={resetAppearance}>Reset appearance</button>
       {:else if section === 'Editor'}
         <div class="settings-editor-controls">

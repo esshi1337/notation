@@ -1,7 +1,9 @@
-export const DARK_PRESETS = ['midnight', 'charcoal', 'amoled', 'forest', 'dusk'] as const;
-export const LIGHT_PRESETS = ['default', 'paper'] as const;
+import { DARK_PRESETS, LIGHT_PRESETS, readThemePreferences } from './themes';
+import type { UserTheme } from './themes';
+export { DARK_PRESETS, LIGHT_PRESETS } from './themes';
 
 export type UIPreferences = {
+  userThemes: UserTheme[]; selectedThemeId: string;
   darkPreset: typeof DARK_PRESETS[number]; lightPreset: typeof LIGHT_PRESETS[number]; density: 'compact' | 'comfortable';
   accentColor: string; editorFont: 'mono' | 'sans'; lineHeight: number;
   readingWidth: number; sidebarWidth: number; sidebarRailWidth: 'narrow' | 'standard' | 'wide'; sidebarPosition: 'left' | 'right'; showStatusBar: boolean;
@@ -9,6 +11,7 @@ export type UIPreferences = {
 };
 
 export const DEFAULT_UI_PREFERENCES: Readonly<UIPreferences> = {
+  userThemes: [], selectedThemeId: '',
   darkPreset: 'midnight', lightPreset: 'default', density: 'compact', accentColor: '#d8d8df',
   editorFont: 'mono', lineHeight: 1.7, readingWidth: 756, sidebarWidth: 260, sidebarRailWidth: 'standard', sidebarPosition: 'left',
   showStatusBar: true, tabSize: 4, indentWithTabs: false, languageIntelligenceEnabled: false, showLineNumbers: true, focusMode: false, smoothScrolling: true, performanceMode: false,
@@ -33,6 +36,7 @@ function bounded(value: unknown, fallback: number, min: number, max: number) {
 export function readUIPreferences(settings: Record<string, unknown>): UIPreferences {
   const defaults = DEFAULT_UI_PREFERENCES;
   return {
+    ...readThemePreferences(settings),
     darkPreset: typeof settings.darkPreset === 'string' && (DARK_PRESETS as readonly string[]).includes(settings.darkPreset) ? settings.darkPreset as UIPreferences['darkPreset'] : defaults.darkPreset,
     lightPreset: typeof settings.lightPreset === 'string' && (LIGHT_PRESETS as readonly string[]).includes(settings.lightPreset) ? settings.lightPreset as UIPreferences['lightPreset'] : defaults.lightPreset,
     density: settings.density === 'comfortable' ? 'comfortable' : defaults.density,

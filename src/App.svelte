@@ -36,6 +36,8 @@
   import Sidebar from './Sidebar.svelte';
   import Git from './Git.svelte';
   import Settings from './Settings.svelte';
+  import { compileThemeCSS } from './themes';
+  import type { UserTheme } from './themes';
   import Tabs from './Tabs.svelte';
   import CloseRecovery from './CloseRecovery.svelte';
   import CommandPalette from './CommandPalette.svelte';
@@ -96,12 +98,33 @@
   let active = $derived(documents.find((document) => document.id === activeId) ?? documents[0]);
   let editors = $state<Record<string, Editor | undefined>>({});
   let editor = $derived(editors[activeId]);
-  let theme = $state<'dark' | 'light'>(preferences.theme === 'light' ? 'light' : 'dark');
+  // Persist the built-in choice separately; every renderer gets the effective
+  // base mode of the active saved theme or temporary preview.
+  let builtInTheme = $state<'dark' | 'light'>(preferences.theme === 'light' ? 'light' : 'dark');
   let fontSize = $state(Math.max(10, Math.min(24, Number(preferences.fontSize) || 14)));
   let wrap = $state(preferences.wrap !== false);
   let layout = $state<Layout>(initialView?.layout ?? (['source', 'preview', 'live'].includes(String(preferences.layout)) ? preferences.layout as Layout : 'split'));
   let agentEditsEnabled = $state(preferences.agentEditsEnabled !== false);
   let ui = $state(readUIPreferences(migrateSettings(preferences)));
+  let themePreview = $state<UserTheme | null>(null);
+  // Mutable signal: recovery invalidates pending reads synchronously, even
+  // while Settings and its draft remain mounted (no reactive effect needed).
+  const themeImportReset = { generation: 0 };
+  let customTheme = $derived.by(() => {
+    const candidate = themePreview ?? ui.userThemes.find(item => item.id === ui.selectedThemeId);
+    if (!candidate) return null;
+    try { return { ...candidate, compiled: compileThemeCSS(candidate.css) }; } catch { return null; }
+  });
+  let theme = $derived<'dark' | 'light'>(customTheme ? customTheme.base.startsWith('light/') ? 'light' : 'dark' : builtInTheme);
+  function disableCustomTheme() { themeImportReset.generation++; themePreview = null; ui.selectedThemeId = ''; }
+  $effect(() => {
+    if (!customTheme) return;
+    const style = document.createElement('style');
+    style.dataset.userTheme = customTheme.id;
+    style.textContent = customTheme.compiled;
+    document.head.append(style);
+    return () => style.remove();
+  });
   let shortcuts = $state(readShortcutOverrides(preferences.shortcuts));
   let panel = $state<Panel>(null);
   let settingsOpen = $state(false);
@@ -168,10 +191,12 @@
 
   $effect(() => {
     document.documentElement.dataset.theme = theme;
-    document.documentElement.dataset.darkPreset = ui.darkPreset;
-    document.documentElement.dataset.lightPreset = ui.lightPreset;
+    document.documentElement.dataset.darkPreset = customTheme && theme === 'dark' ? customTheme.base.split('/')[1] : ui.darkPreset;
+    document.documentElement.dataset.lightPreset = customTheme && theme === 'light' ? customTheme.base.split('/')[1] : ui.lightPreset;
     document.documentElement.dataset.density = ui.density;
-    persistMetadata({ settings: { uiSettingsVersion: UI_SETTINGS_VERSION, theme, fontSize, wrap, layout, agentEditsEnabled, ...ui, shortcuts } });
+  });
+  $effect(() => {
+    persistMetadata({ settings: { uiSettingsVersion: UI_SETTINGS_VERSION, theme: builtInTheme, fontSize, wrap, layout, agentEditsEnabled, ...ui, shortcuts } });
   });
   $effect(() => {
     document.title = (dirty ? '• ' : '') + active.name + ' — Notation';
@@ -626,6 +651,9 @@
     if (actions[id]) { if (layout === 'preview') layout = 'source'; await tick(); blockAction(actions[id]!); }
   }
   function handleKeyboard(event: KeyboardEvent) {
+    if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && (event.code === 'F12' || event.key === 'F12')) {
+      event.preventDefault(); event.stopImmediatePropagation(); disableCustomTheme(); return;
+    }
     if ((event.target as HTMLElement | null)?.closest?.('[data-shortcut-capture]')) return;
     const command = commandForEvent(event, shortcuts);
     if (!command) return;
@@ -778,7 +806,7 @@
   {#if renameTarget}<RenameDocument name={renameTarget.name} rename={(name) => { const target = documents.find((tab) => tab.id === renameId); if (target) { target.name = name; target.updatedAt = Date.now(); } }} close={() => renameId = null} />{/if}
   {#if wikiChoice}<WikiChooser resolution={wikiChoice.resolution} busy={wikiBusy} {error} choose={(path) => void chooseWiki(path)} create={() => void chooseWiki()} close={() => { wikiChoice = null; wikiSerial++; }} />{/if}
   {#if languageTarget && documents.find(tab => tab.id === languageTarget)}{@const target = documents.find(tab => tab.id === languageTarget)!}<DocumentLanguage name={target.name} language={target.language} {theme} change={(value) => target.language = value} close={() => languageTarget = null} />{/if}
-  {#if settingsOpen}<Settings bind:theme bind:fontSize bind:wrap bind:layout bind:agentEditsEnabled bind:prefs={ui} bind:shortcuts close={() => settingsOpen = false} />{/if}
+  {#if settingsOpen}<Settings bind:builtInTheme {theme} bind:fontSize bind:wrap bind:layout bind:agentEditsEnabled bind:prefs={ui} bind:shortcuts {themeImportReset} onpreview={(value) => themePreview = value} disableTheme={disableCustomTheme} close={() => { themePreview = null; settingsOpen = false; }} />{/if}
 </main>
 {#if closeRecoveryDecision}<CloseRecovery decide={(discard) => { const resolve = closeRecoveryDecision; closeRecoveryDecision = null; resolve?.(discard); }} />{/if}
 <input class="file-input" type="file" aria-label="Open document" bind:this={fileInput} onchange={importFile} />
