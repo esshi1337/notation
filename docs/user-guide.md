@@ -258,5 +258,15 @@ Storage tests, mocked-window browser checks, and Rust type checking passed;
 real compositor/GTK/WebKit behavior and packaged AppImage verification remain
 outstanding. See the [audit notes](audits/2026-10-25-usability.md#remaining-verification).
 
+## Git for the active file
+
+In the desktop app, the Git sidebar icon appears only for an existing saved file
+inside a Git worktree, with Git installed. It follows the actual file path, not
+the selected workspace; linked worktrees are supported. The panel identifies the
+repository and reads its branches, changes, history, and diffs without staging,
+committing, fetching, or pushing. Unsaved editor changes are not in disk diffs.
+Switching to an untitled, missing, or non-repository file hides Git and closes the
+panel. Git is unavailable in browser mode, including its shortcut and command.
+
 For technical notes, see [memory retention](memory-retention.md) and
 [performance](performance-report.md).

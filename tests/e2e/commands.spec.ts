@@ -27,6 +27,7 @@ test('searches command labels, runs a command by keyboard, and restores focus on
   await trigger.click();
   await palette.getByRole('textbox', { name: 'Search commands', exact: true }).fill('Git');
   await expect(commandResults(page).getByRole('option', { name: 'Git', exact: true })).toBeVisible();
+  await expect(commandResults(page).getByRole('option', { name: 'Git', exact: true })).toBeDisabled();
   await expect(commandResults(page).getByRole('option')).toHaveCount(1);
   await page.keyboard.press('Escape');
   await expect(palette).not.toBeVisible();

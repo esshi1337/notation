@@ -14,6 +14,9 @@ fn database(directory: &Path) -> Database {
 }
 fn run_git(root: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
+        // Fixture commits in disposable repositories must not run the checkout's
+        // inherited development hooks. Production query code never commits.
+        .args(["-c", "core.hooksPath=/dev/null"])
         .args(args)
         .current_dir(root)
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -172,6 +175,141 @@ fn actual_git_queries_show_status_graph_and_all_diff_cases_without_mutation() {
             .diff
             .contains("+changed")
     );
+}
+
+#[test]
+fn document_git_context_uses_actual_file_worktree_and_bounds_diffs() {
+    let temporary = tempfile::tempdir().unwrap();
+    let repo = temporary.path().join("repo");
+    fs::create_dir_all(repo.join("nested/deleted")).unwrap();
+    run_git(&repo, &["init", "-b", "main"]);
+    run_git(&repo, &["config", "user.name", "Notation tests"]);
+    run_git(&repo, &["config", "user.email", "notation@example.invalid"]);
+    let document = repo.join("nested/note.md");
+    fs::write(&document, "note\n").unwrap();
+    fs::write(repo.join("nested/deleted/old.md"), "old\n").unwrap();
+    fs::write(repo.join("other.md"), "baseline\n").unwrap();
+    run_git(&repo, &["add", "."]);
+    run_git(&repo, &["commit", "-m", "Document repository"]);
+    let linked = temporary.path().join("linked");
+    run_git(
+        &repo,
+        &["worktree", "add", "-b", "linked", linked.to_str().unwrap()],
+    );
+    let outside = temporary.path().join("outside.md");
+    fs::write(&outside, "private\n").unwrap();
+    let db = database(temporary.path());
+    // Deliberately unrelated selected workspace; document queries must ignore it.
+    db.set_workspace(temporary.path().to_str().unwrap())
+        .unwrap();
+    let context = Some(document.to_str().unwrap());
+    let index = fs::read(repo.join(".git/index")).unwrap();
+    fs::write(repo.join("other.md"), "changed\n").unwrap();
+    fs::remove_dir_all(repo.join("nested/deleted")).unwrap();
+    assert_eq!(
+        git::document_repository_root(document.to_str().unwrap()),
+        Some(repo.to_string_lossy().into_owned())
+    );
+    assert_eq!(
+        git::document_repository_root(linked.join("nested/note.md").to_str().unwrap()),
+        Some(linked.to_string_lossy().into_owned())
+    );
+    for path in [&outside, &repo.join("missing.md"), &repo] {
+        assert!(git::document_repository_root(path.to_str().unwrap()).is_none());
+        assert!(!git::status_for_document(&db, Some(path.to_str().unwrap())).available);
+    }
+    assert!(git::document_repository_root("relative.md").is_none());
+    let status = git::status_for_document(&db, context);
+    assert!(status.available, "{:?}", status.error);
+    assert_eq!(status.root.as_deref(), repo.to_str());
+    assert!(status
+        .changes
+        .iter()
+        .any(|change| change.path.ends_with("other.md")));
+    assert_eq!(
+        git::history_for_document(&db, None, context).unwrap()[0].subject,
+        "Document repository"
+    );
+    assert!(
+        git::diff_for_document(&db, "nested/deleted/old.md", false, context)
+            .unwrap()
+            .diff
+            .contains("-old")
+    );
+    assert!(git::diff_for_document(&db, "other.md", false, context)
+        .unwrap()
+        .diff
+        .contains("+changed"));
+    assert!(git::diff_for_document(&db, "../outside.md", false, context).is_err());
+    assert!(git::diff_for_document(&db, outside.to_str().unwrap(), false, context).is_err());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        symlink(&outside, repo.join("escape.md")).unwrap();
+        symlink(temporary.path(), repo.join("escape-dir")).unwrap();
+        assert!(git::document_repository_root(repo.join("escape.md").to_str().unwrap()).is_none());
+        assert!(git::diff_for_document(&db, "escape.md", false, context).is_err());
+        assert!(git::diff_for_document(&db, "escape-dir/outside.md", false, context).is_err());
+        assert!(git::diff_for_document(&db, "escape-dir/missing.md", false, context).is_err());
+    }
+    assert_eq!(fs::read(repo.join(".git/index")).unwrap(), index);
+    assert_eq!(fs::read_to_string(&document).unwrap(), "note\n");
+    assert_eq!(fs::read_to_string(&outside).unwrap(), "private\n");
+    fs::remove_file(&document).unwrap();
+    assert!(git::document_repository_root(document.to_str().unwrap()).is_none());
+    assert!(git::history_for_document(&db, None, context).is_err());
+}
+
+#[test]
+fn document_git_detection_ignores_inherited_repository_overrides_and_handles_missing_git() {
+    // Run the environment cases in child test processes, never changing global
+    // environment while other Rust tests execute concurrently.
+    if let Ok(path) = std::env::var("NOTATION_GIT_ENV_DOCUMENT") {
+        let expected = std::env::var("NOTATION_GIT_ENV_ROOT").ok();
+        assert_eq!(git::document_repository_root(&path), expected);
+        return;
+    }
+    let temporary = tempfile::tempdir().unwrap();
+    let repo = temporary.path().join("repo");
+    let other = temporary.path().join("other");
+    fs::create_dir(&repo).unwrap();
+    fs::create_dir(&other).unwrap();
+    run_git(&repo, &["init", "-b", "main"]);
+    run_git(&other, &["init", "-b", "unrelated"]);
+    let document = repo.join("note.md");
+    fs::write(&document, "note").unwrap();
+    let child = || {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command.args(["--exact", "document_git_detection_ignores_inherited_repository_overrides_and_handles_missing_git", "--nocapture"])
+            .env("NOTATION_GIT_ENV_DOCUMENT", &document);
+        command
+    };
+    let output = child()
+        .env("NOTATION_GIT_ENV_ROOT", &repo)
+        .env("GIT_DIR", other.join(".git"))
+        .env("GIT_WORK_TREE", &other)
+        .env("GIT_INDEX_FILE", other.join("unrelated-index"))
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "core.bare")
+        .env("GIT_CONFIG_VALUE_0", "true")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let output = child()
+        .env_remove("NOTATION_GIT_ENV_ROOT")
+        .env("PATH", temporary.path().join("no-git"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(!other.join("unrelated-index").exists());
 }
 
 #[test]

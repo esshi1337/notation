@@ -165,6 +165,23 @@
   let persistence = $state<PersistenceStatus>({ state: 'idle', error: '' });
   let fileInput: HTMLInputElement;
   const desktop = isTauri();
+  let gitContext = $state<{ path: string; root: string } | null>(null);
+  let gitRefresh = $state(0);
+  let gitRoot = $derived(nativeStore && desktop && active.path === gitContext?.path ? gitContext.root : null);
+  $effect(() => {
+    const path = active.path;
+    gitRefresh;
+    let cancelled = false;
+    // Keep an already-open panel while rechecking the same file on focus.
+    if (untrack(() => gitContext?.path) !== path) gitContext = null;
+    if (nativeStore && desktop && path) {
+      void invoke<string | null>('git_repository', { documentPath: path }).then(root => {
+        if (!cancelled) gitContext = root ? { path, root } : null;
+      }).catch(() => { if (!cancelled) gitContext = null; });
+    }
+    return () => { cancelled = true; };
+  });
+  $effect(() => { if (!gitRoot && panel === 'git') panel = null; });
   let dirty = $derived(tabDirty(active));
   let saveState = $derived(persistence.state === 'error' ? 'error' : dirty ? 'dirty' : 'saved');
   let canvasDocument = $derived(active.name.toLowerCase().endsWith('.canvas'));
@@ -182,7 +199,7 @@
     ...command,
     ...(command.id === 'panel.scripts' && !scriptsEnabled ? { label: 'Scripts (enable in Settings → Editor)' } : {}),
     shortcut: formatShortcut(shortcutFor(command.id, shortcuts), mac),
-    disabled: (command.id === 'panel.scripts' && !scriptsEnabled) || (ui.performanceMode && ['view.split','view.preview','view.live'].includes(command.id)) || (command.id === 'view.language' && canvasDocument) || (!intelligenceEnabled && ['code.definition','code.references','code.rename','code.format'].includes(command.id)) || (codeDocument && (command.id.startsWith('block.') || command.id.startsWith('insert.') || ['panel.properties','panel.templates','panel.table','panel.export','view.split','view.preview','view.live'].includes(command.id))) || (active.hemingway && hemingwayCommandBlocked(command.id)) || ((busy || workspaceBusy) && ['file.new', 'file.newCanvas', 'file.open', 'file.save', 'file.saveAs', 'tab.close'].includes(command.id)) || (canvasDocument && (['panel.properties','panel.table','panel.templates','panel.export','block.actions'].includes(command.id) || command.id.startsWith('block.') || command.id.startsWith('fold.') || command.id.startsWith('insert.'))),
+    disabled: (command.id === 'panel.git' && !gitRoot) || (command.id === 'panel.scripts' && !scriptsEnabled) || (ui.performanceMode && ['view.split','view.preview','view.live'].includes(command.id)) || (command.id === 'view.language' && canvasDocument) || (!intelligenceEnabled && ['code.definition','code.references','code.rename','code.format'].includes(command.id)) || (codeDocument && (command.id.startsWith('block.') || command.id.startsWith('insert.') || ['panel.properties','panel.templates','panel.table','panel.export','view.split','view.preview','view.live'].includes(command.id))) || (active.hemingway && hemingwayCommandBlocked(command.id)) || ((busy || workspaceBusy) && ['file.new', 'file.newCanvas', 'file.open', 'file.save', 'file.saveAs', 'tab.close'].includes(command.id)) || (canvasDocument && (['panel.properties','panel.table','panel.templates','panel.export','block.actions'].includes(command.id) || command.id.startsWith('block.') || command.id.startsWith('fold.') || command.id.startsWith('insert.'))),
     checked: command.id.startsWith('view.') ? command.id === 'view.hemingway' ? active.hemingway : command.id === 'view.focus' ? ui.focusMode : !active.hemingway && command.id === 'view.' + effectiveLayout : command.id.startsWith('panel.') ? panel === command.id.slice(6) && !ui.focusMode : undefined,
   })));
   let layoutItems = $derived(codeDocument ? commandItems.filter(command => command.id === 'view.source') : active.hemingway ? commandItems.filter(command => command.id === 'view.hemingway') : canvasDocument
@@ -190,8 +207,8 @@
     : commandItems.filter(command => ['view.source', 'view.split', 'view.preview', 'view.live'].includes(command.id)));
   let paletteItems = $derived(paletteScope === 'blocks' ? commandItems.filter((command) => command.group === 'Blocks' && command.id !== 'block.actions') : commandItems);
   const sidebarCommands: CommandId[] = ['panel.explorer', 'panel.workspace', 'panel.graph', 'panel.stickies', 'panel.git', 'panel.history', 'panel.properties', 'panel.templates', 'panel.table', 'panel.scripts'];
-  let sidebarItems = $derived(sidebarCommands.filter(id => id !== 'panel.scripts' || scriptsEnabled).map(id => commandItems.find(item => item.id === id)!));
-  let visiblePanel = $derived(panel !== null && !ui.focusMode && (panel !== 'scripts' || scriptsEnabled) && (!['properties', 'templates', 'export', 'table'].includes(panel) || (!canvasDocument && !codeDocument && !active.hemingway)));
+  let sidebarItems = $derived(sidebarCommands.filter(id => (id !== 'panel.scripts' || scriptsEnabled) && (id !== 'panel.git' || !!gitRoot)).map(id => commandItems.find(item => item.id === id)!));
+  let visiblePanel = $derived(panel !== null && !ui.focusMode && (panel !== 'git' || !!gitRoot) && (panel !== 'scripts' || scriptsEnabled) && (!['properties', 'templates', 'export', 'table'].includes(panel) || (!canvasDocument && !codeDocument && !active.hemingway)));
   let appMenuItems = $derived(['Document', 'Application'].flatMap(group => commandItems.filter(command => command.group === group)));
 
   $effect(() => {
@@ -230,7 +247,7 @@
     catch(cause){ if(tab.path===path)diskConflicts[tab.id]='File unavailable on disk: '+String(cause); }
   }
   $effect(()=>{ const id=activeId; untrack(()=>{const tab=documents.find(item=>item.id===id);if(tab)void checkDisk(tab);}); });
-  onMount(()=>{const focus=()=>void checkDisk();window.addEventListener('focus',focus);return()=>window.removeEventListener('focus',focus);});
+  onMount(()=>{const focus=()=>{gitRefresh++;void checkDisk();};window.addEventListener('focus',focus);return()=>window.removeEventListener('focus',focus);});
 
   function selectTab(id: string) {
     if (!documents.some((tab) => tab.id === id)) return;
@@ -636,6 +653,7 @@
   }
   async function runCommand(id: CommandId) {
     paletteOpen = false; appMenuOpen = false; layoutMenuOpen = false;
+    if (id === 'panel.git' && !gitRoot) { status = 'Git is available only for a saved file in a Git worktree.'; return; }
     if (id === 'app.commands') { await tick(); paletteScope = 'all'; paletteOpen = true; return; }
     if (id === 'panel.scripts' && !scriptsEnabled) { status = 'Enable scripts in Settings → Editor to use the Scripts panel.'; return; }
     if (id === 'sticky.new') { ui.focusMode = false; stickyCreateRequest++; panel = 'stickies'; return; }
@@ -840,7 +858,7 @@
         {#if visiblePanel}<div class="sidebar-panel" class:sidebar-graph={panel === 'graph'}>
           {#if panel === 'stickies'}<StickyNotes createRequest={stickyCreateRequest} created={() => stickyCreateRequest = 0} close={() => { panel = null; stickyCreateRequest = 0; }} />{/if}
           {#if panel === 'explorer' && !ui.focusMode}<Explorer workspace={activeWorkspace} currentPath={active.path} openFile={(path) => void openPath(path)} configure={() => panel = 'workspace'} close={() => panel = null} />{/if}
-          {#if panel === 'scripts' && scriptsEnabled && !ui.focusMode}<Scripts lockedReason={active.hemingway ? HEMINGWAY_MESSAGE : ''} snapshot={scriptSnapshot} apply={applyScript} close={() => panel = null} />{:else if panel === 'workspace' && !ui.focusMode}<Workspace {catalog} action={workspaceAction} changing={workspaceBusy} currentPath={active.path} openDocument={openPath} close={() => panel = null} />{:else if panel === 'history' && !ui.focusMode}<History lockedReason={active.hemingway ? HEMINGWAY_MESSAGE : ''} currentContent={active.content} documentKey={active.path ?? active.id} snapshot={historySnapshot} restore={restoreRevision} close={() => panel = null} />{:else if panel === 'properties' && !ui.focusMode && !canvasDocument && !active.hemingway}<Properties content={active.content} documentId={active.lifetime} {standalone} apply={applyProperties} editSource={() => { layout = 'source'; void tick().then(() => editor?.reveal(0)); }} close={() => panel = null} />{:else if panel === 'templates' && !ui.focusMode && !canvasDocument && !active.hemingway}<Templates snapshot={scriptSnapshot} apply={applyTemplate} close={()=>panel=null} />{:else if panel === 'export' && !ui.focusMode && !canvasDocument && !active.hemingway}<Export snapshot={()=>({name:active.name,text:active.content,documentId:active.lifetime,path:active.path,sourcePath:active.path??active.id,standalone})} {theme} loadEmbed={loadEmbedded} close={()=>panel=null} />{:else if panel === 'table' && !ui.focusMode && !canvasDocument && !active.hemingway}<SmartTable content={active.content} documentId={active.lifetime} cursor={active.selection?.head ?? 0} {standalone} apply={applyTable} close={()=>panel=null} />{:else if panel === 'graph' && !ui.focusMode}{#key catalog.activeId}<Graph currentPath={active.path} open={(path)=>void openPath(path)} close={()=>panel=null} />{/key}{:else if panel === 'git' && !ui.focusMode}{#key catalog.activeId}<Git close={() => panel = null} />{/key}{/if}
+          {#if panel === 'scripts' && scriptsEnabled && !ui.focusMode}<Scripts lockedReason={active.hemingway ? HEMINGWAY_MESSAGE : ''} snapshot={scriptSnapshot} apply={applyScript} close={() => panel = null} />{:else if panel === 'workspace' && !ui.focusMode}<Workspace {catalog} action={workspaceAction} changing={workspaceBusy} currentPath={active.path} openDocument={openPath} close={() => panel = null} />{:else if panel === 'history' && !ui.focusMode}<History lockedReason={active.hemingway ? HEMINGWAY_MESSAGE : ''} currentContent={active.content} documentKey={active.path ?? active.id} snapshot={historySnapshot} restore={restoreRevision} close={() => panel = null} />{:else if panel === 'properties' && !ui.focusMode && !canvasDocument && !active.hemingway}<Properties content={active.content} documentId={active.lifetime} {standalone} apply={applyProperties} editSource={() => { layout = 'source'; void tick().then(() => editor?.reveal(0)); }} close={() => panel = null} />{:else if panel === 'templates' && !ui.focusMode && !canvasDocument && !active.hemingway}<Templates snapshot={scriptSnapshot} apply={applyTemplate} close={()=>panel=null} />{:else if panel === 'export' && !ui.focusMode && !canvasDocument && !active.hemingway}<Export snapshot={()=>({name:active.name,text:active.content,documentId:active.lifetime,path:active.path,sourcePath:active.path??active.id,standalone})} {theme} loadEmbed={loadEmbedded} close={()=>panel=null} />{:else if panel === 'table' && !ui.focusMode && !canvasDocument && !active.hemingway}<SmartTable content={active.content} documentId={active.lifetime} cursor={active.selection?.head ?? 0} {standalone} apply={applyTable} close={()=>panel=null} />{:else if panel === 'graph' && !ui.focusMode}{#key catalog.activeId}<Graph currentPath={active.path} open={(path)=>void openPath(path)} close={()=>panel=null} />{/key}{:else if panel === 'git' && gitRoot && active.path && !ui.focusMode}{#key JSON.stringify([active.path, gitRoot])}<Git documentPath={active.path} repositoryRoot={gitRoot} close={() => panel = null} />{/key}{/if}
         </div>{/if}
       </aside>
     {/if}

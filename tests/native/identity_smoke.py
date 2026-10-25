@@ -99,9 +99,9 @@ return {tools:tools.length,noDuplicates:!tools.some(label=>entries.includes(labe
  exportOnlyInMenu:entries.includes('Export')&&!tools.includes('Export'),
  headerShortcuts:!!document.querySelector('[aria-label="Open workspace panel"]')&&entries.includes('New')&&entries.includes('Commands'),
  brandText:brand.textContent.trim(),centered:Math.abs((i.left+t.right-a.left-a.right)/2)<.6&&Math.abs(i.y+i.height/2-t.y-t.height/2)<.6,
- distinctGit:document.querySelector('[aria-label="Git panel"] svg').dataset.icon==='git'&&document.querySelector('[aria-label="Note graph panel"] svg').dataset.icon==='graph'};
+ gitHidden:!document.querySelector('[aria-label="Git panel"]')&&document.querySelector('[aria-label="Note graph panel"] svg').dataset.icon==='graph'};
 """)
-                    smoke.require(navigation == dict(tools=9, noDuplicates=True, settingsOnlyInMenu=True, exportOnlyInMenu=True, headerShortcuts=True, brandText='Notation', centered=True, distinctGit=True), f'Navigation ownership: {navigation}')
+                    smoke.require(navigation == dict(tools=8, noDuplicates=True, settingsOnlyInMenu=True, exportOnlyInMenu=True, headerShortcuts=True, brandText='Notation', centered=True, gitHidden=True), f'Navigation ownership: {navigation}')
                     reports.append({'theme': theme, 'navigation': navigation})
                     screenshot(client, output / f'{theme}-menu.png', "document.querySelector('.app-menu')")
                     client.element_command(client.find('[aria-label="App menu"]'), '/click')
