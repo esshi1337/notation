@@ -7,6 +7,24 @@ const cssInput = (page: Page) => page.getByRole('textbox', { name: 'Theme CSS', 
 const styles = (page: Page) => page.locator('style[data-user-theme]');
 const settings = (page: Page) => page.getByRole('dialog', { name: 'Settings', exact: true });
 type ImportWindow = Window & { themeImportPending: boolean; finishThemeImport: () => Promise<void> };
+type ExportWindow = Window & { themeExportURLs: { created: string; revoked: string[] } };
+type NativeExport = {
+  mode: 'accept' | 'cancel' | 'fail' | 'pending';
+  path: string | null;
+  writes: { path: string; content: string }[];
+  options?: unknown;
+  resolveSave?: (path: string | null) => void;
+};
+type NativeExportWindow = Window & {
+  isTauri?: boolean;
+  themeNativeExport?: NativeExport;
+  __TAURI_INTERNALS__?: {
+    invoke: (command: string, args?: { path?: string; content?: string; options?: unknown }) => Promise<unknown>;
+    transformCallback: () => number;
+    unregisterCallback: () => void;
+    convertFileSrc: (value: string) => string;
+  };
+};
 async function create(page: Page, name = 'Ocean', css?: string, base = 'light/paper') {
   await button(page, 'Create theme').click();
   await page.getByRole('textbox', { name: 'Theme name', exact: true }).fill(name);
@@ -19,6 +37,53 @@ async function stored(page: Page) { return page.evaluate(() => JSON.parse(localS
 async function upload(page: Page, text: string) {
   await page.getByLabel('Import theme JSON', { exact: true }).setInputFiles({ name: 'theme.json', mimeType: 'application/json', buffer: Buffer.from(text) });
 }
+async function instrumentExportURLs(page: Page) {
+  await page.evaluate(() => {
+    const state = window as ExportWindow;
+    state.themeExportURLs = { created: '', revoked: [] };
+    const create = URL.createObjectURL.bind(URL), revoke = URL.revokeObjectURL.bind(URL);
+    URL.createObjectURL = blob => {
+      const url = create(blob);
+      state.themeExportURLs.created = url;
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      state.themeExportURLs.revoked.push(url);
+      revoke(url);
+    };
+  });
+}
+const revokedIncludes = (page: Page, url: string) => page.evaluate(entry => (window as ExportWindow).themeExportURLs.revoked.includes(entry), url);
+async function enableNativeExport(page: Page, mode: NativeExport['mode'], path: string | null = '/tmp/notation-theme.json') {
+  await button(page, 'Close settings').click();
+  await expect(settings(page)).toBeHidden();
+  await page.evaluate(({ mode, path }) => {
+    const host = window as NativeExportWindow;
+    host.isTauri = true;
+    host.themeNativeExport = { mode, path, writes: [] };
+    host.__TAURI_INTERNALS__ = {
+      invoke: async (command, args) => {
+        const state = host.themeNativeExport!;
+        if (command === 'plugin:dialog|save') {
+          state.options = args?.options;
+          if (state.mode === 'pending') return new Promise<string | null>(resolve => { state.resolveSave = resolve; });
+          return state.mode === 'cancel' ? null : state.path;
+        }
+        if (command === 'write_document') {
+          state.writes.push({ path: String(args?.path ?? ''), content: String(args?.content ?? '') });
+          if (state.mode === 'fail') throw new Error('The disk is full.');
+          return { warning: null };
+        }
+        return null;
+      },
+      transformCallback: () => 1,
+      unregisterCallback: () => {},
+      convertFileSrc: value => value,
+    };
+  }, { mode, path });
+  await openSettings(page);
+}
+const nativeWrites = (page: Page) => page.evaluate(() => (window as NativeExportWindow).themeNativeExport!.writes);
 
 test.beforeEach(async ({ page }) => { await page.goto('/'); await openSettings(page); });
 
@@ -138,6 +203,82 @@ test('edit duplicate delete disable and export/import roundtrip use independent 
   await selector(page).selectOption(original); await button(page, 'Disable custom theme').click();
   await expect(styles(page)).toHaveCount(0);
   await expect.poll(async () => (await stored(page)).userThemes.length).toBe(2);
+});
+
+test('browser export revokes its object URL after download and after the editor closes', async ({ page }) => {
+  await create(page);
+  const library = (await stored(page)).userThemes;
+  await instrumentExportURLs(page);
+  let downloaded = page.waitForEvent('download');
+  await button(page, 'Export theme').click();
+  await downloaded;
+  const first = await page.evaluate(() => (window as ExportWindow).themeExportURLs.created);
+  await expect.poll(() => revokedIncludes(page, first)).toBe(true);
+  expect((await stored(page)).userThemes).toEqual(library);
+
+  // Start a second export, then unmount the editor before the 1 s cleanup runs.
+  downloaded = page.waitForEvent('download');
+  await button(page, 'Export theme').click();
+  await downloaded;
+  const second = await page.evaluate(() => (window as ExportWindow).themeExportURLs.created);
+  expect(second).not.toBe(first);
+  await button(page, 'Close settings').click();
+  await expect(settings(page)).toBeHidden();
+  await expect.poll(() => revokedIncludes(page, second)).toBe(true);
+  expect((await stored(page)).userThemes).toEqual(library);
+});
+
+test('native export saves captured JSON through the save dialog and cancels without writing', async ({ page }) => {
+  await create(page);
+  const library = (await stored(page)).userThemes;
+  const selectedId = await selector(page).inputValue();
+  const expected = library.find((item: { id: string }) => item.id === selectedId);
+  await enableNativeExport(page, 'accept');
+  await button(page, 'Export theme').click();
+  await expect.poll(async () => (await nativeWrites(page)).length).toBe(1);
+  const saved = await page.evaluate(() => {
+    const state = (window as NativeExportWindow).themeNativeExport!;
+    return { options: state.options, write: state.writes[0]! };
+  });
+  expect(saved.options).toEqual({ defaultPath: 'notation-theme.json', filters: [{ name: 'Notation theme', extensions: ['json'] }] });
+  expect(saved.write.path).toBe('/tmp/notation-theme.json');
+  expect(JSON.parse(saved.write.content)).toEqual({ version: 1, ...expected });
+  await expect(settings(page).getByRole('status')).toHaveText('Theme exported as JSON.');
+  expect((await stored(page)).userThemes).toEqual(library);
+
+  await page.evaluate(() => { (window as NativeExportWindow).themeNativeExport!.mode = 'cancel'; });
+  await button(page, 'Export theme').click();
+  await expect(button(page, 'Export theme')).toBeEnabled();
+  await expect(settings(page).getByRole('status')).toHaveCount(0);
+  await page.waitForTimeout(100);
+  expect((await nativeWrites(page)).length).toBe(1);
+  expect((await stored(page)).userThemes).toEqual(library);
+});
+
+test('native export surfaces a write failure and keeps the library unchanged', async ({ page }) => {
+  await create(page);
+  const library = (await stored(page)).userThemes;
+  await enableNativeExport(page, 'fail');
+  await button(page, 'Export theme').click();
+  await expect(settings(page).getByRole('alert')).toHaveText('Could not export theme: The disk is full.');
+  await expect(button(page, 'Export theme')).toBeEnabled();
+  expect((await nativeWrites(page)).length).toBe(1);
+  expect((await stored(page)).userThemes).toEqual(library);
+});
+
+test('closing the editor during the native save dialog never starts a late write', async ({ page }) => {
+  await create(page);
+  const library = (await stored(page)).userThemes;
+  await enableNativeExport(page, 'pending');
+  await button(page, 'Export theme').click();
+  await expect.poll(() => page.evaluate(() => !!((window as NativeExportWindow).themeNativeExport!.resolveSave))).toBe(true);
+  await expect(button(page, 'Export theme')).toBeDisabled();
+  await button(page, 'Close settings').click();
+  await expect(settings(page)).toBeHidden();
+  await page.evaluate(() => (window as NativeExportWindow).themeNativeExport!.resolveSave!('/tmp/late.json'));
+  await page.waitForTimeout(150);
+  expect((await nativeWrites(page))).toEqual([]);
+  expect((await stored(page)).userThemes).toEqual(library);
 });
 
 test('malformed oversized and malicious CSS imports make no external requests or state changes', async ({ page }) => {

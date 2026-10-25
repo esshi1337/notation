@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
+  import { invoke, isTauri } from '@tauri-apps/api/core';
+  import { save as saveDialog } from '@tauri-apps/plugin-dialog';
   import type { UIPreferences } from './preferences';
   import { compileThemeCSS, exportTheme, importTheme, MAX_THEME_FILE_BYTES, normalizeTheme, normalizeThemeLibrary, STARTER_CSS, THEME_BASES } from './themes';
   import type { UserTheme } from './themes';
@@ -7,8 +9,11 @@
   let { prefs = $bindable(), base, onpreview, disable, themeImportReset }: { prefs: UIPreferences; base: string; onpreview: (theme: UserTheme | null) => void; disable: () => void; themeImportReset: { generation: number } } = $props();
   let editing = $state(false), draftId = $state(''), name = $state(''), draftBase = $state('dark/midnight'), css = $state(STARTER_CSS);
   let error = $state(''), message = $state('');
+  let exporting = $state(false);
   let fileInput: HTMLInputElement;
   let importGeneration = 0;
+  let exportGeneration = 0, alive = true;
+  const desktop = isTauri();
   let selected = $derived(prefs.userThemes.find(item => item.id === prefs.selectedThemeId));
   const newId = () => 'theme-' + crypto.randomUUID();
   function attempt(action: () => void) {
@@ -52,15 +57,32 @@
     prefs.userThemes = prefs.userThemes.filter(item => item.id !== selected!.id);
     prefs.selectedThemeId = ''; cancel(); message = 'Theme deleted. Built-in theme restored.';
   }
-  function download() {
-    if (!selected) return;
-    attempt(() => {
-      const url = URL.createObjectURL(new Blob([exportTheme(selected!)], { type: 'application/json' }));
-      const anchor = document.createElement('a');
-      anchor.href = url; anchor.download = 'notation-theme.json'; anchor.click();
-      // The browser captures the download synchronously; no retained URL/timer.
-      URL.revokeObjectURL(url);
-    });
+  async function download() {
+    if (!selected || exporting) return;
+    const theme = selected;
+    const generation = ++exportGeneration;
+    exporting = true; error = ''; message = '';
+    try {
+      const text = exportTheme(theme);
+      if (desktop) {
+        const path = await saveDialog({ defaultPath: 'notation-theme.json', filters: [{ name: 'Notation theme', extensions: ['json'] }] });
+        if (!path || !alive || generation !== exportGeneration) return;
+        await invoke('write_document', { path, content: text });
+        if (!alive || generation !== exportGeneration) return;
+        message = 'Theme exported as JSON.';
+      } else {
+        const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+        // The timer holds only the URL, so it still revokes after an unmount.
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        const anchor = document.createElement('a');
+        anchor.href = url; anchor.download = 'notation-theme.json'; anchor.click();
+        if (alive && generation === exportGeneration) message = 'Theme exported as JSON.';
+      }
+    } catch (cause) {
+      if (alive && generation === exportGeneration) error = 'Could not export theme: ' + (cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      if (alive && generation === exportGeneration) exporting = false;
+    }
   }
   async function loadFile(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
@@ -81,7 +103,7 @@
       onpreview(null); editing = false; message = 'Theme imported and applied with a new local ID.';
     } catch (cause) { if (isCurrent()) error = cause instanceof Error ? cause.message : String(cause); }
   }
-  onDestroy(() => { importGeneration++; onpreview(null); });
+  onDestroy(() => { alive = false; exportGeneration++; importGeneration++; onpreview(null); });
 </script>
 
 <section class="theme-editor" aria-label="User themes">
@@ -98,7 +120,7 @@
     <button type="button" disabled={!selected} onclick={remove}>Delete theme</button>
     <button type="button" onclick={() => { cancel(); disable(); }}>Disable custom theme</button>
     <button type="button" onclick={() => fileInput.click()}>Import theme</button>
-    <button type="button" disabled={!selected} onclick={download}>Export theme</button>
+    <button type="button" disabled={!selected || exporting} onclick={download}>Export theme</button>
     <input bind:this={fileInput} type="file" accept=".json,application/json" aria-label="Import theme JSON" onchange={loadFile} hidden />
   </div>
   <p class="settings-help">Local only. Up to 8 themes; CSS 4096 bytes each; library 24 KiB. A user theme uses its own built-in base; the controls above apply when User theme is Off. Recovery: Ctrl/Cmd+Shift+F12 always disables custom styling, even if CSS hides the UI. Saved themes are kept.</p>
