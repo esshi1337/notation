@@ -4,7 +4,7 @@ A local-first Markdown, Mermaid, and Canvas editor built with Svelte, CodeMirror
 
 ## Product guide
 
-New to Notation? Read the [user guide](docs/user-guide.md) for a task-oriented tour and [examples](docs/examples.md) for research, Canvas, and theme workflows. Recent additions include the AMOLED, Forest, Dusk, and Paper presets; local user themes with preview, import, and export; and Canvas direct resize, connection, and note-linking controls.
+New to Notation? Read the [user guide](docs/user-guide.md) for a task-oriented tour and [examples](docs/examples.md) for research, Canvas, and theme workflows. Recent additions include the AMOLED, Forest, Dusk, and Paper presets; local user themes with preview, import, and export; Canvas direct resize, connection, and note-linking controls; and Linux sticky notes in separate native windows.
 
 ## Desktop application
 
@@ -56,6 +56,7 @@ On Arch Linux, building Tauri requires `webkit2gtk-4.1` and `gtk3`; `webkitgtk-6
 - Switch between Source, Split, Preview, and inline Live Preview.
 - Choose a Dark or Light mode and preset, a custom local theme, font size, and word wrapping.
 - Restore open tabs, drafts, and preferences from local application storage.
+- Keep separate desktop sticky notes with autosave and a saved-note list.
 - Use workspaces, wiki links, properties, search, note graph, tables, citations, templates, queries, and executable cells.
 - Use CodeMirror editing commands, including undo/redo and find.
 
@@ -238,9 +239,23 @@ Footnotes use `[^note]` and `[^note]: Definition`, with indented continuation pa
 
 **New canvas** creates a separate `.canvas` document using [JSON Canvas 1.0](https://jsoncanvas.org/spec/1.0/). Add and move text, note, media, diagram, and group cards, connect them, and zoom or pan. File cards use workspace-relative paths. Canvas changes use the same tab recovery, Save, and undo mechanisms as notes. Source mode exposes the JSON, including preserved unknown fields. Save exports the `.canvas` file; rendered canvas conversion is not included.
 
+Drag a card title to move it and its bottom-right corner to resize. With a card selected and the board focused, arrows move it, Alt+arrows resize it, and Shift uses larger steps. Space+drag or middle-drag pans. Click the arrow button on one card and then another to connect them; **Connect cards** also lets you add a label.
+
+A blank note card offers **Choose note**. Search for a note or enter a workspace-relative path, select a result, and **Apply card**. **Open original** then opens the linked note. Desktop searches indexed workspace notes; browser mode resolves open tabs only. Use **Open** or **Add note card / Add media card** for files; dropping a file does not import it.
+
 **Export** captures a note snapshot as HTML, a self-contained webpage, PDF, DOCX, or PowerPoint slides. Rendered diagrams, math, note embeds, and query results are included. HTML includes its stylesheet and fonts; self-contained export also embeds supported local resources and reports any it cannot include. Remote resources are not fetched for export. Exports do not run code cells or change source files. Layout fidelity varies by format; Office/PDF conversions use a light theme.
 
 The Linux x86-64 package bundles Pandoc and Typst, so conversion does not depend on system installations. For a fresh desktop build, run `npm run desktop:engines` first. It downloads pinned, checksum-verified artifacts described in `scripts/engines.lock.json`; generated binaries and licenses live under `src-tauri/resources/engines/`. Engine and font notices ship in the package. Runtime engine resolution does not fall back to PATH.
+
+## Linux sticky notes
+
+Run **New sticky note** from Commands (`Ctrl/Cmd+K`), or open **Sticky notes** in the sidebar. Each note opens in a separate resizable plain-text window that requests always-on-top. Edit its title and text; changes autosave to local SQLite independently of Markdown files and regular document drafts.
+
+**Close sticky** saves pending edits and keeps the note in the saved list. A save failure leaves the window open with **Retry**. Use **Refresh notes** to update the list and click a saved title to reopen it; reopening an already open note focuses its window. Close a note's window before using **Delete**, which asks for confirmation.
+
+Close sticky windows before exiting Notation, or minimize the main window to keep them visible. The library holds up to 64 notes, with titles limited to 256 UTF-8 bytes and text to 64 KiB per note. Sticky windows require the desktop app; browser mode explains this limitation.
+
+Sticky support is merged into `main`. Storage and mocked-window tests passed, but real Linux compositor/window behavior and packaged AppImage verification remain outstanding; see the [audit and verification notes](docs/audits/2026-10-25-usability.md#remaining-verification).
 
 ## Tabs, explorer, and settings
 
@@ -271,7 +286,9 @@ The interface uses one compact tab row. Press **Ctrl/Cmd+K** or use **Commands**
 
 Open **Explorer** to browse the selected workspace’s referenced files. Full file paths appear on hover and in **Workspace → Referenced files**, including when filenames repeat in different locations. Migrated folder workspaces retain expandable directory browsing; hidden/build directories and symlinks are omitted from those listings.
 
-**Settings → Appearance** controls the built-in Dark or Light mode, its preset (Dark: Midnight, Charcoal, AMOLED, Forest, Dusk; Light: Default, Paper), local user themes, interface density, sidebar position and width presets, status bar, and focus mode. Theme, density, and position use segmented controls; Compact and Comfortable change interface spacing and control sizes. Sidebar width changes the narrow icon strip with Narrow, Standard, and Wide presets. Tool panel width separately sizes the open tool beside it, including Note graph; an existing custom panel width is preserved until a panel preset is chosen. Both settings are saved across restarts. The app sidebar opens Explorer, Workspace, Note graph, Git, History, Properties, Templates, Table editor, and Scripts. Settings and Export live in the Notation menu, and Git has a distinct branch icon. Choose **Sidebar position → Left / Right** to move the navigation and its open tool together. The side is saved across restarts. Click the selected tool again to close it, or use Focus mode to hide the sidebar. In narrow windows, the tool overlays the editor to preserve writing width. Arrow Up/Down and Home/End navigate the sidebar buttons. **Editor** controls font family/size (bundled Source Sans 3 and IBM Plex Mono), line height, reading width, wrapping, layout, line numbers, and smooth scrolling. Smooth scrolling eases mouse-wheel steps, including small and fractional high-resolution mouse input, in documents and panels; turn it off for immediate native scrolling. System reduced-motion preferences disable the animation. If animation misses its frame budget, the rest of that wheel gesture switches to immediate scrolling instead of accumulating delays. The Editor section includes custom number steppers and a live typography/layout specimen. Each section has its own reset; these resets preserve documents, scripts, and recovery data.
+**Settings → Appearance** controls the built-in Dark or Light mode, its preset (Dark: Midnight, Charcoal, AMOLED, Forest, Dusk; Light: Default, Paper), local user themes, interface density, sidebar position and width presets, status bar, and focus mode. Theme, density, and position use segmented controls; Compact and Comfortable change interface spacing and control sizes. Sidebar width changes the narrow icon strip with Narrow, Standard, and Wide presets. Tool panel width separately sizes the open tool beside it, including Note graph; an existing custom panel width is preserved until a panel preset is chosen. Both settings are saved across restarts. The app sidebar opens Explorer, Workspace, Note graph, Sticky notes, Git, History, Properties, Templates, Table editor, and Scripts. Settings and Export live in the Notation menu, and Git has a distinct branch icon. Choose **Sidebar position → Left / Right** to move the navigation and its open tool together. The side is saved across restarts. Click the selected tool again to close it, or use Focus mode to hide the sidebar. In narrow windows, the tool overlays the editor to preserve writing width. Arrow Up/Down and Home/End navigate the sidebar buttons. **Editor** controls font family/size (bundled Source Sans 3 and IBM Plex Mono), line height, reading width, wrapping, layout, line numbers, and smooth scrolling. Smooth scrolling eases mouse-wheel steps, including small and fractional high-resolution mouse input, in documents and panels; turn it off for immediate native scrolling. System reduced-motion preferences disable the animation. If animation misses its frame budget, the rest of that wheel gesture switches to immediate scrolling instead of accumulating delays. The Editor section includes custom number steppers and a live typography/layout specimen. Each section has its own reset; these resets preserve documents, scripts, and recovery data.
+
+For custom CSS, choose **Create theme** in **Settings → Appearance**, select a **Built-in base**, then **Preview theme** and **Save and apply theme**. You can select, edit, duplicate, delete, import, or export local themes. **Ctrl/Cmd+Shift+F12** disables custom styling without deleting saved themes. See the [theme guide](docs/user-guide.md#themes) and [CSS/JSON example](docs/examples.md#a-small-local-theme) for supported syntax and limits.
 
 Settings keeps the same window-relative size across sections. Long sections scroll inside the dialog; the Shortcuts list scrolls independently while its search and close controls stay visible.
 

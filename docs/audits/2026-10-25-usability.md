@@ -5,7 +5,7 @@ Issue: [#7](https://github.com/esshi1337/notation/issues/7). Independent reviewe
 ## Exact scope
 
 - Merged main: [`62f2e2e`](https://github.com/esshi1337/notation/commit/62f2e2ec7ab0f6b98749fd3f1b909732af5f9240), including built-in themes, user CSS/themes, Canvas interactions and note linking ([PRs #10](https://github.com/esshi1337/notation/pull/10), [#11](https://github.com/esshi1337/notation/pull/11), [#12](https://github.com/esshi1337/notation/pull/12), [#13](https://github.com/esshi1337/notation/pull/13)).
-- Audited tree: [`57ed070`](https://github.com/esshi1337/notation/commit/57ed07092e8f69c3ed80335a9f350394ab811d4e), adding the unmerged sticky implementation in [draft PR #14](https://github.com/esshi1337/notation/pull/14).
+- Audited tree: [`57ed070`](https://github.com/esshi1337/notation/commit/57ed07092e8f69c3ed80335a9f350394ab811d4e), adding the then-unmerged sticky implementation in [PR #14](https://github.com/esshi1337/notation/pull/14).
 
 Review covered CSS validation/import/recovery, Canvas gesture cancellation and stale edits, note-search/navigation errors, sticky SQLite migration and bounds, caller authorization, window admission/close races, autosave ordering, and listener/timer cleanup.
 
@@ -37,7 +37,7 @@ The five native failures all stop at the missing pinned engine-fixture assertion
 
 ## Remaining verification
 
-Sticky notes remain **draft and unmerged** under the user's instruction to leave uncertain work in draft. Actual Linux native window creation, always-on-top/focus, independence when minimizing the main window, close events, and AppImage packaging were not verified. Browser native-command tests use mocks; Rust type checking does not establish native runtime behavior. The system itself lacks WebKitGTK 4.1; temporary dependency extraction did not install system packages.
+At audit time, sticky notes were **draft and unmerged** under the user's instruction to leave uncertain work in draft. The user subsequently explicitly requested merging the PRs after these gaps were explained, and [PR #14](https://github.com/esshi1337/notation/pull/14) was merged into `main`. That authorization changes the merge status, not the verification results below. Actual Linux native window creation, always-on-top/focus, independence when minimizing the main window, close events, and AppImage packaging were not verified. Browser native-command tests use mocks; Rust type checking does not establish native runtime behavior. The system itself lacks WebKitGTK 4.1; temporary dependency extraction did not install system packages.
 
 Tauri native drag interception may affect HTML5 text drops; real packaged-app drag/drop behavior remains unverified. The file-drop guard does not establish native drag behavior.
 
