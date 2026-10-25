@@ -54,6 +54,66 @@ test('custom appearance and editor preferences persist and reset to defaults', a
   await expect(settings.getByRole('checkbox', { name: 'Show line numbers' })).toBeChecked();
 });
 
+test('built-in dark presets apply their surfaces, controls and syntax while keeping other preferences', async ({ page }) => {
+  await runCommand(page, 'Settings');
+  const settings = settingsDialog(page);
+  const variable = (name: string) => page.evaluate((property) => getComputedStyle(document.documentElement).getPropertyValue(property).trim(), name);
+  await setSetting(page, 'Density', 'comfortable');
+  await settingsTab(page, 'Editor').click();
+  await setSetting(page, 'Editor font', 'sans');
+  await settingsTab(page, 'Appearance').click();
+  await setSetting(page, 'Dark preset', 'AMOLED');
+  await expect(page.locator('html')).toHaveAttribute('data-dark-preset', 'amoled');
+  for (const name of ['--bg', '--bar', '--panel', '--preview']) expect(await variable(name), name).toBe('#000000');
+  expect(await variable('--code-keyword')).toBe('#c9a7f0');
+  expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(0, 0, 0)');
+  await setSetting(page, 'Theme', 'light');
+  expect(await variable('--bg')).toBe('#faf9f7');
+  await setSetting(page, 'Theme', 'dark');
+  expect(await variable('--bg')).toBe('#000000');
+  await expectSetting(page, 'Dark preset', 'AMOLED');
+  await setSetting(page, 'Dark preset', 'Forest');
+  await expect(page.locator('html')).toHaveAttribute('data-dark-preset', 'forest');
+  expect(await variable('--bg')).toBe('#111713');
+  expect(await variable('--code-keyword')).toBe('#a8c9b0');
+  await setSetting(page, 'Dark preset', 'Dusk');
+  await expect(page.locator('html')).toHaveAttribute('data-dark-preset', 'dusk');
+  expect(await variable('--bg')).toBe('#14121a');
+  await settingsTab(page, 'Editor').click();
+  await expectSetting(page, 'Editor font', 'sans');
+  await settingsTab(page, 'Appearance').click();
+  await expectSetting(page, 'Density', 'comfortable');
+  await setSetting(page, 'Dark preset', 'Midnight');
+  expect(await variable('--bg')).toBe('#111111');
+});
+
+test('Paper light preset applies parchment colors, reloads, and resets with the dark preset', async ({ page }) => {
+  await runCommand(page, 'Settings');
+  let settings = settingsDialog(page);
+  const variable = (name: string) => page.evaluate((property) => getComputedStyle(document.documentElement).getPropertyValue(property).trim(), name);
+  await setSetting(page, 'Theme', 'light');
+  await expect(settings.getByRole('combobox', { name: 'Dark preset' })).toHaveCount(0);
+  await setSetting(page, 'Light preset', 'Paper');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await expect(page.locator('html')).toHaveAttribute('data-light-preset', 'paper');
+  expect(await variable('--bg')).toBe('#f6efe0');
+  expect(await variable('--text')).toBe('#3a3128');
+  expect(await variable('--code-keyword')).toBe('#7a4f8a');
+  expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(246, 239, 224)');
+  await page.reload();
+  await runCommand(page, 'Settings');
+  settings = settingsDialog(page);
+  await expectSetting(page, 'Theme', 'light');
+  await expectSetting(page, 'Light preset', 'Paper');
+  expect(await variable('--bg')).toBe('#f6efe0');
+  await settings.getByRole('button', { name: 'Reset appearance', exact: true }).click();
+  await expectSetting(page, 'Theme', 'dark');
+  await setSetting(page, 'Theme', 'light');
+  await expectSetting(page, 'Light preset', 'Default');
+  expect(await variable('--bg')).toBe('#faf9f7');
+  expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(250, 249, 247)');
+});
+
 test('shortcut remapping persists, conflicting bindings are rejected, and reset restores defaults', async ({ page }) => {
   await runCommand(page, 'Settings');
   let settings = settingsDialog(page);

@@ -74,9 +74,42 @@
   --icon-chevron: url('/identity/4-80597.svg');
 }
 
+:root[data-theme='light'][data-light-preset='paper'] {
+  --bg: #f6efe0; --bar: #fbf6ea; --panel: #f6efe0; --preview: #f6efe0;
+  --menu: #fbf6ea; --code: #efe5d2; --text: #3a3128; --heading: #241c14;
+  --muted: #6f6252; --subtle: #8a7a66; --border: #dfd2ba; --hover: #efe5d2;
+  --active: #e7dbc4; --selection: #e7dbc4; --error: #a62929;
+  --scrollbar-track: #f6efe0; --scrollbar-thumb: #cbbca2; --scrollbar-thumb-hover: #a8977a;
+  --code-keyword: #7a4f8a; --code-string: #4e6b32; --code-number: #94551f;
+}
+
 :root[data-dark-preset='charcoal']:not([data-theme='light']) {
   --bg: #151518; --bar: #19191d; --panel: #151518; --preview: #151518;
   --menu: #19191d; --border: #2d2d34; --hover: #222228; --active: #303038; --code: #1c1c21;
+}
+:root[data-dark-preset='amoled']:not([data-theme='light']) {
+  --bg: #000000; --bar: #000000; --panel: #000000; --preview: #000000;
+  --menu: #000000; --code: #0a0a0a; --text: #d2d2d2; --heading: #f5f5f5;
+  --muted: #9a9a9a; --subtle: #767676; --border: #262626; --hover: #161616;
+  --active: #1f1f1f; --selection: #232323; --error: #f0a8a8;
+  --scrollbar-track: #000000; --scrollbar-thumb: #3a3a3a; --scrollbar-thumb-hover: #555555;
+  --code-keyword: #c9a7f0; --code-string: #a8d49a; --code-number: #e6bd93;
+}
+:root[data-dark-preset='forest']:not([data-theme='light']) {
+  --bg: #111713; --bar: #16201a; --panel: #111713; --preview: #111713;
+  --menu: #16201a; --code: #16201a; --text: #c7d3c8; --heading: #e6efe7;
+  --muted: #94a396; --subtle: #6e7d70; --border: #2b3a2f; --hover: #1a241d;
+  --active: #243229; --selection: #2b3a2f; --error: #e6a8a0;
+  --scrollbar-track: #111713; --scrollbar-thumb: #3d5142; --scrollbar-thumb-hover: #57705c;
+  --code-keyword: #a8c9b0; --code-string: #c2d59a; --code-number: #d8b98b;
+}
+:root[data-dark-preset='dusk']:not([data-theme='light']) {
+  --bg: #14121a; --bar: #1a1723; --panel: #14121a; --preview: #14121a;
+  --menu: #1a1723; --code: #1a1723; --text: #cbc5d6; --heading: #ece8f4;
+  --muted: #9b93aa; --subtle: #756d86; --border: #302b3d; --hover: #1d1927;
+  --active: #292335; --selection: #302b3d; --error: #e8a4b8;
+  --scrollbar-track: #14121a; --scrollbar-thumb: #403a52; --scrollbar-thumb-hover: #5c5372;
+  --code-keyword: #c3a6e6; --code-string: #a8c4a0; --code-number: #d8b38b;
 }
 :root[data-density='comfortable'] {
   --chrome-height: 48px;
