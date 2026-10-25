@@ -22,48 +22,108 @@ work in this repository.
 - `.codex/` and `opencode.json` — project-level Codex and OpenCode
   configuration (Serena MCP, agent definitions, compaction).
 
-## Orchestration
+## Project orchestration and file boundaries
 
-One advisor session owns each piece of work: Codex profile
-`notation-advisor` (model `gpt-6-astra`, launcher `notation-advisor`). The
-advisor owns requirements, architecture, task selection, review, integration,
-and the final answer. Do not start peer orchestrators, standing recon or
-verifier teams, or recursive worker trees. Workers never spawn workers.
+Start this project's main session with `scripts/notation-advisor`. This selects
+Astra High inside the mandatory Linux Bubblewrap sandbox. The global
+`notation-advisor` alias and direct `codex`/`opencode` commands do not provide
+these project boundaries. Never use them as a sandbox fallback. Use an
+independent clone; the launcher deliberately rejects linked worktrees.
 
-Delegation runs through OpenCodex using the OpenCode agents in `opencode.json`.
-Launch a bounded task with `scripts/notation-worker <role> <prompt>`; this uses
-`opencodex opencode run --standalone` so the proxy routing is present in the
-worker process without changing global client settings.
+Astra is the sole advisor, orchestrator and integrator. Astra owns issue scope,
+architecture, task selection, review, GitHub operations and the final answer.
+Never start peer orchestrators, standing teams, or recursive workers. Workers
+never spawn workers. Keep one implementer active unless disjoint write-sets
+and a concrete benefit justify parallel work.
 
-| Agent | Model | Use for |
+| Role | Model | Task profile |
 | --- | --- | --- |
-| `sol-implementer` | opencodex/gpt-6.1-sol | Complex or cross-file implementation, difficult debugging, security-sensitive work |
-| `deepseek-implementer` | opencodex/combo/deepseek-auto | Well-specified smaller changes, mechanical work, targeted tests |
-| `glm-reviewer` | opencodex/zai/glm-5.3 | Read-only challenger and second eye |
-| `glm-security-reviewer` | opencodex/zai/glm-5.3-flash | Read-only security review of relevant trust boundaries and attack paths |
-| `scout-luna` | openai/gpt-6-luna | Read-only code search: symbols, references, call sites |
-| `scout-flash` | opencode/glm-5.3-flash-free | Cheap read-only text sweeps: files, patterns, docs |
+| Astra main | gpt-6-astra, High | Requirements, scoped issues, advice, integration, PRs and merges |
+| `deepseek` | opencodex/combo/deepseek-auto, High | Default general coding, bounded features, routine fixes, refactors and regression tests |
+| `sol` | opencodex/gpt-6.1-sol, High | Complex problems, ambiguous bugs, multiple systems/services and security-sensitive implementation |
+| `challenger` / `security` | opencodex/zai/glm-5.3-flash, High | Independent adversarial review and targeted checks: bugs, logic, errors, races, leaks and security |
 
-Choose Sol 6.1 for complex or ambiguous work and DeepSeek for well-specified
-bounded work. GLM 5.3 challenges the result; GLM 5.3 Flash reviews security
-when the change touches a trust boundary. Both review roles remain read-only.
-The DeepSeek worker uses the existing OpenCodex `combo/deepseek-auto` route
-(Go first, direct DeepSeek fallback). Its upstream models are moving aliases,
-not immutable 1017 revision pins; verify the version when exact 1017 matters. Scouts retain their existing search-only roles.
+DeepSeek's combo uses moving upstream aliases. The catalog's exact 1017 route
+returned `provider.no-route` during setup; do not claim a revision pin.
+Existing scout definitions remain search-only; do not launch them directly
+outside the project sandbox or turn them into standing teams.
 
-Working rules: delegate one bounded packet at a time containing objective,
-write-set, relevant facts, non-goals, acceptance checks, and required report.
-Prefer 2–6k tokens of focused input; reports fit in about 1k tokens with exact
-pass/fail/unrun evidence and changed paths. Keep at most one implementer
-active by default; parallel work needs disjoint write-sets and a concrete
-benefit. Reviewers and scouts are read-only. A model's self-report is not
-runtime evidence: the advisor reviews the diff and runs or inspects
-independent checks. Standalone read-only sessions can use
-`codex -p notation-scout` (launcher `notation-scout`).
+Implementers require explicit existing `--write` files/directories or
+`--read-only`. Their source is otherwise read-only, Git metadata and harness
+policy are protected, and they receive no GitHub or native Codex credentials.
+Reviewers have read-only source, no Serena mutations, and only fixed
+`scripts/notation-review-check <suite>` shell permissions. Tests execute in
+the same filesystem boundary with disposable scratch/cache output. Network
+access remains available for model providers and tools; never describe this
+as a network sandbox. See `orchestration/README.md` for exact boundaries.
 
-Serena MCP provides symbol-level navigation in both Codex and OpenCode. The
-project is registered as `Notation` under `.serena/` with the svelte language
-server; it needs `node_modules` installed to activate.
+Every packet includes the issue, objective, write-set, relevant facts,
+non-goals, acceptance checks and required report. Prefer 2–6k focused input
+tokens and reports under 1k tokens with changed paths and exact pass/fail/unrun
+evidence. Example:
+
+```sh
+scripts/notation-worker deepseek --write src/store.ts '<bounded packet>'
+scripts/notation-worker sol --write src '<bounded cross-system packet>'
+scripts/notation-worker deepseek --read-only '<investigation packet>'
+scripts/notation-worker challenger '<review packet>'
+```
+
+Serena MCP is pinned to `serena-agent==1.7.0`, registered as `Notation` under
+`.serena/` with the Svelte language server, and enabled for Astra and write
+implementers. Install `node_modules` first. It is disabled for read-only
+workers because it also exposes mutation tools.
+
+## Issue-first development and pull requests
+
+Before changing code or configuration, define the problem, bound the scope,
+state non-goals and measurable acceptance checks. Inspect existing issues;
+reuse a matching scoped issue or create one on `esshi1337/notation` assigned
+to `esshi1337`. Use exactly one category: `bug` (incorrect behavior),
+`enhancement` (new behavior), `documentation` (docs only), or `maintenance`
+(tooling, dependencies, refactoring and operations). Do not create status,
+priority, agent, milestone or duplicate category labels by default.
+
+Use `scripts/notation-task issue <category> '<title>' --body-file <file>`
+with substantive `## Problem`, `## Scope`, `## Non-goals`, `## Acceptance`
+sections. The four GitHub issue forms provide the same fields. Use
+`scripts/notation-task start <number> <slug>` in a clean independent clone.
+Work on `issue/<number>-<slug>`; never implement directly on `main`.
+For a dirty checkout, create a separate clone rather than resetting it.
+
+Install local hooks once with `scripts/notation-task install-hooks`; the
+advisor launcher also sets their path for every session. The hooks verify the
+live owner-assigned issue and block direct main pushes, unrelated refs,
+branch deletion and non-fast-forward pushes. They require GitHub access and
+fail closed offline. They are local guardrails, not server protection.
+
+Review the actual diff independently of worker claims. Run meaningful local
+checks, then GLM Flash challenger review and relevant security checks. GLM
+must challenge error paths, logic and cleanup of timers, listeners, native
+resources and memory growth where applicable. It runs relevant fixed test
+suites; it returns concrete reproduction steps for missing cases to the
+implementer. Fix confirmed findings, retest and review the changed result.
+Do not claim leak freedom without runtime memory/lifecycle evidence.
+
+Commit only scoped files, then create a PR using
+`scripts/notation-task pr --title '<title>' --body-file <file>`. The body must
+include `Closes #<issue>`, `## Validation` and `## Review` with exact results,
+fixes and remaining gaps. Keep one coherent issue per PR. No CI is configured
+or requested: all checks and review evidence are local.
+
+After inspecting the reports and accepting the exact committed result,
+Astra can use `scripts/notation-task record-review --checks-file <file>
+--review-file <file>` to attest acceptance for HEAD. Only attest when the
+checks passed and independent findings are resolved, or the user explicitly
+accepted a documented gap. This records evidence, not a model verdict parser.
+When merge is within the user's authorized task, use
+`scripts/notation-task merge <pr>`: it checks the linked issue, branch and
+accepted local HEAD against the live PR head, then squash-merges with
+`--match-head-commit`. Any new commit invalidates the acceptance record.
+Never force-push, bypass hooks/checks, weaken tests or merge unrelated work.
+GitHub server branch protection is unavailable on this private repo's current
+plan; local helpers can be bypassed by a human and must not be represented as
+server-enforced protection.
 
 ## Build, Test, and Development Commands
 

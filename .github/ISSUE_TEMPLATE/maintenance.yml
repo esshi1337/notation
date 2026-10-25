@@ -1,0 +1,33 @@
+name: Maintenance
+description: Scope one maintenance task before implementation.
+labels: ["maintenance"]
+assignees: ["esshi1337"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: "Describe the observed problem or unmet need; include a reproducer for bugs."
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: "Define the desired behavior and bounded areas to change."
+    validations:
+      required: true
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-goals
+      description: "State what this task will leave out."
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance
+      description: "Give measurable completion criteria and local verification commands."
+    validations:
+      required: true

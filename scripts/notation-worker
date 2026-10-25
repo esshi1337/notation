@@ -1,35 +1,3 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-usage() {
-  echo 'Usage: scripts/notation-worker <sol|deepseek|challenger|security> <prompt> [run options...]'
-}
-
-case "${1:-}" in
-  sol) agent=sol-implementer ;;
-  deepseek) agent=deepseek-implementer ;;
-  challenger) agent=glm-reviewer ;;
-  security) agent=glm-security-reviewer ;;
-  -h|--help) usage; exit 0 ;;
-  *) usage >&2; exit 2 ;;
-esac
-shift
-if [[ $# -eq 0 ]]; then
-  usage >&2
-  exit 2
-fi
-
-repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-cd -- "$repo_root"
-
-# Reviewers use built-in read/grep/glob tools. Serena also exposes mutations,
-# which are not covered by the built-in edit/bash permission denials.
-if [[ "$agent" == glm-reviewer || "$agent" == glm-security-reviewer ]]; then
-  OPENCODE_CONFIG_CONTENT=$(node --input-type=module -e '
-    const config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || "{}");
-    config.mcp = { ...config.mcp, serena: { enabled: false } };
-    process.stdout.write(JSON.stringify(config));
-  ')
-  export OPENCODE_CONFIG_CONTENT
-fi
-exec opencodex opencode run --standalone --agent "$agent" "$@"
+exec "$(dirname -- "${BASH_SOURCE[0]}")/notation-launch" "$@"

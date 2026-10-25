@@ -1,8 +1,7 @@
 # Notation project-level Codex configuration.
-# Model and context budgets belong to the selected user profile
-# (notation-advisor / notation-scout). Do not add model keys here: Codex 0.164
-# project model keys override the selected profile, which can route the wrong
-# model name to a provider.
+# Launch with scripts/notation-advisor for the project filesystem boundary.
+# Model selection belongs to the launcher, not this config: project model
+# keys would also override unrelated named profiles in Codex 0.164.
 
 # Resolved relative to this .codex/config.toml file.
 experimental_compact_prompt_file = "../orchestration/compact.md"

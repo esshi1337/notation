@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+"""OpenCodex child entrypoint; retain proxy configuration only in memory."""
+import json
+import os
+from pathlib import Path
+
+entry = Path(__file__).resolve().parents[1] / 'notation-launch'
+args = json.loads(os.environ['NOTATION_LAUNCH_ARGS'])
+os.execv(str(entry), [str(entry), *args])
