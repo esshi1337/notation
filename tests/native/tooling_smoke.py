@@ -164,6 +164,8 @@ def run(app: Path) -> None:
             smoke.wait_for_driver(driver, log_path)
             client.create_session(app)
             smoke.wait_for(client, "document.querySelector('main.app')", "native app UI")
+            smoke.require(client.execute("return !document.querySelector('[aria-label=\"Git panel\"]')"),
+                          "Git must be hidden for the initial unsaved document")
 
             print("Opening temporary workspace", flush=True)
             client.element_command(smoke.button(client, "Workspace"), "/click")
@@ -196,12 +198,14 @@ def run(app: Path) -> None:
             status_before = git("status", "--porcelain=v1")
             head_before = git("rev-parse", "HEAD")
             index_before = hashlib.sha256((repo / ".git" / "index").read_bytes()).hexdigest()
+            smoke.wait_for(client, "document.querySelector('[aria-label=\"Git panel\"]')", "document Git availability")
             client.element_command(smoke.button(client, "Git"), "/click")
             smoke.wait_for(client, "document.querySelector('[aria-label=\\\"Git\\\"] .git-current-branch')?.innerText.includes('main')",
                            "current Git branch")
             smoke.wait_for(client, "document.querySelector('[aria-label=\\\"Git\\\"] .git-history button')",
                            "Git history")
             git_text = client.execute("return document.querySelector('[aria-label=\\\"Git\\\"]').innerText")
+            smoke.require(str(repo) in git_text, f"Git did not show the active file's repository: {git_text!r}")
             smoke.require("Changes (2)" in git_text and "Initial notes" in git_text,
                           f"Git panel missed expected status/history: {git_text!r}")
             graph_state = client.execute(

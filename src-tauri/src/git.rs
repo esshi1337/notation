@@ -73,6 +73,13 @@ fn capture(mut reader: impl Read + Send + 'static, limit: usize) -> thread::Join
 }
 fn run(cwd: &Path, args: &[&str]) -> Result<Output, String> {
     let mut command = Command::new("git");
+    // A desktop launched from a Git-aware shell must not inherit another
+    // repository/index or injected Git configuration. Resolve only from cwd.
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
     command
         .args([
             "--no-pager",
@@ -142,17 +149,55 @@ fn checked(cwd: &Path, args: &[&str]) -> Result<Output, String> {
     }
     Ok(output)
 }
-fn repository(database: &Database) -> Result<(PathBuf, PathBuf), String> {
-    let workspace = explorer::workspace_root(database)?;
-    let output = checked(&workspace, &["rev-parse", "--show-toplevel"])?;
+fn repository_root(directory: &Path) -> Result<PathBuf, String> {
+    let output = checked(directory, &["rev-parse", "--show-toplevel"])?;
+    if output.truncated {
+        return Err("Git repository path exceeds its output limit.".into());
+    }
     let root = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim())
         .canonicalize()
         .map_err(|error| error.to_string())?;
+    Ok(root)
+}
+fn document_repository(document_path: &str) -> Result<PathBuf, String> {
+    let path = Path::new(document_path);
+    if !path.is_absolute() {
+        return Err("Git requires an absolute document path.".into());
+    }
+    let path = path.canonicalize().map_err(|error| error.to_string())?;
+    if !path.is_file() {
+        return Err("Git requires an existing document file.".into());
+    }
+    let root = repository_root(path.parent().ok_or("Document has no parent directory.")?)?;
+    if !path.starts_with(&root) {
+        return Err("Document is outside the Git worktree.".into());
+    }
+    Ok(root)
+}
+/// Lightweight detection: no status, history, database, or process-cwd fallback.
+pub fn document_repository_root(document_path: &str) -> Option<String> {
+    document_repository(document_path)
+        .ok()
+        .map(|root| root.to_string_lossy().into_owned())
+}
+fn repository(
+    database: &Database,
+    document_path: Option<&str>,
+) -> Result<(PathBuf, PathBuf), String> {
+    if let Some(path) = document_path {
+        let root = document_repository(path)?;
+        return Ok((root.clone(), root));
+    }
+    let workspace = explorer::workspace_root(database)?;
+    let root = repository_root(&workspace)?;
     Ok((workspace, root))
 }
 pub fn status(database: &Database) -> Status {
+    status_for_document(database, None)
+}
+pub fn status_for_document(database: &Database, document_path: Option<&str>) -> Status {
     let result = (|| -> Result<Status, String> {
-        let (workspace, root) = repository(database)?;
+        let (workspace, root) = repository(database, document_path)?;
         let branch = run(&workspace, &["symbolic-ref", "--quiet", "--short", "HEAD"])?;
         let branch = branch
             .ok
@@ -241,7 +286,14 @@ pub fn status(database: &Database) -> Status {
     })
 }
 pub fn history(database: &Database, limit: Option<usize>) -> Result<Vec<Commit>, String> {
-    let (workspace, _) = repository(database)?;
+    history_for_document(database, limit, None)
+}
+pub fn history_for_document(
+    database: &Database,
+    limit: Option<usize>,
+    document_path: Option<&str>,
+) -> Result<Vec<Commit>, String> {
+    let (workspace, _) = repository(database, document_path)?;
     if !run(&workspace, &["rev-parse", "--verify", "HEAD"])?.ok {
         return Ok(vec![]);
     }
@@ -287,7 +339,15 @@ pub fn history(database: &Database, limit: Option<usize>) -> Result<Vec<Commit>,
     Ok(commits)
 }
 pub fn diff(database: &Database, path: &str, staged: bool) -> Result<Diff, String> {
-    let (workspace, root) = repository(database)?;
+    diff_for_document(database, path, staged, None)
+}
+pub fn diff_for_document(
+    database: &Database,
+    path: &str,
+    staged: bool,
+    document_path: Option<&str>,
+) -> Result<Diff, String> {
+    let (workspace, root) = repository(database, document_path)?;
     let requested = if Path::new(path).is_absolute() {
         PathBuf::from(path)
     } else {

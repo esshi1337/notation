@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { runCommand, setSetting, expectSetting } from './commands';
+import { runCommand, setSetting, expectSetting, commandResults } from './commands';
 
 const source = (page: Page) => page.getByRole('textbox', { name: 'Document source' });
 const settings = (page: Page) => page.getByRole('dialog', { name: 'Settings', exact: true });
@@ -42,7 +42,7 @@ test('Settings traps focus, closes with Escape, restores focus, and persists pre
   await expect(source(page)).toBeVisible();
 });
 
-test('Explorer and Git explain their native requirement without showing fake data in browser mode', async ({ page }) => {
+test('Explorer explains its native requirement and Git is unavailable in browser mode', async ({ page }) => {
   await runCommand(page, 'Explorer');
   const explorer = page.getByRole('region', { name: 'Explorer', exact: true });
   await expect(explorer).toBeVisible();
@@ -51,10 +51,16 @@ test('Explorer and Git explain their native requirement without showing fake dat
   await expect(explorer.getByRole('alert')).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Close explorer' }).click();
-  await runCommand(page, 'Git');
+  await expect(page.getByRole('button', { name: 'Git panel', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Commands', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Search commands', exact: true }).fill('Git');
+  await expect(commandResults(page).getByRole('option', { name: 'Git', exact: true })).toBeDisabled();
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Escape');
+  await source(page).focus();
+  const text = await source(page).textContent();
+  await page.keyboard.press('Control+Shift+g');
   const git = page.getByRole('region', { name: 'Git', exact: true });
-  await expect(git).toBeVisible();
-  await expect(git).toContainText(/desktop app/i);
-  await expect(git.locator('.git-current-branch, .git-changes button, .git-history button')).toHaveCount(0);
-  await expect(git.getByRole('alert')).toHaveCount(0);
+  await expect(git).toHaveCount(0);
+  await expect(source(page)).toHaveText(text!);
 });

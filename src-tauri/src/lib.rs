@@ -496,16 +496,32 @@ mod desktop {
         .await
     }
     #[tauri::command]
-    async fn git_status(database: State<'_, DatabaseState>) -> Result<git::Status, String> {
-        database_work(database.get()?, move |database| Ok(git::status(&database))).await
+    async fn git_repository(document_path: String) -> Result<Option<String>, String> {
+        tauri::async_runtime::spawn_blocking(move || git::document_repository_root(&document_path))
+            .await
+            .map_err(|error| error.to_string())
+    }
+    #[tauri::command]
+    async fn git_status(
+        document_path: Option<String>,
+        database: State<'_, DatabaseState>,
+    ) -> Result<git::Status, String> {
+        database_work(database.get()?, move |database| {
+            Ok(git::status_for_document(
+                &database,
+                document_path.as_deref(),
+            ))
+        })
+        .await
     }
     #[tauri::command]
     async fn git_history(
         limit: Option<usize>,
+        document_path: Option<String>,
         database: State<'_, DatabaseState>,
     ) -> Result<Vec<git::Commit>, String> {
         database_work(database.get()?, move |database| {
-            git::history(&database, limit)
+            git::history_for_document(&database, limit, document_path.as_deref())
         })
         .await
     }
@@ -513,10 +529,16 @@ mod desktop {
     async fn git_diff(
         path: String,
         staged: Option<bool>,
+        document_path: Option<String>,
         database: State<'_, DatabaseState>,
     ) -> Result<git::Diff, String> {
         database_work(database.get()?, move |database| {
-            git::diff(&database, &path, staged.unwrap_or(false))
+            git::diff_for_document(
+                &database,
+                &path,
+                staged.unwrap_or(false),
+                document_path.as_deref(),
+            )
         })
         .await
     }
@@ -828,6 +850,7 @@ mod desktop {
                 get_tags,
                 get_backlinks,
                 list_directory,
+                git_repository,
                 git_status,
                 git_history,
                 git_diff,

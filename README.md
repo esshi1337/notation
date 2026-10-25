@@ -294,7 +294,7 @@ Settings keeps the same window-relative size across sections. Long sections scro
 
 **Settings → Shortcuts** lets you search by command or group, record or type bindings, disable a command's shortcut, and restore defaults. Conflicting bindings are rejected, and clipboard/undo shortcuts stay available to the editor. The command menu remains accessible even if its shortcut is disabled. Your window manager's global shortcuts take precedence over application bindings.
 
-Open **Git** for the selected workspace's branch, changed files, commit graph, and diffs. Git must be installed. Git currently requires a migrated folder workspace with a repository root; a collection of unrelated file references has no single repository. These views read local repository state; they do not stage, commit, fetch, or push. Save editor changes to include them in Git's working-tree diff.
+**Git** appears only in the desktop app when the active saved file exists in a Git worktree and Git is installed. It follows the file's actual path, not the selected workspace, and shows that repository's root, branch, changed files, commit graph, and diffs (including linked worktrees). Switching to an untitled, missing, or non-repository file hides Git and closes its panel; the shortcut and command are unavailable too. These views read local repository state; they do not stage, commit, fetch, or push. Save editor changes to include them in Git's working-tree diff. Legacy native/MCP Git queries still use the selected folder workspace's scope.
 
 ## Agent MCP connection
 

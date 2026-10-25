@@ -7,16 +7,15 @@ for (const theme of ['dark', 'light']) {
     await page.goto('/');
     await enableScripts(page);
     const sidebar = page.getByRole('navigation', { name: 'App sidebar' });
-    const tools = ['Explorer', 'Workspace', 'Note graph', 'Sticky notes', 'Git', 'History', 'Properties', 'Templates', 'Table editor', 'Scripts'];
+    const tools = ['Explorer', 'Workspace', 'Note graph', 'Sticky notes', 'History', 'Properties', 'Templates', 'Table editor', 'Scripts'];
     await expect(sidebar.getByRole('button')).toHaveCount(tools.length);
     for (const name of tools) await expect(sidebar.getByRole('button', { name: `${name} panel`, exact: true })).toHaveCount(1);
     await expect(page.getByRole('button', { name: 'Open settings', exact: true })).toHaveCount(0);
     await expect(sidebar.getByRole('button', { name: 'Export panel', exact: true })).toHaveCount(0);
     for (const name of ['New document', 'Commands', 'Open workspace panel']) await expect(page.getByRole('button', { name, exact: true })).toHaveCount(1);
     const graph = sidebar.getByRole('button', { name: 'Note graph panel' }).locator('svg');
-    const git = sidebar.getByRole('button', { name: 'Git panel' }).locator('svg');
-    await expect(git).toHaveAttribute('data-icon', 'git');
-    expect(await git.getAttribute('data-icon-source')).not.toBe(await graph.getAttribute('data-icon-source'));
+    await expect(graph).toHaveAttribute('data-icon', 'graph');
+    await expect(sidebar.getByRole('button', { name: 'Git panel' })).toHaveCount(0);
 
     await page.getByRole('button', { name: 'App menu', exact: true }).click();
     const menu = page.getByRole('menu', { name: 'App menu', exact: true });
