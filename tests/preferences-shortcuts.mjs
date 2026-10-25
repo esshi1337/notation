@@ -7,6 +7,80 @@ function check(name, run) { run(); passed++; console.log('✓ ' + name); }
 try {
   const preferences = await server.ssrLoadModule('/src/preferences.ts');
   const keys = await server.ssrLoadModule('/src/shortcuts.ts');
+  const themes = await server.ssrLoadModule('/src/themes.ts');
+  const theme = (extra = {}) => ({ id: 'theme-test', name: 'Local theme', base: 'light/paper', css: ':root { --bg: #abcdef; }', ...extra });
+  check('user themes roundtrip without resetting unrelated preferences or version', () => {
+    const restored = preferences.readUIPreferences(JSON.parse(JSON.stringify({ userThemes: [theme()], selectedThemeId: 'theme-test', tabSize: 3, density: 'comfortable' })));
+    assert.deepEqual(restored.userThemes, [theme()]); assert.equal(restored.selectedThemeId, 'theme-test');
+    assert.equal(restored.tabSize, 3); assert.equal(restored.density, 'comfortable'); assert.equal(preferences.UI_SETTINGS_VERSION, 2);
+  });
+  check('theme normalization copies known fields only and validates identities names and bases', () => {
+    const value = JSON.parse(JSON.stringify({ ...theme(), version: 1, unknown: 'ignored', __proto__: { polluted: true } }));
+    assert.deepEqual(themes.normalizeTheme(value), theme());
+    for (const invalid of [null, [], theme({ id: '__proto__' }), theme({ id: 'theme-' }), theme({ name: ' ' }), theme({ name: 'a'.repeat(61) }), theme({ name: 'bad\nname' }), theme({ base: 'light/forest' }), theme({ css: 7 })]) assert.throws(() => themes.normalizeTheme(invalid));
+  });
+  check('non-array and wholly malformed stored libraries safely fall back', () => {
+    for (const userThemes of [{}, [theme({ css: '@import "remote";' })], ['theme-test']]) {
+      const restored = preferences.readUIPreferences({ userThemes, selectedThemeId: 'theme-test', tabSize: 3 });
+      assert.deepEqual(restored.userThemes, []); assert.equal(restored.selectedThemeId, ''); assert.equal(restored.tabSize, 3);
+    }
+    assert.equal(preferences.readUIPreferences({ userThemes: [theme()], selectedThemeId: 'missing' }).selectedThemeId, '');
+  });
+  check('mixed stored libraries recover valid entries in order without losing selections or unrelated settings', () => {
+    const first = theme({ id: 'theme-first', name: 'First' });
+    const second = theme({ id: 'theme-second', name: 'Second', css: ':root { --accent: #123456; }' });
+    const malformed = theme({ id: 'theme-broken', css: '@import "remote";' });
+    const restored = preferences.readUIPreferences({ userThemes: [first, malformed, theme({ id: 'theme-first', name: 'Duplicate' }), second, {}], selectedThemeId: 'theme-second', tabSize: 3, density: 'comfortable' });
+    assert.deepEqual(restored.userThemes, [first, second]);
+    assert.equal(restored.selectedThemeId, 'theme-second');
+    assert.equal(restored.tabSize, 3); assert.equal(restored.density, 'comfortable');
+    const dangling = preferences.readUIPreferences({ userThemes: [first, theme({ id: 'theme-dangling', css: '@import "remote";' })], selectedThemeId: 'theme-dangling' });
+    assert.deepEqual(dangling.userThemes, [first]); assert.equal(dangling.selectedThemeId, '');
+    assert.equal(preferences.readUIPreferences({ userThemes: [first], selectedThemeId: 'theme-missing' }).selectedThemeId, '');
+  });
+  check('stored recovery respects count and serialized-byte bounds while skipping only overflow', () => {
+    const unique = Array.from({ length: 10 }, (_, i) => theme({ id: 'theme-count-' + i, name: 'Count ' + i }));
+    const capped = themes.readThemePreferences({ userThemes: unique, selectedThemeId: 'theme-count-8' });
+    assert.deepEqual(capped.userThemes, unique.slice(0, 8)); assert.equal(capped.selectedThemeId, '');
+    const large = i => theme({ id: 'theme-large-' + i, name: 'Large ' + i, css: 'body { color: red; }' + '\n'.repeat(3900) });
+    const small = theme({ id: 'theme-small', name: 'Small', css: ':root { --accent: #abcdef; }' });
+    const mixed = [large(0), large(1), large(2), small, large(3)];
+    assert.ok(themes.byteLength(JSON.stringify(mixed.slice(0, 4))) <= themes.MAX_THEME_LIBRARY_BYTES);
+    assert.ok(themes.byteLength(JSON.stringify(mixed)) > themes.MAX_THEME_LIBRARY_BYTES);
+    const bounded = themes.readThemePreferences({ userThemes: mixed, selectedThemeId: 'theme-small' });
+    assert.deepEqual(bounded.userThemes, mixed.slice(0, 4)); assert.equal(bounded.selectedThemeId, 'theme-small');
+  });
+  check('standalone versioned themes import under a fresh validated ID', () => {
+    const exported = themes.exportTheme(theme());
+    assert.equal(JSON.parse(exported).version, 1);
+    assert.deepEqual(themes.importTheme(exported, 'theme-new'), theme({ id: 'theme-new' }));
+    for (const text of ['{', '{}', JSON.stringify({ ...theme(), version: 2 }), JSON.stringify({ ...theme({ id: '__proto__' }), version: 1 }), ' '.repeat(themes.MAX_THEME_FILE_BYTES + 1)]) assert.throws(() => themes.importTheme(text, 'theme-new'));
+  });
+  check('CSS policy rejects resource functions variables comments escapes and at-rules before browser parsing', () => {
+    for (const css of ['@IMPORT "https://evil.invalid";', 'body { background: URL(https://evil.invalid); }', 'body { background: u/**/rl(x); }', 'body { background: u\\72l(x); }', 'body { background: image-set(foo 1x); }', 'body { background: var(--icon-chevron); }', 'body { --x: url(data:image/svg+xml,x); }', 'body { background: attr(src type(image)); }', 'body { font-family: "Remote"; }', 'broken', 'body { color }', 'body {}']) assert.throws(() => themes.normalizeTheme(theme({ css })), css);
+    assert.doesNotThrow(() => themes.normalizeTheme(theme({ css: 'body {display:none} :root {--accent:rgb(1, 2, 3)} .app {color:var(--text)}' })));
+    assert.throws(() => themes.compileThemeCSS(theme().css), /browser/i);
+  });
+  check('per-CSS and count limits are enforced without mutating prior library', () => {
+    const previous = [theme()];
+    assert.throws(() => themes.normalizeThemeLibrary([...previous, theme({ id: 'theme-large', css: ' '.repeat(4097) })]));
+    assert.throws(() => themes.normalizeThemeLibrary(Array.from({ length: 9 }, (_, i) => theme({ id: 'theme-' + i }))));
+    assert.deepEqual(previous, [theme()]);
+    assert.throws(() => themes.normalizeTheme(theme({ css: 'body{color:é}' })));
+  });
+  check('serialized library bound includes JSON escaping and UTF-8 name bytes', () => {
+    const css = 'body { color: red; }' + '\n'.repeat(3900);
+    assert.ok(themes.byteLength(css) < 4096);
+    const values = Array.from({ length: 4 }, (_, i) => theme({ id: 'theme-' + i, name: '😀'.repeat(30), css }));
+    assert.ok(themes.byteLength(JSON.stringify(values)) > themes.MAX_THEME_LIBRARY_BYTES);
+    assert.throws(() => themes.normalizeThemeLibrary(values), /24 KiB/);
+    assert.doesNotThrow(() => themes.normalizeThemeLibrary(values.slice(0, 3)));
+    assert.equal(themes.byteLength('😀'), 4);
+  });
+  check('theme recovery chord is reserved from interactive and persisted remapping', () => {
+    assert.match(keys.validateShortcut('file.new', 'Ctrl+Shift+F12', {}), /reserved/i);
+    assert.deepEqual(keys.readShortcutOverrides({ 'file.new': 'Cmd+Shift+F12' }), {});
+  });
   const event = (key, extra = {}) => ({ key, code: key.length === 1 ? 'Key' + key.toUpperCase() : key, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, isComposing: false, ...extra });
 
   check('default indent size is four spaces', () => {
