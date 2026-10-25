@@ -117,10 +117,12 @@ def exec_sandbox(argv):
     """Keep injected credentials out of process argv and off the filesystem."""
     descriptor = os.memfd_create('notation-sandbox-args', flags=0)
     try:
-        payload = b'\0'.join(os.fsencode(arg) for arg in argv[1:]) + b'\0'
+        separator = argv.index('--')
+        options, command = argv[1:separator], argv[separator + 1:]
+        payload = b'\0'.join(os.fsencode(arg) for arg in options) + b'\0'
         with os.fdopen(os.dup(descriptor), 'wb') as stream:
             stream.write(payload)
         os.lseek(descriptor, 0, os.SEEK_SET)
-        os.execv(argv[0], [argv[0], '--args', str(descriptor)])
+        os.execv(argv[0], [argv[0], '--args', str(descriptor), '--', *command])
     finally:
         os.close(descriptor)
