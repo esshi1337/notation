@@ -692,3 +692,30 @@ test('text/plain drops create a bounded text card while file drops cancel browse
   data = await canvasData(page);
   expect(data.nodes).toHaveLength(1);
 });
+
+test('file drops on the toolbar, inspector and app header cancel defaults and explain supported actions', async ({ page }) => {
+  await runCommand(page, 'New canvas');
+  const view = canvas(page);
+  await addCanvasCard(view, 'Add text card');
+  for (const target of [
+    view.getByRole('button', { name: 'Add card', exact: true }),
+    view.getByRole('textbox', { name: 'Card label', exact: true }),
+    page.getByRole('button', { name: 'Commands', exact: true }),
+  ]) {
+    const cancelled = await target.evaluate(element => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(['not an import'], 'outside.txt', { type: 'text/plain' }));
+      const dispatch = (type: string) => {
+        const event = new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: transfer });
+        element.dispatchEvent(event);
+        return event.defaultPrevented;
+      };
+      const over = dispatch('dragover'), drop = dispatch('drop');
+      Object.defineProperty(transfer, 'files', { value: [] });
+      return { over, drop, protectedOver: dispatch('dragover'), protectedDrop: dispatch('drop'), effect: transfer.dropEffect };
+    });
+    expect(cancelled).toEqual({ over: true, drop: true, protectedOver: true, protectedDrop: true, effect: 'none' });
+    await expect(page.locator('.app-error')).toContainText('Open files with Open');
+  }
+  expect((await canvasData(page)).nodes).toHaveLength(1);
+});

@@ -689,6 +689,24 @@
   }
 
   onMount(() => {
+    const guardFileDrop = (event: DragEvent) => {
+      const transfer = event.dataTransfer;
+      if (!transfer || (!transfer.types.includes('Files') && !transfer.files.length)) return;
+      event.preventDefault();
+      if (event.type === 'dragover') transfer.dropEffect = 'none';
+      else if (!(event.target instanceof Element && event.target.closest('.canvas-viewport'))) {
+        error = 'Open files with Open, or use Add note card or Add media card on Canvas.';
+      }
+    };
+    window.addEventListener('dragover', guardFileDrop, true);
+    window.addEventListener('drop', guardFileDrop, true);
+    return () => {
+      window.removeEventListener('dragover', guardFileDrop, true);
+      window.removeEventListener('drop', guardFileDrop, true);
+    };
+  });
+
+  onMount(() => {
     launchDisposed = false;
     if (initialView) for (const id of initialView.tabIds) if (initialView.selections[id]) editors[id]?.restoreSelection(initialView.selections[id]);
     const unobserve = observePersistence((value) => persistence = value);
