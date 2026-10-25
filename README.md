@@ -1,9 +1,6 @@
-<h1 align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/readme/notation-wordmark-dark.svg">
-    <img alt="Notation" src="docs/readme/notation-wordmark-light.svg" width="360">
-  </picture>
-</h1>
+<p align="center">
+  <img src="docs/readme/banner.png" width="100%" alt="notation: Markdown, Mermaid, Math, Canvas. Local first, plain text you own, Linux desktop.">
+</p>
 
 <p align="center">
   A local-first editor for Markdown, Mermaid, math and Canvas.<br>
@@ -18,6 +15,8 @@
   <a href="docs/examples.md">Examples</a>
   &nbsp;&middot;&nbsp;
   <a href="#development">Development</a>
+  &nbsp;&middot;&nbsp;
+  <a href="#brand">Brand</a>
 </p>
 
 <p align="center">
@@ -34,29 +33,50 @@ Built with Svelte 5, CodeMirror 6 and a Rust/Tauri 2 backend. It ships as a stan
 | **Export** | HTML, self-contained webpages, PDF, DOCX and slides, with Pandoc and Typst bundled in the AppImage |
 | **Desktop** | Native sticky note windows, a Git view for the active file, and an MCP connection for agents |
 
-### Write the way you read
+## A closer look
 
-Live Preview renders Markdown in place and shows the source only on the line you are editing. Checkboxes toggle with a click, diagrams and equations render inline, and switching modes keeps your selection and undo history.
-
-<p align="center">
-  <img src="docs/readme/live-preview.png" width="100%" alt="Live Preview on the Paper theme, showing rendered tasks, a Mermaid flowchart, display math and a table">
-</p>
-
-### Lay ideas out on a Canvas
-
-Canvas boards are [JSON Canvas](https://jsoncanvas.org) files. Drag, resize and connect cards, label the connections, and link cards to notes in your workspace.
-
-<p align="center">
-  <img src="docs/readme/canvas.png" width="100%" alt="A Canvas board with five cards for a release plan connected by arrows">
-</p>
-
-### Every action is a command
-
-Press <kbd>Ctrl</kbd>+<kbd>K</kbd> to search every command. View modes, panels, blocks and documents are all a few keystrokes away, and you can rebind any shortcut in Settings.
-
-<p align="center">
-  <img src="docs/readme/command-palette.png" width="100%" alt="The command palette filtered to view commands, with keyboard shortcuts listed beside each one">
-</p>
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/readme/features/live.png" width="100%" alt="Live Preview on the Paper theme with rendered tasks, a callout and a Mermaid flowchart">
+      <p>Markdown renders in place. Syntax comes back only on the line you are editing, and checkboxes toggle with a click.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/readme/features/slash.png" width="100%" alt="The slash menu listing headings, tasks, diagrams, math, tables, callouts and code blocks">
+      <p>Type <code>/</code> on a blank line to insert a heading, task, diagram, equation, table, callout, toggle or code block.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/readme/features/canvas.png" width="100%" alt="A Canvas board with five cards for a release plan connected by labeled arrows">
+      <p><a href="https://jsoncanvas.org">JSON Canvas</a> boards with cards, labeled connections and links to notes in your workspace.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/readme/features/palette.png" width="100%" alt="The command palette filtered to view commands, with shortcuts beside each one">
+      <p><kbd>Ctrl</kbd>+<kbd>K</kbd> searches every command. Rebind any shortcut in Settings.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/readme/features/table.png" width="100%" alt="The table editor panel beside a Markdown table in the source">
+      <p>Edit tables in a grid, sort columns, import CSV, and apply it all as one undoable edit.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/readme/features/stickies.png" width="100%" alt="Four sticky notes in yellow, green, blue and pink with bold titles and bullet lists">
+      <p>Native always-on-top sticky windows with bold, italic, bullets and six paper colors.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/readme/features/export.png" width="100%" alt="The export panel with the HTML format selected next to the document source">
+      <p>Export to HTML, a self-contained webpage, PDF, DOCX or slides. Pandoc and Typst ship inside the AppImage.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/readme/features/settings.png" width="100%" alt="The Settings dialog on the Dusk theme showing appearance controls">
+      <p>Themes, density, sidebar layout, editor fonts, shortcuts and agent access, all in one place.</p>
+    </td>
+  </tr>
+</table>
 
 ### Seven presets, or your own CSS
 
@@ -554,3 +574,32 @@ with a scoped GitHub issue assigned to the owner, uses an issue branch and
 linked PR, and receives local checks plus GLM Flash challenger review. No CI
 is configured. See [the project orchestration guide](orchestration/README.md)
 for prerequisites, model routing, sandbox limits and issue-to-merge commands.
+
+## Brand
+
+The wordmark uses an optically spaced lowercase `notation` with a cut first `n`; the standalone mark is the solid `n`. Use them in black or white on black, near-black (`#111111`) or cream (`#F5F2EC`). Do not recolor, outline or stretch them.
+
+<table>
+  <tr>
+    <td width="60%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/readme/brand/notation-wordmark-dark.svg">
+        <img alt="Notation wordmark" src="docs/readme/brand/notation-wordmark-light.svg" width="320">
+      </picture>
+    </td>
+    <td width="40%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/readme/brand/notation-mark-dark.svg">
+        <img alt="Notation mark" src="docs/readme/brand/notation-mark-light.svg" width="72">
+      </picture>
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><a href="docs/readme/brand/notation-wordmark-light.svg">Wordmark, dark ink</a> &middot; <a href="docs/readme/brand/notation-wordmark-dark.svg">white</a></td>
+    <td align="center"><a href="docs/readme/brand/notation-mark-light.svg">Mark, dark ink</a> &middot; <a href="docs/readme/brand/notation-mark-dark.svg">white</a></td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="docs/readme/footer.png" width="100%" alt="The Notation mark on black: Write it down. Keep it yours.">
+</p>
