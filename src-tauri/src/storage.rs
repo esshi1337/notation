@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const MAX_CONTENT: usize = 4 * 1024 * 1024;
 const REVISION_LIMIT: usize = 50;
 const RUN_LIMIT: usize = 200;
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 pub fn now() -> i64 {
     SystemTime::now()
@@ -247,6 +247,11 @@ PRAGMA user_version=2;
                 )
                 .map_err(database_error)?;
             }
+            tx.commit().map_err(database_error)?;
+        }
+        if version < 7 {
+            let tx = connection.transaction().map_err(database_error)?;
+            tx.execute_batch("CREATE TABLE IF NOT EXISTS sticky_notes(id TEXT PRIMARY KEY, title TEXT NOT NULL CHECK(length(CAST(title AS BLOB))<=256), text TEXT NOT NULL CHECK(length(CAST(text AS BLOB))<=65536), updated_at INTEGER NOT NULL); PRAGMA user_version=7;").map_err(database_error)?;
             tx.commit().map_err(database_error)?;
         }
         Ok(Self {

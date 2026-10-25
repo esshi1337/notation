@@ -2,6 +2,7 @@ import { insertionCommands } from './insertion-templates';
 export const COMMANDS = [
   { id: 'file.new', label: 'New', group: 'Document', defaultShortcut: 'Mod+N' },
   { id: 'file.newCanvas', label: 'New canvas', group: 'Document', defaultShortcut: '' },
+  { id: 'sticky.new', label: 'New sticky note', group: 'Document', defaultShortcut: '' },
   { id: 'file.open', label: 'Open', group: 'Document', defaultShortcut: 'Mod+O' },
   { id: 'file.save', label: 'Save', group: 'Document', defaultShortcut: 'Mod+S' },
   { id: 'file.saveAs', label: 'Save As', group: 'Document', defaultShortcut: 'Mod+Shift+S' },
@@ -37,6 +38,7 @@ export const COMMANDS = [
   { id: 'panel.explorer', label: 'Explorer', group: 'Panels', defaultShortcut: 'Mod+Shift+E' },
   { id: 'panel.workspace', label: 'Workspace', group: 'Panels', defaultShortcut: 'Mod+Shift+O' },
   { id: 'panel.graph', label: 'Note graph', group: 'Panels', defaultShortcut: '' },
+  { id: 'panel.stickies', label: 'Sticky notes', group: 'Panels', defaultShortcut: '' },
   { id: 'panel.git', label: 'Git', group: 'Panels', defaultShortcut: 'Mod+Shift+G' },
   { id: 'panel.history', label: 'History', group: 'Panels', defaultShortcut: 'Mod+Alt+H' },
   { id: 'panel.properties', label: 'Properties', group: 'Panels', defaultShortcut: '' },
