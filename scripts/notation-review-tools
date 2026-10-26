@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""Small stdio MCP surface for read-only review and fixed, credential-free checks."""
+import json
+import importlib.machinery
+import importlib.util
+from pathlib import Path
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+MAX_OUTPUT = 32000
+
+
+def repository_file(name):
+    path = (ROOT / name).resolve()
+    if not path.is_relative_to(ROOT) or not path.is_file():
+        raise ValueError('Expected a repository file')
+    return path
+
+
+def call_tool(name, args):
+    if name == 'read_file':
+        path = repository_file(args['path'])
+        start = max(1, int(args.get('start_line', 1)))
+        count = min(300, max(1, int(args.get('line_count', 150))))
+        lines = path.read_text().splitlines()
+        return '\n'.join(f'{i + 1}: {line}' for i, line in enumerate(lines) if start <= i + 1 < start + count)[:MAX_OUTPUT]
+    if name == 'list_files':
+        command = ['/usr/bin/rg', '--files', '--hidden', '-g', '!.git', '-g', '!node_modules', '-g', '!.agent-state']
+    elif name == 'search_files':
+        command = ['/usr/bin/rg', '--line-number', '--fixed-strings', '--max-count', '30',
+                   '--hidden', '-g', '!.git', '-g', '!node_modules', '-g', '!.agent-state',
+                   '--', args['pattern'], '.']
+    elif name == 'review_diff':
+        path = args.get('path', '.')
+        if Path(path).is_absolute() or '..' in Path(path).parts:
+            raise ValueError('Expected a relative repository path')
+        command = ['/usr/bin/git', 'diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--', path]
+    elif name == 'run_check':
+        # Validate before invoking; the runner also validates independently.
+        loader = importlib.machinery.SourceFileLoader('review_check', str(ROOT / 'scripts/notation-review-check'))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        runner = importlib.util.module_from_spec(spec)
+        loader.exec_module(runner)
+        runner.suite_command(args['suite'])
+        command = [str(ROOT / 'scripts/notation-review-check'), args['suite']]
+    else:
+        raise ValueError('Unknown tool')
+    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=300)
+    output = result.stdout + result.stderr
+    if name == 'review_diff':
+        start = max(1, int(args.get('start_line', 1)))
+        output = '\n'.join(output.splitlines()[start - 1:])
+    truncated = '\n[output truncated; narrow the path or advance start_line]' if len(output) > MAX_OUTPUT else ''
+    return f'exit={result.returncode}\n' + output[:MAX_OUTPUT] + truncated
+
+
+def tool(name, description, properties=None, required=None):
+    return {'name': name, 'description': description, 'inputSchema': {
+        'type': 'object', 'properties': properties or {}, 'required': required or [],
+        'additionalProperties': False}}
+
+
+TOOLS = [
+    tool('read_file', 'Read bounded numbered lines from a repository file.',
+         {'path': {'type': 'string'}, 'start_line': {'type': 'integer'}, 'line_count': {'type': 'integer'}}, ['path']),
+    tool('list_files', 'List source files in the repository.'),
+    tool('search_files', 'Find literal text in repository source.', {'pattern': {'type': 'string'}}, ['pattern']),
+    tool('review_diff', 'Read the current tracked Git diff against HEAD; narrow path or advance start_line for large diffs.',
+         {'path': {'type': 'string'}, 'start_line': {'type': 'integer'}}),
+    tool('run_check', 'Run one fixed suite in a fresh credential-free source-read-only sandbox.',
+         {'suite': {'type': 'string', 'enum': ['check', 'store', 'preferences', 'documents', 'markdown', 'tables',
+           'export', 'canvas', 'workspace', 'citations', 'hemingway', 'code', 'e2e', 'sticky', 'native', 'orchestration']}}, ['suite']),
+]
+
+
+def main():
+    for line in sys.stdin:
+        try:
+            request = json.loads(line)
+            if 'id' not in request:
+                continue
+            method = request.get('method')
+            if method == 'initialize':
+                result = {'protocolVersion': request.get('params', {}).get('protocolVersion', '2024-11-05'),
+                          'capabilities': {'tools': {}}, 'serverInfo': {'name': 'notation-review', 'version': '1.0'}}
+            elif method == 'tools/list':
+                result = {'tools': TOOLS}
+            elif method == 'tools/call':
+                params = request['params']
+                try:
+                    output = call_tool(params['name'], params.get('arguments', {}))
+                    result = {'content': [{'type': 'text', 'text': output}]}
+                except Exception as error:
+                    result = {'isError': True, 'content': [{'type': 'text', 'text': str(error)}]}
+            elif method == 'ping':
+                result = {}
+            else:
+                print(json.dumps({'jsonrpc': '2.0', 'id': request['id'],
+                                  'error': {'code': -32601, 'message': 'Unknown method'}}), flush=True)
+                continue
+            print(json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'result': result}), flush=True)
+        except (ValueError, KeyError, TypeError) as error:
+            print(str(error), file=sys.stderr, flush=True)
+
+
+if __name__ == '__main__':
+    main()

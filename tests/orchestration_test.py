@@ -86,6 +86,27 @@ for name in ('src/other', '.git/config', 'src/new'):
         with patch('notation_sandbox.shutil.which', return_value=None), self.assertRaises(RuntimeError):
             build(self.root, 'security', ['/usr/bin/true'])
 
+    def test_public_catalog_is_read_only_and_native_auth_is_absent_for_every_role(self):
+        catalog = self.host / 'models.json'
+        catalog.write_text('{"models":[]}')
+        auth = self.host / 'native-auth'
+        auth.mkdir()
+        (auth / 'auth.json').write_text('native-auth-canary')
+        code = '''
+from pathlib import Path
+assert not Path('/agent-home/.codex/auth.json').exists()
+assert Path('/opt/notation-models.json').read_text() == '{"models":[]}'
+try: Path('/opt/notation-models.json').write_text('bad')
+except OSError: pass
+else: raise AssertionError('catalog is writable')
+'''
+        for role in ('advisor', 'sol', 'deepseek', 'challenger', 'security'):
+            with self.subTest(role=role), patch.dict(os.environ, CODEX_HOME=str(auth)):
+                argv = build(self.root, role, ['/usr/bin/python3', '-c', code], model_catalog=catalog)
+                result = subprocess.run(argv, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn(str(auth / 'auth.json'), argv)
+
     def test_review_rejects_writes_even_at_lower_policy_layer(self):
         with self.assertRaises(ValueError):
             build(self.root, 'security', ['/usr/bin/true'], writes=['src/allowed'])
@@ -214,7 +235,7 @@ class Entrypoints(unittest.TestCase):
         for suite in runner.SUITES:
             command = runner.suite_command(suite)
             self.assertTrue(command[0].startswith('/usr/bin/'))
-            if suite not in ('native', 'orchestration'):
+            if suite not in ('native', 'orchestration', 'sticky'):
                 self.assertEqual(command, ['/usr/bin/npm', '--ignore-scripts', 'run',
                                            'check' if suite == 'check' else 'test:' + suite])
         self.assertIn('--locked', runner.suite_command('native'))
@@ -222,20 +243,78 @@ class Entrypoints(unittest.TestCase):
             result = subprocess.run([str(ROOT / 'scripts/notation-review-check'), *args], capture_output=True)
             self.assertEqual(result.returncode, 2)
 
-    def test_v2_reviewer_policy_denies_general_shell_delegation_and_edits(self):
-        config = json.loads((ROOT / 'opencode.json').read_text())
-        for name in ('glm-reviewer', 'glm-security-reviewer'):
-            rules = config['agents'][name]['permissions']
-            def effect(action, resource):
-                import fnmatch
-                matches = [r['effect'] for r in rules if fnmatch.fnmatchcase(action, r['action'])
-                           and fnmatch.fnmatchcase(resource, r['resource'])]
-                return matches[-1] if matches else None
-            self.assertEqual(effect('shell', 'printf UNEXPECTED_GENERAL_SHELL'), 'deny')
-            self.assertEqual(effect('edit', 'src/store.ts'), 'deny')
-            self.assertEqual(effect('subagent', 'sol-implementer'), 'deny')
-            self.assertEqual(effect('shell', 'scripts/notation-review-check check'), 'allow')
-            self.assertEqual(effect('shell', 'scripts/notation-review-check check --update'), 'deny')
+    def load_script(self, name):
+        loader = importlib.machinery.SourceFileLoader(name.replace('-', '_'), str(ROOT / 'scripts' / name))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        return module
+
+    def test_native_roles_use_only_gateway_and_disable_recursive_workers(self):
+        launch = self.load_script('notation-launch')
+        for role, model in (('advisor', 'gpt-6-astra'), ('sol', 'gpt-6.1-sol'),
+                            ('deepseek', 'combo/deepseek-auto'), ('challenger', 'zai/glm-5.3-flash'),
+                            ('security', 'zai/glm-5.3-flash')):
+            command = launch.codex_command(role, 'bounded packet')
+            self.assertEqual(command[0], '/usr/bin/codex')
+            self.assertIn(model, command)
+            self.assertIn('features.multi_agent=false', command)
+            self.assertIn('features.multi_agent_v2=false', command)
+            self.assertIn('agents.enabled=false', command)
+            self.assertIn('web_search="disabled"', command)
+            self.assertIn('model_catalog_json="/opt/notation-models.json"', command)
+            self.assertIn('http://127.0.0.1:10100/v1', ' '.join(command))
+            self.assertNotIn('opencode', command)
+            if role != 'advisor':
+                self.assertEqual(command[1], 'exec')
+                self.assertIn('--ignore-user-config', command)
+                self.assertIn('--ephemeral', command)
+            if role in ('challenger', 'security'):
+                self.assertIn('features.shell_tool=false', command)
+                self.assertIn('features.unified_exec=false', command)
+                self.assertTrue(any(c.startswith('mcp_servers.notation_review=') and 'enabled=true' in c for c in command))
+                self.assertTrue(any(c.startswith('mcp_servers.serena=') and 'enabled=false' in c for c in command))
+
+    def test_nested_worker_launch_is_rejected_before_network(self):
+        result = subprocess.run([str(ROOT / 'scripts/notation-worker'), 'deepseek', '--read-only', 'inspect'],
+                                env=dict(os.environ, NOTATION_WORKER='1'), capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('workers cannot launch nested', result.stderr)
+
+    def test_unavailable_gateway_fails_without_fallback_or_service_start(self):
+        launch = self.load_script('notation-launch')
+        with patch.object(launch.urllib.request, 'urlopen', side_effect=OSError('offline')), \
+                patch.object(launch.subprocess, 'Popen') as start, self.assertRaises(RuntimeError):
+            launch.gateway_catalog()
+        start.assert_not_called()
+
+    def test_review_tools_have_no_general_command_or_write_surface(self):
+        review = self.load_script('notation-review-tools')
+        self.assertEqual({tool['name'] for tool in review.TOOLS},
+                         {'read_file', 'search_files', 'list_files', 'review_diff', 'run_check'})
+        for suite in ('check; touch injected', '../check', 'check --update'):
+            with self.assertRaises(ValueError):
+                review.call_tool('run_check', {'suite': suite})
+        for path in ('/etc/passwd', '../../AGENTS.md'):
+            with self.assertRaises(ValueError):
+                review.call_tool('read_file', {'path': path})
+        with self.assertRaises(ValueError):
+            review.call_tool('shell', {'command': 'true'})
+        self.assertTrue(review.call_tool('read_file', {'path': 'AGENTS.md', 'line_count': 1}).startswith('1: #'))
+
+    def test_review_mcp_initialization_and_tools_are_real_json_rpc(self):
+        messages = [dict(jsonrpc='2.0', id=1, method='initialize', params={'protocolVersion': '2024-11-05'}),
+                    dict(jsonrpc='2.0', method='notifications/initialized'),
+                    dict(jsonrpc='2.0', id=2, method='tools/list'),
+                    dict(jsonrpc='2.0', id=3, method='tools/call', params={'name': 'read_file',
+                         'arguments': {'path': 'AGENTS.md', 'line_count': 1}})]
+        result = subprocess.run([str(ROOT / 'scripts/notation-review-tools')],
+            input=''.join(json.dumps(m) + '\n' for m in messages), capture_output=True, text=True, check=True)
+        replies = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual([reply['id'] for reply in replies], [1, 2, 3])
+        self.assertEqual(replies[0]['result']['serverInfo']['name'], 'notation-review')
+        self.assertEqual(len(replies[1]['result']['tools']), 5)
+        self.assertIn('1: #', replies[2]['result']['content'][0]['text'])
 
 
 if __name__ == '__main__':

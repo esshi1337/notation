@@ -24,7 +24,7 @@ def validate_writes(root, paths):
             raise ValueError(f'write-set escapes repository: {name}')
 
 
-def build(root, role, command, extra_env=None, writes=()):
+def build(root, role, command, extra_env=None, writes=(), model_catalog=None):
     root = Path(root).resolve()
     validate_writes(root, writes)
     if role not in ('advisor', 'sol', 'deepseek', 'challenger', 'security'):
@@ -39,7 +39,7 @@ def build(root, role, command, extra_env=None, writes=()):
             '--ro-bind', '/usr', '/usr', '--symlink', 'usr/bin', '/bin',
             '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib', '/lib64',
             '--dir', '/etc', '--proc', '/proc', '--dev', '/dev',
-            '--tmpfs', '/tmp', '--tmpfs', '/agent-home', '--dir', '/work',
+            '--tmpfs', '/tmp', '--tmpfs', '/agent-home', '--dir', '/agent-home/.codex', '--dir', '/work',
             '--bind' if role == 'advisor' else '--ro-bind', str(root), '/work']
     # Only public system inputs, never the host's complete configuration tree.
     for name in ('resolv.conf', 'hosts', 'nsswitch.conf', 'passwd', 'group',
@@ -97,13 +97,13 @@ def build(root, role, command, extra_env=None, writes=()):
     if role != 'advisor':
         env.pop('GH_TOKEN', None)
     else:
-        auth = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'auth.json'
-        if not auth.is_file():
-            raise RuntimeError('Existing Codex authentication required')
-        argv += ['--dir', '/agent-home/.codex', '--ro-bind', str(auth), '/agent-home/.codex/auth.json']
         state = root / '.agent-state'
         state.mkdir(exist_ok=True, mode=0o700)
         argv += ['--bind', str(state), '/agent-home/.codex/sessions']
+    # Public model metadata only. Native and provider auth stay on the host;
+    # the existing OpenCodex gateway performs upstream authentication.
+    if model_catalog is not None:
+        argv += ['--ro-bind', str(Path(model_catalog).resolve()), '/opt/notation-models.json']
     python = Path(os.environ.get('UV_PYTHON_INSTALL_DIR', str(Path.home() / '.local/share/uv/python')))
     if python.is_dir():
         argv += ['--ro-bind', str(python), '/opt/uv-python']

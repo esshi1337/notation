@@ -6,10 +6,13 @@ no global provider, model, credential or client configuration. No CI is added.
 
 ## Start
 
-On Linux, install Bubblewrap, Codex, OpenCode, OpenCodex, GitHub CLI, Node and
+On Linux, install Bubblewrap, Codex, OpenCodex, GitHub CLI, Node and
 uv. Use an **independent clone** (linked worktree metadata lies outside this
 boundary and is rejected). Install pinned dependencies with `npm ci` and
-retain your existing Codex/OpenCodex/GitHub logins on the host. Then:
+retain your existing OpenCodex/GitHub logins on the host. The owner gateway
+must already be ready at `http://127.0.0.1:10100`, with public role metadata
+in `~/.opencodex/codex-models.json`; the launcher fails closed if unavailable
+and does not start a replacement service. Then:
 
 ```sh
 scripts/notation-task install-hooks
@@ -17,15 +20,20 @@ scripts/notation-advisor
 ```
 
 Use the repository script, not the older global `notation-advisor` alias.
-Direct `codex`, `opencode`, or global aliases do not apply this sandbox.
+Direct `codex` or global aliases do not apply this sandbox.
 A missing sandbox, login or provider is an error; there is no fallback to an
 unprotected process. Only one main session owns a task.
 
 The launcher explicitly selects Astra with high reasoning. DeepSeek is the
 default general implementer; Sol 6.1 High handles complex/cross-system bugs.
-Both `challenger` and `security` select GLM 5.3 Flash High. The CLI also pins
-the worker model explicitly: this installed OpenCode version otherwise
-selected its free default despite the agent's model field.
+Both `challenger` and `security` select GLM 5.3 Flash High. The launcher
+reads explicit model identities and instructions from
+`orchestration/roles.json`. Workers use native `codex exec --ephemeral
+--ignore-user-config --json`; recursive agent features, apps, plugins and
+web search are disabled. The provider is explicitly the existing OpenCodex
+Responses endpoint `http://127.0.0.1:10100/v1`, never a direct upstream.
+Workers receive the public model catalog for correct tool and model metadata.
+The launch marker rejects nested worker launcher calls.
 
 The DeepSeek combo is the existing Go-first/direct-fallback route. Its models
 are moving aliases. A live attempt to use the catalog's exact
@@ -113,17 +121,23 @@ SSH-agent sockets are absent. `/usr` and an allowlist of public system inputs
 | Dependencies / optional Python and Rust installations | Read-only | Read-only | Read-only |
 | Home / temporary files / test caches | Private scratch | Private scratch | Private scratch |
 | GitHub authentication | Existing token, memory only | Absent | Absent |
-| Native Codex authentication | Existing auth file, read-only bind | Absent | Absent |
-| OpenCodex proxy configuration | Memory only | Memory only | Memory only |
+| Native Codex authentication | Absent | Absent | Absent |
+| OpenCodex upstream credentials | Stay in host gateway | Stay in host gateway | Stay in host gateway |
+| OpenCodex model metadata | Read-only public catalog | Read-only public catalog | Read-only public catalog |
 
 Astra can fetch/pull, push issue branches, create PRs and merge accepted PRs
 using the existing GitHub account. It does not get the rest of your home,
 SSH keys or keyring sockets. Its history is project-local under ignored
-`.agent-state/`; preserve it privately. Expired native authentication must be
-refreshed on the host. Provider credentials remain in their existing stores.
+`.agent-state/`; preserve it privately. Upstream authentication must be refreshed on the host. Provider credentials
+remain in the existing gateway stores; no authentication file is copied or
+mounted into any model process. The existing loopback provider accepts
+requests without a client key; native Codex uses `requires_openai_auth=false`.
+No sentinel key or upstream secret is needed in the sandbox.
 
-Only provider maps from OpenCodex's injected configuration enter the sandbox;
-host plugins, agents, MCP servers and permission overrides are discarded.
+The launcher constructs its own native provider and tool configuration;
+host plugins, agents, MCP servers, environment and permission overrides
+are discarded. No OpenCode CLI, configuration, injection shim or MCP
+bridge participates in model execution.
 Workers cannot modify `.git`, `.codex`, `.github`, `.githooks`, `.serena`,
 AGENTS, orchestration docs, model config, dependencies or launcher scripts.
 Repository `.env*` regular files at every source-directory depth except `.env.example` are masked; secret
@@ -146,8 +160,13 @@ Report results before exit: scratch artifacts vanish. A suite that needs
 additional writes fails rather than silently widening the sandbox. Every approved test runs in a nested sandbox with source read-only and no
 model or GitHub credentials, including tests requested by Astra. Local
 trusted tests can execute arbitrary code but remain within this mount policy.
-GLM's OpenCode policy denies edits, delegation, general shell and web tools;
-only exact `scripts/notation-review-check <suite>` commands are allowed.
+GLM reviewers have native shell/unified execution and recursive agents
+disabled. Their only MCP server is `scripts/notation-review-tools`, exposing
+`read_file`, `list_files`, literal `search_files`, `review_diff`, and
+`run_check`. It constructs argument arrays without a shell; `run_check`
+accepts only an exact fixed suite name and invokes the same nested runner.
+Source and Git writes remain blocked by Bubblewrap even if a model attempts
+an edit. Reviewers cannot use Serena mutation tools.
 
 Network access is shared for provider APIs, GitHub and dependency tools.
 This is a filesystem sandbox, not an egress firewall; it does not prevent
@@ -160,7 +179,7 @@ intentionally available only in that trusted role.
 
 ## Serena and checks
 
-`.codex/config.toml` and `opencode.json` pin `serena-agent==1.7.0` via Python
+`.codex/config.toml` and the native launcher pin `serena-agent==1.7.0` via Python
 3.13, dashboard disabled. `.serena/project.yml` selects the Svelte language
 server (also supports this project's TypeScript). Start by reading Serena's
 `initial_instructions`, activate `/work` if it reports no active project,
@@ -174,7 +193,8 @@ scripts/notation-review-check store
 ```
 
 Other fixed suites: preferences, documents, markdown, tables, export, canvas,
-workspace, citations, hemingway, code, e2e, native and orchestration. The native
+workspace, citations, hemingway, code, e2e, sticky, native and orchestration.
+The `sticky` suite runs only `tests/e2e/sticky-notes.spec.ts`. The native
 suite needs Rust and platform libraries; e2e needs Playwright browsers. Test
 only relevant areas, report unavailable prerequisites, and never update
 snapshots or weaken tests through the reviewer command.
