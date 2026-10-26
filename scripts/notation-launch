@@ -38,8 +38,12 @@ def gateway_catalog():
     return catalog
 
 
-def codex_command(role, prompt=None, read_only=False):
+def codex_command(role, prompt=None, read_only=False, context_profile="default"):
     policy = ROLES[role]
+    context = policy['context_profiles'][context_profile]
+    if not (type(context['window']) is int and type(context['compact_at']) is int
+            and 0 < context['compact_at'] < context['window']):
+        raise ValueError('invalid context profile limits')
     reviewer = role in ('challenger', 'security')
     command = ['/usr/bin/codex']
     if role != 'advisor':
@@ -52,6 +56,8 @@ def codex_command(role, prompt=None, read_only=False):
                                     'wire_api': 'responses', 'requires_openai_auth': False},
         'model_catalog_json': '/opt/notation-models.json',
         'model_reasoning_effort': policy['reasoning_effort'],
+        'model_context_window': context['window'],
+        'model_auto_compact_token_limit': context['compact_at'],
         'developer_instructions': policy['instructions'],
         'features.multi_agent': False, 'features.multi_agent_v2': False,
         'agents.enabled': False, 'features.apps': False, 'features.plugins': False,
@@ -84,6 +90,8 @@ def main():
     parser.add_argument('role', choices=list(ROLES))
     parser.add_argument('--write', action='append', default=[], metavar='REPO_PATH')
     parser.add_argument('--read-only', action='store_true')
+    parser.add_argument('--context-profile', choices=('default', 'large'), default='default',
+                        help='project context budget; large is for explicitly broad tasks')
     parser.add_argument('prompt', nargs='?')
     args = parser.parse_args()
     if os.environ.get('NOTATION_WORKER'):
@@ -106,7 +114,7 @@ def main():
             raise RuntimeError('GitHub authentication unavailable')
     else:
         env['NOTATION_WORKER'] = '1'
-    command = codex_command(args.role, args.prompt, args.read_only)
+    command = codex_command(args.role, args.prompt, args.read_only, args.context_profile)
     argv = build(ROOT, args.role, command, env, args.write, model_catalog=catalog)
     exec_sandbox(argv)
 
