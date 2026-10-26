@@ -131,6 +131,7 @@
     prefs.smoothScrolling = DEFAULT_UI_PREFERENCES.smoothScrolling;
     prefs.performanceMode = DEFAULT_UI_PREFERENCES.performanceMode;
     prefs.scriptsEnabled = DEFAULT_UI_PREFERENCES.scriptsEnabled;
+    prefs.automaticallyReloadExternalChanges = DEFAULT_UI_PREFERENCES.automaticallyReloadExternalChanges;
   }
   function resetDrafts() { drafts = Object.fromEntries(COMMANDS.map((item) => [item.id, shortcutFor(item.id, shortcuts)])); }
   function commitShortcut(id: CommandId) {
@@ -208,6 +209,8 @@
         <p class="settings-help">For low-memory PCs: source-only editing, with syntax parsing, language intelligence and smooth scrolling paused. Your usual settings and undo history are preserved. Turn off to restore rendered views.</p>
         <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.scriptsEnabled} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Enable scripts</label>
         <p class="settings-help">Off by default. Shows the Scripts panel and its command. Scripts can read and write files and run commands as your user; opening the panel never runs them.</p>
+        <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.automaticallyReloadExternalChanges} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Automatically reload external changes</label>
+        <p class="settings-help">Off by default. In the desktop app, reload the active saved file and its preview when it changes on disk. Unsaved edits, renamed tabs and Hemingway mode keep your text for comparison.</p>
         <div class="settings-fields">
           <SelectControl label="Editor font" options={editorFontOptions} value={prefs.editorFont} onchange={(value) => prefs.editorFont = value as UIPreferences['editorFont']} {theme} />
           <NumberControl label="Font size" bind:value={fontSize} min={10} max={24} step={1} defaultValue={14} unit="px" />

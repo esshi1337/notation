@@ -7,14 +7,14 @@ export type UIPreferences = {
   darkPreset: typeof DARK_PRESETS[number]; lightPreset: typeof LIGHT_PRESETS[number]; density: 'compact' | 'comfortable';
   accentColor: string; editorFont: 'mono' | 'sans'; lineHeight: number;
   readingWidth: number; sidebarWidth: number; sidebarRailWidth: 'narrow' | 'standard' | 'wide'; sidebarPosition: 'left' | 'right'; showStatusBar: boolean;
-  tabSize: number; indentWithTabs: boolean; languageIntelligenceEnabled: boolean; showLineNumbers: boolean; focusMode: boolean; smoothScrolling: boolean; performanceMode: boolean; scriptsEnabled: boolean;
+  tabSize: number; indentWithTabs: boolean; languageIntelligenceEnabled: boolean; automaticallyReloadExternalChanges: boolean; showLineNumbers: boolean; focusMode: boolean; smoothScrolling: boolean; performanceMode: boolean; scriptsEnabled: boolean;
 };
 
 export const DEFAULT_UI_PREFERENCES: Readonly<UIPreferences> = {
   userThemes: [], selectedThemeId: '',
   darkPreset: 'amoled', lightPreset: 'default', density: 'compact', accentColor: '#d8d8df',
   editorFont: 'mono', lineHeight: 1.7, readingWidth: 756, sidebarWidth: 260, sidebarRailWidth: 'standard', sidebarPosition: 'left',
-  showStatusBar: true, tabSize: 4, indentWithTabs: false, languageIntelligenceEnabled: false, showLineNumbers: true, focusMode: false, smoothScrolling: true, performanceMode: false, scriptsEnabled: false,
+  showStatusBar: true, tabSize: 4, indentWithTabs: false, languageIntelligenceEnabled: false, automaticallyReloadExternalChanges: false, showLineNumbers: true, focusMode: false, smoothScrolling: true, performanceMode: false, scriptsEnabled: false,
 };
 
 export const UI_SETTINGS_VERSION = 3;
@@ -55,6 +55,7 @@ export function readUIPreferences(settings: Record<string, unknown>): UIPreferen
     tabSize: Math.round(bounded(settings.tabSize, defaults.tabSize, 1, 8)),
     indentWithTabs: settings.indentWithTabs === true,
     languageIntelligenceEnabled: settings.languageIntelligenceEnabled === true,
+    automaticallyReloadExternalChanges: settings.automaticallyReloadExternalChanges === true,
     performanceMode: settings.performanceMode === true,
     scriptsEnabled: settings.scriptsEnabled === true,
     showLineNumbers: typeof settings.showLineNumbers === 'boolean' ? settings.showLineNumbers : defaults.showLineNumbers,
