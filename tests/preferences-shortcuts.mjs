@@ -12,7 +12,7 @@ try {
   check('user themes roundtrip without resetting unrelated preferences or version', () => {
     const restored = preferences.readUIPreferences(JSON.parse(JSON.stringify({ userThemes: [theme()], selectedThemeId: 'theme-test', tabSize: 3, density: 'comfortable' })));
     assert.deepEqual(restored.userThemes, [theme()]); assert.equal(restored.selectedThemeId, 'theme-test');
-    assert.equal(restored.tabSize, 3); assert.equal(restored.density, 'comfortable'); assert.equal(preferences.UI_SETTINGS_VERSION, 2);
+    assert.equal(restored.tabSize, 3); assert.equal(restored.density, 'comfortable'); assert.equal(preferences.UI_SETTINGS_VERSION, 3);
   });
   check('theme normalization copies known fields only and validates identities names and bases', () => {
     const value = JSON.parse(JSON.stringify({ ...theme(), version: 1, unknown: 'ignored', __proto__: { polluted: true } }));
@@ -87,21 +87,54 @@ try {
     assert.equal(preferences.DEFAULT_UI_PREFERENCES.tabSize, 4);
     assert.equal(preferences.readUIPreferences({}).tabSize, 4);
   });
-  check('settings migration upgrades the old automatic two-space indent once', () => {
+  check('settings migration upgrades the old automatic two-space indent only before v2', () => {
     const empty = preferences.migrateSettings({});
-    assert.equal(empty.uiSettingsVersion, 2);
+    assert.equal(empty.uiSettingsVersion, 3);
     assert.equal(empty.tabSize, undefined);
     const two = preferences.migrateSettings({ tabSize: 2 });
     assert.equal(two.tabSize, 4);
-    assert.equal(two.uiSettingsVersion, 2);
+    assert.equal(two.uiSettingsVersion, 3);
     const three = preferences.migrateSettings({ tabSize: 3 });
     assert.equal(three.tabSize, 3);
-    assert.equal(three.uiSettingsVersion, 2);
+    assert.equal(three.uiSettingsVersion, 3);
     const marked = { tabSize: 2, uiSettingsVersion: 2 };
-    assert.strictEqual(preferences.migrateSettings(marked), marked);
+    const migrated = preferences.migrateSettings(marked);
+    assert.notStrictEqual(migrated, marked);
+    assert.equal(migrated.tabSize, 2);
+    assert.equal(migrated.uiSettingsVersion, 3);
+    assert.deepEqual(marked, { tabSize: 2, uiSettingsVersion: 2 });
     const oldMarker = preferences.migrateSettings({ tabSize: 5, uiSettingsVersion: 1 });
     assert.equal(oldMarker.tabSize, 5);
-    assert.equal(oldMarker.uiSettingsVersion, 2);
+    assert.equal(oldMarker.uiSettingsVersion, 3);
+  });
+  check('settings migration replaces the old implicit midnight default once', () => {
+    for (const settings of [{}, { uiSettingsVersion: 1 }, { uiSettingsVersion: 2 }, { darkPreset: 'midnight' }, { uiSettingsVersion: 1, darkPreset: 'midnight' }, { uiSettingsVersion: 2, darkPreset: 'midnight' }]) {
+      const migrated = preferences.migrateSettings(settings);
+      assert.equal(migrated.darkPreset, 'amoled', JSON.stringify(settings));
+      assert.equal(migrated.uiSettingsVersion, 3);
+      assert.strictEqual(preferences.migrateSettings(migrated), migrated);
+    }
+    const full = preferences.migrateSettings({ uiSettingsVersion: 2, theme: 'dark', darkPreset: 'midnight', tabSize: 2, density: 'compact' });
+    assert.equal(full.darkPreset, 'amoled'); assert.equal(full.tabSize, 2); assert.equal(full.density, 'compact'); assert.equal(full.theme, 'dark');
+  });
+  check('settings migration preserves built-in, custom and light appearance choices', () => {
+    for (const darkPreset of ['charcoal', 'forest', 'dusk']) {
+      assert.equal(preferences.migrateSettings({ uiSettingsVersion: 2, darkPreset }).darkPreset, darkPreset);
+    }
+    const custom = theme();
+    const original = { uiSettingsVersion: 2, theme: 'light', darkPreset: 'midnight', lightPreset: 'paper', userThemes: [custom], selectedThemeId: custom.id, accentColor: '#AABBCC', tabSize: 2, focusMode: true };
+    const migrated = preferences.migrateSettings(original);
+    assert.deepEqual(migrated.userThemes, [custom]); assert.equal(migrated.selectedThemeId, custom.id);
+    assert.equal(migrated.theme, 'light'); assert.equal(migrated.lightPreset, 'paper');
+    assert.equal(migrated.darkPreset, 'amoled'); assert.equal(migrated.accentColor, '#AABBCC');
+    assert.equal(migrated.tabSize, 2); assert.equal(migrated.focusMode, true);
+    assert.deepEqual(original.userThemes, [custom]); assert.equal(original.darkPreset, 'midnight');
+  });
+  check('version 3 keeps an explicit midnight choice after reload', () => {
+    const settings = { uiSettingsVersion: 3, darkPreset: 'midnight', tabSize: 2 };
+    assert.strictEqual(preferences.migrateSettings(settings), settings);
+    assert.equal(preferences.readUIPreferences(settings).darkPreset, 'midnight');
+    assert.equal(preferences.migrateSettings({ uiSettingsVersion: 3, darkPreset: 'amoled' }).darkPreset, 'amoled');
   });
   check('existing settings receive safe compact defaults', () => {
     assert.deepEqual(preferences.readUIPreferences({ theme: 'dark', fontSize: 14 }), preferences.DEFAULT_UI_PREFERENCES);
@@ -113,18 +146,18 @@ try {
     assert.equal(value.showStatusBar, true);
   });
   check('theme presets accept only the built-in catalog and keep existing defaults', () => {
-    assert.equal(preferences.DEFAULT_UI_PREFERENCES.darkPreset, 'midnight');
+    assert.equal(preferences.DEFAULT_UI_PREFERENCES.darkPreset, 'amoled');
     assert.equal(preferences.DEFAULT_UI_PREFERENCES.lightPreset, 'default');
     for (const darkPreset of preferences.DARK_PRESETS) assert.equal(preferences.readUIPreferences({ darkPreset }).darkPreset, darkPreset);
     for (const lightPreset of preferences.LIGHT_PRESETS) assert.equal(preferences.readUIPreferences({ lightPreset }).lightPreset, lightPreset);
     for (const darkPreset of [undefined, null, '', 'Amoled', 'dawn', 'amoled;display:none', 1, {}]) {
-      assert.equal(preferences.readUIPreferences({ darkPreset }).darkPreset, 'midnight', String(darkPreset));
+      assert.equal(preferences.readUIPreferences({ darkPreset }).darkPreset, 'amoled', String(darkPreset));
     }
     for (const lightPreset of [undefined, null, '', 'Paper', 'parchment', 'default;display:none', 1, {}]) {
       assert.equal(preferences.readUIPreferences({ lightPreset }).lightPreset, 'default', String(lightPreset));
     }
   });
-  check('theme presets serialize without a settings version bump or losing old preferences', () => {
+  check('theme presets serialize through migration without losing old preferences', () => {
     const custom = { darkPreset: 'forest', lightPreset: 'paper', accentColor: '#AABBCC', editorFont: 'sans', tabSize: 3, lineHeight: 2 };
     const restored = preferences.readUIPreferences(JSON.parse(JSON.stringify(custom)));
     assert.equal(restored.darkPreset, 'forest');
@@ -135,11 +168,12 @@ try {
     assert.equal(restored.lineHeight, 2);
     const legacy = preferences.migrateSettings({ darkPreset: 'charcoal' });
     assert.equal(legacy.uiSettingsVersion, preferences.UI_SETTINGS_VERSION);
-    assert.equal(preferences.UI_SETTINGS_VERSION, 2);
+    assert.equal(preferences.UI_SETTINGS_VERSION, 3);
+    assert.equal(legacy.darkPreset, 'charcoal');
     const read = preferences.readUIPreferences(legacy);
     assert.equal(read.darkPreset, 'charcoal');
     assert.equal(read.lightPreset, 'default');
-    assert.equal(preferences.migrateSettings({ darkPreset: 'dusk', lightPreset: 'paper' }).uiSettingsVersion, 2);
+    assert.equal(preferences.migrateSettings({ darkPreset: 'dusk', lightPreset: 'paper' }).uiSettingsVersion, 3);
   });
   check('language intelligence requires a new explicit opt-in, including upgrades', () => {
     for (const settings of [{}, {languageIntelligence: true}, {languageIntelligence: false}, {languageIntelligenceEnabled: 'true'}, {languageIntelligenceEnabled: 1}]) assert.equal(preferences.readUIPreferences(settings).languageIntelligenceEnabled, false);

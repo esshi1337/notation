@@ -282,6 +282,31 @@ test('all colors, formatted text and bullets survive reopening the component', a
   expect((await mockState(page)).updates).toHaveLength(0);
 });
 
+test('black sticky paper and bars are true black and the editor has no focus frame while buttons keep keyboard focus', async ({ page }) => {
+  await stickyWindow(page, { note: { title: 'Black', text: 'Focus frame', html: null, color: 'black' } });
+  const main = page.locator('main');
+  const paper = page.getByRole('textbox', { name: 'Sticky text' });
+  await expect(paper).toBeEnabled();
+  await expect(main).toHaveAttribute('data-color', 'black');
+  for (const surface of [main, page.getByRole('toolbar', { name: 'Note controls', exact: true }), page.getByRole('toolbar', { name: 'Formatting', exact: true })]) {
+    await expect(surface).toHaveCSS('background-color', 'rgb(0, 0, 0)');
+  }
+  for (let i = 0; i < 6 && !(await paper.evaluate(element => element === document.activeElement)); i++) await page.keyboard.press('Tab');
+  await expect(paper).toBeFocused();
+  await page.keyboard.type(' typing');
+  expect(await paper.evaluate(element => {
+    const style = getComputedStyle(element);
+    return { outlineStyle: style.outlineStyle, borderTopWidth: style.borderTopWidth, borderRightWidth: style.borderRightWidth, borderBottomWidth: style.borderBottomWidth, borderLeftWidth: style.borderLeftWidth, boxShadow: style.boxShadow };
+  })).toEqual({ outlineStyle: 'none', borderTopWidth: '0px', borderRightWidth: '0px', borderBottomWidth: '0px', borderLeftWidth: '0px', boxShadow: 'none' });
+  await page.keyboard.press('Tab');
+  const bold = page.getByRole('button', { name: 'Bold', exact: true });
+  await expect(bold).toBeFocused();
+  expect(await bold.evaluate(element => { const style = getComputedStyle(element); return { style: style.outlineStyle, width: style.outlineWidth }; })).toEqual({ style: 'solid', width: '2px' });
+  await page.getByRole('button', { name: 'Note options', exact: true }).click();
+  await expect(page.locator('.options')).toHaveCSS('border-top-width', '1px');
+  await expect(page.locator('.options')).toHaveCSS('border-top-color', 'rgba(255, 255, 255, 0.125)');
+});
+
 test('stored HTML is inert and paste/drop insert only literal plain text without remote resources', async ({ page }) => {
   const requests: string[] = [];
   page.on('request', request => { if (request.url().includes('sticky-attacker.invalid')) requests.push(request.url()); });

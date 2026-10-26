@@ -38,7 +38,7 @@ test('custom appearance and editor preferences persist and reset to defaults', a
   await expectSetting(page, 'Tool panel width', '340');
   await expect(settings.getByRole('checkbox', { name: 'Show status bar' })).not.toBeChecked();
   await settings.getByRole('button', { name: 'Reset appearance', exact: true }).click();
-  await expectSetting(page, 'Dark preset', 'midnight');
+  await expectSetting(page, 'Dark preset', 'AMOLED');
   await expect(settings.getByRole('textbox', { name: 'Accent color', exact: true })).toHaveCount(0);
   await expectSetting(page, 'Density', 'compact');
 
@@ -52,6 +52,38 @@ test('custom appearance and editor preferences persist and reset to defaults', a
   await expect(settings.getByRole('spinbutton', { name: 'Line height' })).toHaveValue('1.7');
   await expect(settings.getByRole('spinbutton', { name: 'Reading width' })).toHaveValue('756');
   await expect(settings.getByRole('checkbox', { name: 'Show line numbers' })).toBeChecked();
+});
+
+test('AMOLED is the default while old midnight defaults migrate once and explicit midnight at v3 survives', async ({ page }) => {
+  const html = page.locator('html');
+  const stored = () => page.evaluate(() => JSON.parse(localStorage.getItem('notation.settings')!));
+  await expect(html).toHaveAttribute('data-dark-preset', 'amoled');
+  await runCommand(page, 'Settings');
+  await settingsTab(page, 'Appearance').click();
+  await expectSetting(page, 'Dark preset', 'AMOLED');
+  await page.keyboard.press('Escape');
+
+  await page.evaluate(() => localStorage.setItem('notation.settings', JSON.stringify({ uiSettingsVersion: 2, theme: 'dark', darkPreset: 'midnight', lightPreset: 'paper', tabSize: 2, accentColor: '#abcdef', density: 'comfortable' })));
+  await page.reload();
+  await expect(source(page)).toBeVisible();
+  await expect(html).toHaveAttribute('data-dark-preset', 'amoled');
+  await expect.poll(async () => {
+    const value = await stored();
+    return { version: value.uiSettingsVersion, darkPreset: value.darkPreset, tabSize: value.tabSize, accentColor: value.accentColor, density: value.density };
+  }).toEqual({ version: 3, darkPreset: 'amoled', tabSize: 2, accentColor: '#abcdef', density: 'comfortable' });
+  await runCommand(page, 'Settings');
+  await settingsTab(page, 'Appearance').click();
+  await expectSetting(page, 'Dark preset', 'AMOLED');
+  await page.keyboard.press('Escape');
+
+  await page.evaluate(() => localStorage.setItem('notation.settings', JSON.stringify({ uiSettingsVersion: 3, theme: 'dark', darkPreset: 'midnight', tabSize: 2 })));
+  await page.reload();
+  await expect(source(page)).toBeVisible();
+  await expect(html).toHaveAttribute('data-dark-preset', 'midnight');
+  await expect.poll(async () => (await stored()).darkPreset).toBe('midnight');
+  await runCommand(page, 'Settings');
+  await settingsTab(page, 'Appearance').click();
+  await expectSetting(page, 'Dark preset', 'Midnight');
 });
 
 test('built-in dark presets apply their surfaces, controls and syntax while keeping other preferences', async ({ page }) => {
@@ -108,6 +140,7 @@ test('Paper light preset applies parchment colors, reloads, and resets with the 
   expect(await variable('--bg')).toBe('#f6efe0');
   await settings.getByRole('button', { name: 'Reset appearance', exact: true }).click();
   await expectSetting(page, 'Theme', 'dark');
+  await expectSetting(page, 'Dark preset', 'AMOLED');
   await setSetting(page, 'Theme', 'light');
   await expectSetting(page, 'Light preset', 'Default');
   expect(await variable('--bg')).toBe('#faf9f7');
