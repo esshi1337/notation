@@ -90,7 +90,7 @@ Five dark and two light presets ship with the app. Local user themes add your ow
 
 New to Notation? Read the [user guide](docs/user-guide.md) for a task-oriented tour and [examples](docs/examples.md) for research, Canvas, and theme workflows. Recent additions include the AMOLED, Forest, Dusk, and Paper presets; local user themes with preview, import, and export; Canvas direct resize, connection, and note-linking controls; and Linux sticky notes in separate native windows.
 
-## Desktop application
+## Desktop application (Linux)
 
 Notation builds into a standalone Linux AppImage with the interface embedded in the executable. It does not need Node.js, Vite, or a browser window at runtime.
 
@@ -132,6 +132,65 @@ npm run desktop
 ```
 
 On Arch Linux, building Tauri requires `webkit2gtk-4.1` and `gtk3`; `webkitgtk-6.0` is a different API and does not replace that dependency. The AppImage bundles WebKitGTK for runtime use. Desktop mode uses native open/save dialogs and Rust file operations. The desktop Cargo feature is explicit so core file-operation tests can run without GTK/WebKit.
+
+### macOS development
+
+Install these prerequisites once:
+
+- Xcode Command Line Tools: run `xcode-select --install`, complete the installer,
+  and confirm `xcrun --find clang` succeeds.
+- Node.js **22.13 or newer**, including npm (the Node installer or Homebrew).
+- Rust **1.89 or newer**, including Cargo, using [rustup](https://rustup.rs/).
+- Python **3.11 or newer** (python.org or `brew install python`); ensure
+  `python3 --version` selects it rather than an older Apple-provided Python.
+
+From the checkout, setup and launch require:
+
+```sh
+python3 scripts/setup-macos.py
+npm run desktop
+```
+
+Setup checks the tools and architecture, runs `npm ci`, and prepares a small
+disabled-engine resource manifest. It does not download Linux engines or install
+optional language servers. The first desktop launch compiles Rust dependencies.
+Use native tools consistently: Apple Silicon uses `aarch64-apple-darwin`, Intel
+uses `x86_64-apple-darwin`. Python, Node and Rust must agree; mixing Rosetta and
+native tools fails preflight. These are separate host builds, not universal binaries.
+
+Setup is repeatable for its own resource stub. If
+`src-tauri/resources/engines/` already contains Linux engines, a stub for another
+architecture, symlinks, or unknown files, setup/build refuses to replace it.
+Move that directory aside yourself and rerun setup. Do not run
+`desktop:engines` or `desktop:languages` on macOS: their currently pinned assets
+support Linux x86-64 only and their installers reject other hosts before downloads.
+
+Basic editing, Markdown/Mermaid preview, and local file operations are the target.
+Pandoc/Typst exports (PDF/DOCX/PowerPoint), native D2/PlantUML rendering,
+Pandoc citations, and other native-engine operations remain unavailable: their
+Landlock/seccomp sandbox is Linux-only and is never bypassed on macOS. HTML
+export and browser-rendered diagrams do not require those executables.
+TypeScript/Svelte language intelligence is unavailable; highlighting and code
+editing still work. Optional Rust intelligence uses `rust-analyzer` on PATH
+(`rustup component add rust-analyzer rustfmt`). Sticky-note windows, dragging, resizing, and always-on-top behavior still need
+validation on macOS. Linux single-profile activation/file handoff is unavailable
+on macOS. Run one GUI
+instance per profile and close it before relaunching. Native scripts remain off
+by default; they are trusted code with full user permissions, not sandboxed code.
+Their macOS lifecycle is unverified; leave them disabled for initial development.
+
+macOS stores `state.sqlite3` and local app data under
+`~/Library/Application Support/local.notation.app/`; `XDG_DATA_HOME` does not
+select a macOS profile. Back up this directory with Notation closed.
+
+When ready to test packaging, `npm run desktop:build` (or `desktop:bundle`)
+selects `.app` and `.dmg` through `src-tauri/tauri.macos.conf.json`, with output
+under `src-tauri/target/release/bundle/macos/` and `bundle/dmg/`. It uses the host
+Rust architecture and skips Linux packaging tools. `desktop:install` remains a
+Linux AppImage installer; use the macOS app/DMG directly. macOS compilation,
+native dialogs, runtime behavior, packaging, signing and notarization have **not
+been validated**. No signed/notarized distribution or CI is provided. See the
+[platform audit and validation notes](docs/macos-development.md).
 
 ## Editing basics
 

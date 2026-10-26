@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Tauri, preserving pinned engines when creating Linux AppImages.
+"""Run host Tauri with macOS preflight and pinned Linux AppImage engines.
 
 linuxdeploy's recursive ELF rewriting damages Typst's static PIE. Restore the
 engine resources after dependency deployment, then invoke the standalone output
@@ -18,9 +18,11 @@ import subprocess
 import sys
 import tempfile
 import time
+import runpy
 
 ROOT = Path(__file__).resolve().parents[1]
 ENGINES = ROOT / 'src-tauri/resources/engines'
+PLATFORM = runpy.run_path(str(ROOT / 'scripts/setup-macos.py'))
 
 
 def pkg_variable(package, variable):
@@ -211,7 +213,29 @@ def built_images(target):
             for image in layout.glob('*/bundle/appimage/*.AppImage')]
 
 
+def tauri_command(arguments):
+    cli = ROOT / 'node_modules/.bin/tauri'
+    if not cli.is_file():
+        raise RuntimeError('Pinned Tauri CLI is missing; run npm ci first')
+    return [str(cli), *arguments]
+
+
 def main():
+    arguments = sys.argv[1:]
+    host = PLATFORM['host_platform']()
+    if '--repack-appdir' in arguments and arguments[0] in ('dev', 'build', 'bundle'):
+        raise RuntimeError('AppDir repackaging cannot be combined with a Tauri command')
+    command = None if '--repack-appdir' in arguments else tauri_command(arguments)
+    if host.startswith('macos-'):
+        if '--repack-appdir' in arguments:
+            raise RuntimeError('AppDir repackaging is Linux-only')
+        PLATFORM['validate_macos_resources']()
+        # Tauri automatically merges tauri.macos.conf.json. Keep all Linux
+        # deployment and environment rewriting out of this route.
+        return subprocess.call(command, cwd=ROOT)
+    if arguments and arguments[0] == 'dev':
+        # Preserve the original Linux desktop command's inherited environment.
+        return subprocess.call(command, cwd=ROOT)
     if '--repack-appdir' in sys.argv:
         parser = argparse.ArgumentParser(description=__doc__)
         parser.add_argument('--repack-appdir', type=Path, required=True)
@@ -232,9 +256,9 @@ def main():
         if not shutil.which('patchelf'):
             raise RuntimeError('AppImage media packaging requires patchelf on PATH')
         with media_environment(environment) as bundle_environment:
-            result = subprocess.call(['npx', 'tauri', *arguments], cwd=ROOT, env=bundle_environment)
+            result = subprocess.call(command, cwd=ROOT, env=bundle_environment)
     else:
-        result = subprocess.call(['npx', 'tauri', *arguments], cwd=ROOT, env=environment)
+        result = subprocess.call(command, cwd=ROOT, env=environment)
     if result:
         return result
     arguments = sys.argv[1:]
