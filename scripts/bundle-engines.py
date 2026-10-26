@@ -7,6 +7,7 @@ import argparse
 import concurrent.futures
 import hashlib
 import json
+import runpy
 from pathlib import Path
 import shutil
 import tarfile
@@ -17,6 +18,7 @@ ROOT=Path(__file__).resolve().parents[1]
 LOCK=ROOT/'scripts/engines.lock.json'
 DEST=ROOT/'src-tauri/resources/engines'
 CACHE=ROOT/'src-tauri/target/engine-downloads'
+PLATFORM=runpy.run_path(str(ROOT/'scripts/setup-macos.py'))
 
 def fetch(artifact):
     path=CACHE/(artifact['id']+'-'+artifact['sha256'])
@@ -46,9 +48,32 @@ def fetch(artifact):
     else: shutil.copyfile(path,output)
     return artifact['id']
 
+def preflight_destination(lock):
+    if lock.get('platform') != PLATFORM['host_platform']():
+        raise RuntimeError('Engine lock does not match this host platform')
+    for path in (DEST, *DEST.parents):
+        if path.is_symlink():
+            raise RuntimeError(f'Engine resource path must not contain symlinks: {path}')
+    if not DEST.exists():
+        return
+    manifest = DEST/'manifest.json'
+    try:
+        valid = (DEST.is_dir() and (not any(DEST.iterdir()) or (
+            manifest.is_file() and not manifest.is_symlink()
+            and manifest.stat().st_size <= 65536
+            and json.loads(manifest.read_text()).get('platform') == lock['platform'])))
+    except (OSError, ValueError, AttributeError):
+        valid = False
+    if not valid:
+        raise RuntimeError(f'Refusing to overwrite incompatible engine resources at {DEST}; '
+                           'move them aside explicitly before bundling')
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--skip',action='append',default=[]);args=parser.parse_args()
-    lock=json.loads(LOCK.read_text());CACHE.mkdir(parents=True,exist_ok=True);DEST.mkdir(parents=True,exist_ok=True)
+    PLATFORM['require_linux_x64']('The pinned native-engine bundle')
+    lock=json.loads(LOCK.read_text())
+    preflight_destination(lock)
+    CACHE.mkdir(parents=True,exist_ok=True);DEST.mkdir(parents=True,exist_ok=True)
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
         for name in pool.map(fetch,[item for item in lock['artifacts'] if item['id'] not in args.skip]):print('Bundled',name,flush=True)
     for package in ['@fontsource/geist','@fontsource/geist-mono','katex']:
@@ -57,4 +82,8 @@ def main():
     shutil.copyfile(LOCK,DEST/'manifest.json')
     if not (DEST/'jre/bin/java').is_file(): raise ValueError('Private JRE is missing; run without --skip jre')
     print('Offline engines ready at',DEST)
-if __name__=='__main__':main()
+if __name__=='__main__':
+    try:
+        main()
+    except RuntimeError as error:
+        raise SystemExit(str(error)) from error

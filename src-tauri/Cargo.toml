@@ -34,10 +34,12 @@ base64 = "0.22"
 roxmltree = "0.21"
 url = "2"
 resvg = { version = "0.48", default-features = false, features = ["text", "raster-images"] }
-landlock = "0.4"
 tempfile = "3"
 tauri = { version = "2", optional = true, features = [] }
 tauri-plugin-dialog = { version = "2", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4"
 
 [dev-dependencies]
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }

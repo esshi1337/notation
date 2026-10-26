@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "tauri": "tauri",
-    "desktop": "tauri dev --features desktop",
+    "desktop": "python3 scripts/native-cli.py dev --features desktop",
     "desktop:build": "python3 scripts/native-cli.py build --features desktop",
     "desktop:install": "python3 scripts/install-desktop.py",
     "test:e2e": "playwright test",
@@ -28,7 +28,7 @@
     "test:workspace": "node tests/workspace-features.mjs",
     "desktop:engines": "python3 scripts/bundle-engines.py",
     "test:citations": "node tests/citations.mjs",
-    "desktop:bundle": "python3 scripts/native-cli.py bundle --features desktop --bundles appimage",
+    "desktop:bundle": "python3 scripts/native-cli.py bundle --features desktop",
     "test:hemingway": "node --experimental-strip-types tests/hemingway.mjs",
     "test:code": "node tests/code-editor.mjs",
     "desktop:languages": "python3 scripts/bundle-language-servers.py --install"

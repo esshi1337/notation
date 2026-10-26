@@ -630,6 +630,9 @@ fn language_pack_install_help() -> &'static str {
 }
 
 fn validated_language_pack(profile: Option<&Path>) -> Result<PathBuf, String> {
+    if cfg!(target_os = "macos") {
+        return Err("The optional TypeScript/Svelte language pack is currently Linux x86-64 only. macOS code editing and highlighting work without it; no compatible macOS Node runtime is pinned.".into());
+    }
     let profile = profile.ok_or_else(|| {
         format!(
             "The application profile is unavailable, so the optional language pack cannot be resolved. {}",

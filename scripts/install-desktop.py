@@ -4,6 +4,7 @@
 import os
 from pathlib import Path
 import re
+import runpy
 import shutil
 import subprocess
 import sys
@@ -48,6 +49,11 @@ def desktop_entry(launcher):
 
 def main():
     root = Path(__file__).resolve().parent.parent
+    platform = runpy.run_path(str(root / 'scripts/setup-macos.py'))
+    try:
+        platform['require_linux_x64']('The AppImage installer')
+    except RuntimeError as error:
+        raise SystemExit(str(error)) from error
     artifacts = sorted((root / 'src-tauri/target/release/bundle/appimage').glob('Notation_*.AppImage'))
     artifact = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else (artifacts[-1] if artifacts else None)
     if artifact is None or not artifact.is_file():

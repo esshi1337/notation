@@ -17,6 +17,7 @@ import tarfile
 import tempfile
 import urllib.request
 import uuid
+import runpy
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOLING = ROOT / 'tooling/language-servers'
@@ -25,9 +26,12 @@ NODE_VERSION = '22.23.3'
 NODE_SHA256 = 'df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de'
 MANIFEST_VERSION = 1
 REQUIRED_PATCH = 'svelte-untrusted-prettier-config'
+PLATFORM = runpy.run_path(str(ROOT / 'scripts/setup-macos.py'))
 
 
 def default_destination():
+    if PLATFORM['host_platform']().startswith('macos-'):
+        return Path.home() / 'Library/Application Support/local.notation.app/language-servers'
     configured = os.environ.get('XDG_DATA_HOME')
     if configured:
         data_home = Path(configured).expanduser()
@@ -92,6 +96,7 @@ def collect_packages(install_root):
 
 
 def node_archive():
+    PLATFORM['require_linux_x64']('The optional language-server pack')
     CACHE.mkdir(parents=True, exist_ok=True)
     archive = CACHE / f'node-v{NODE_VERSION}-linux-x64.tar.xz'
     if archive.exists():
@@ -173,6 +178,7 @@ def ensure_replaceable(destination):
 
 def publish(stage, destination):
     """Pin parent directories and preserve the prior pack if publication fails."""
+    PLATFORM['require_linux_x64']('The optional language-server pack')
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     parent = os.open(destination.parent, flags)
     source = None
@@ -212,6 +218,7 @@ def publish(stage, destination):
 
 
 def install(destination):
+    PLATFORM['require_linux_x64']('The optional language-server pack')
     destination = destination.expanduser().absolute()
     ensure_replaceable(destination)
     # Resolve the parent only; never erase the final-component symlink check.
