@@ -9,7 +9,7 @@ pub const MAX_NOTES: usize = 64;
 pub const MAX_TEXT: usize = 65536;
 pub const MAX_TITLE: usize = 256;
 pub const MAX_HTML: usize = 131072;
-pub const COLORS: [&str; 6] = ["yellow", "green", "blue", "pink", "purple", "gray"];
+pub const COLORS: [&str; 7] = ["black", "yellow", "green", "blue", "pink", "purple", "gray"];
 pub const CLOSE_MESSAGE: &str =
     "Close sticky windows first, or minimize Notation to keep them visible.";
 
@@ -22,6 +22,17 @@ pub fn valid_id(id: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err("Invalid sticky note ID.".into())
+    }
+}
+/// Custom commands have no generated ACL. Restrict sticky webviews before
+/// dispatch, then bind each allowed operation to the caller's note ID.
+pub fn authorize_command(label: &str, command: &str) -> Result<(), String> {
+    if label.starts_with("sticky-") && !matches!(command,
+        "read_sticky_note" | "update_sticky_note" | "close_sticky_note" |
+        "new_sticky_note" | "drag_sticky_note") {
+        Err("Sticky windows may only read, update, close or drag their own note and create a new sticky.".into())
+    } else {
+        Ok(())
     }
 }
 pub fn authorize_main(label: &str) -> Result<(), String> {
@@ -58,6 +69,23 @@ impl Admission {
         }
         self.ids.insert(id.into());
         Ok(true)
+    }
+    /// Create and reserve together so failed admission cannot leave an orphan.
+    pub fn reserve_new(&mut self, database: &Database) -> Result<Metadata, String> {
+        self.check_open()?;
+        if self.ids.len() >= MAX_NOTES {
+            return Err("Too many sticky windows.".into());
+        }
+        let note = database.create_sticky()?;
+        self.ids.insert(note.id.clone());
+        Ok(note)
+    }
+    /// Called only when native construction failed, before any editor was exposed.
+    /// Keep admission locked through rollback, then release even if storage fails.
+    pub fn failed_open(&mut self, database: &Database, id: &str, created: bool) -> Result<(), String> {
+        let result = if created { database.delete_sticky(id) } else { Ok(()) };
+        self.release(id);
+        result.map_err(|error| format!("{error} Empty note {id} remains in the saved notes list."))
     }
     pub fn check_open(&self) -> Result<(), String> {
         if self.closing {
