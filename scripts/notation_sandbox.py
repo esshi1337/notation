@@ -24,13 +24,19 @@ def validate_writes(root, paths):
             raise ValueError(f'write-set escapes repository: {name}')
 
 
-def build(root, role, command, extra_env=None, writes=(), model_catalog=None):
+def build(root, role, command, extra_env=None, writes=(), model_catalog=None, app_install_dir=None):
     root = Path(root).resolve()
     validate_writes(root, writes)
     if role not in ('advisor', 'sol', 'deepseek', 'challenger', 'security'):
         raise ValueError('unknown sandbox role')
     if role in ('challenger', 'security') and writes:
         raise ValueError('reviewers cannot request writable source')
+    if app_install_dir is not None:
+        if role != 'advisor':
+            raise ValueError('Only advisor may mount the app installation')
+        app_install_dir = Path(app_install_dir).absolute()
+        if not app_install_dir.is_dir() or any(p.is_symlink() for p in [app_install_dir, *app_install_dir.parents]):
+            raise ValueError('App installation must be an existing directory without symlinks')
     bwrap = shutil.which('bwrap')
     if not bwrap:
         raise RuntimeError('Bubblewrap required; refusing unsandboxed execution')
@@ -93,6 +99,8 @@ def build(root, role, command, extra_env=None, writes=(), model_catalog=None):
            'GIT_CONFIG_VALUE_1': '/work/.githooks',
            'GIT_CONFIG_KEY_2': 'credential.https://github.com.helper',
            'GIT_CONFIG_VALUE_2': '!gh auth git-credential'}
+    if app_install_dir is not None:
+        argv += ['--bind', str(app_install_dir), '/opt/notation-install']
     env.update(extra_env or {})
     if role != 'advisor':
         env.pop('GH_TOKEN', None)
