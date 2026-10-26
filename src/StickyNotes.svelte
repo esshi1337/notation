@@ -42,13 +42,33 @@
 
 <section class="utility-panel" aria-label="Sticky notes">
   <div class="scripts-heading"><strong>Sticky notes</strong><button aria-label="Close sticky notes" onclick={close}>×</button></div>
-  <p class="panel-note">{desktop ? 'Independent always-on-top writing windows with bold, italic, bullets, and six paper colors. Closing a sticky keeps it saved. Close sticky windows before exiting Notation, or minimize Notation to keep them visible.' : 'Sticky notes require the desktop app: browsers cannot create independent always-on-top native windows.'}</p>
-  <div class="panel-actions"><button disabled={!desktop || busy} onclick={create}>New sticky note</button><button disabled={!desktop || busy} onclick={() => action(refresh)}>Refresh notes</button></div>
+  <p class="panel-note">{desktop ? 'Small notes that stay above your windows. Your writing saves automatically.' : 'Sticky notes require the desktop app: browsers cannot create independent always-on-top native windows.'}</p>
+  <div class="panel-actions"><button class="new-note" disabled={!desktop || busy} onclick={create}>New sticky note</button><button disabled={!desktop || busy} onclick={() => action(refresh)}>Refresh notes</button></div>
   {#if error}<p role="alert" class="script-error">{error}</p>{/if}
+  {#if desktop}<div class="list-heading"><strong>Saved notes</strong><span>{notes.length} / 64</span></div>{/if}
+  <div class="notes-list">
   {#each notes as note (note.id)}
-    <div class="sticky-row"><button disabled={busy} onclick={() => action(async () => { await invoke('open_sticky_note', { id: note.id }); })}>{note.title || 'Untitled sticky'}</button><button disabled={busy} aria-label={`Delete ${note.title || 'Untitled sticky'}`} onclick={() => remove(note)}>Delete</button></div>
+    <div class="sticky-row"><button disabled={busy} onclick={() => action(async () => { await invoke('open_sticky_note', { id: note.id }); })}>{note.title || 'Untitled sticky'}</button><button class="delete-note" disabled={busy} aria-label={`Delete ${note.title || 'Untitled sticky'}`} onclick={() => remove(note)}>Delete</button></div>
   {/each}
-  {#if desktop && !busy && !notes.length}<p class="panel-note">No saved sticky notes.</p>{/if}
-  <p class="panel-note">Up to 64 saved notes.</p>
+  </div>
+  {#if desktop && !busy && !notes.length}<div class="empty-notes"><strong>No saved sticky notes.</strong><p>Keep a thought, a reminder, or your next step close at hand.</p></div>{/if}
+  <p class="panel-note sticky-help">Closing a note keeps it saved here. Minimize Notation to keep notes on your desktop; close sticky windows before quitting.</p>
 </section>
-<style>.sticky-row { display: flex; gap: 6px; margin: 8px 0; }.sticky-row button:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; text-align: left; }</style>
+<style>
+  .panel-note { line-height: 1.55; margin: 0; }
+  .panel-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .panel-actions button { min-height: 30px; }
+  .new-note { flex: 1; font-weight: 600; }
+  .list-heading { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; font-size: 11px; }
+  .list-heading span { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .notes-list { display: flex; flex-direction: column; gap: 6px; }
+  .notes-list:empty { display: none; }
+  .sticky-row { display: flex; gap: 4px; padding: 5px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+  .sticky-row button:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; text-align: left; border-color: transparent; background: transparent; padding: 7px; line-height: 1.4; }
+  .sticky-row button:first-child:hover { background: var(--hover); }
+  .delete-note { align-self: center; color: var(--muted); border-color: transparent; font-size: 10px; }
+  .delete-note:hover { color: var(--text); }
+  .empty-notes { padding: 20px 12px; border: 1px dashed var(--border); border-radius: 6px; text-align: center; line-height: 1.5; }
+  .empty-notes p { margin: 6px 0 0; color: var(--muted); }
+  .sticky-help { border-top: 1px solid var(--border); padding-top: 12px; color: var(--muted); }
+</style>

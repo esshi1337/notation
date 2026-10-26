@@ -94,6 +94,7 @@ test('main panel creates, reopens and confirms deletion through native commands 
   const panel = page.getByRole('region', { name: 'Sticky notes', exact: true });
   const saved = panel.getByRole('button', { name: 'Saved sticky', exact: true });
   await expect(saved).toBeVisible();
+  await panel.screenshot({ path: 'test-results/sticky-notes-list.png' });
   await saved.click();
   await panel.getByRole('button', { name: 'Delete Saved sticky', exact: true }).click();
   expect(await page.evaluate(() => (window as unknown as { panelMock: { exists: boolean } }).panelMock.exists)).toBe(true);
@@ -117,7 +118,7 @@ test('isolated native entry disables initial editing, renders plaintext, and nev
   await text.fill('<img src=x onerror=alert(1)> **not rich text**');
   await expect.poll(async () => (await mockState(page)).updates.at(-1)?.text).toBe('<img src=x onerror=alert(1)> **not rich text**');
   await expect(page.getByRole('textbox', { name: 'Sticky title' })).toHaveCount(0);
-  await expect(page.getByRole('status')).toHaveCount(0);
+  await expect(page.getByRole('status')).toHaveText('Saved');
   await expect(page.locator('img')).toHaveCount(0);
   const state = await mockState(page);
   expect(state.updates.at(-1)?.text).toBe('<img src=x onerror=alert(1)> **not rich text**');
@@ -409,4 +410,51 @@ test('drops outside the writing surface cannot navigate the note and the guard i
   expect((await mockState(page)).updates).toHaveLength(0);
   await disposeSticky(page);
   expect(await page.evaluate(() => window.dispatchEvent(new DragEvent('drop', { cancelable: true })))).toBe(true);
+});
+
+
+test('empty note hint stays out of saved content and save feedback remains visible', async ({ page }) => {
+  await page.setViewportSize({ width: 340, height: 380 });
+  await stickyWindow(page, { note: { title: '', text: '', html: '', color: 'yellow' } });
+  const text = page.getByRole('textbox', { name: 'Sticky text' });
+  await expect(text).toHaveClass(/empty/);
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  expect((await mockState(page)).updates).toHaveLength(0);
+  await configure(page, { delay: 650 });
+  await text.fill('Remember the small things');
+  await expect(text).not.toHaveClass(/empty/);
+  await expect(page.getByRole('status')).toHaveText('Unsaved');
+  await expect(page.getByRole('status')).toHaveText('Saving…');
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  expect((await mockState(page)).updates.at(-1)?.text).toBe('Remember the small things');
+  await text.blur();
+  await page.screenshot({ path: 'test-results/sticky-writing-340.png' });
+  await text.fill('');
+  await expect(text).toHaveClass(/empty/);
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  // A cleared contenteditable may retain its native trailing line break.
+  expect((await mockState(page)).updates.at(-1)?.text.trim()).toBe('');
+  await page.screenshot({ path: 'test-results/sticky-empty-340.png' });
+});
+
+test('sticky controls and retry remain reachable at native minimum size', async ({ page }) => {
+  await page.setViewportSize({ width: 240, height: 200 });
+  await stickyWindow(page, { failSave: true });
+  const text = page.getByRole('textbox', { name: 'Sticky text' });
+  await expect(text).toBeEnabled();
+  await text.fill('Keep this note');
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page.getByRole('status')).toHaveText('Not saved');
+  for (const label of ['Bold', 'Italic', 'Bullets', 'Close sticky', 'Gray paper', 'Retry']) {
+    const button = page.getByRole('button', { name: label, exact: true });
+    await expect(button).toBeInViewport();
+    const box = await button.boundingBox();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(240);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(240);
+  await page.screenshot({ path: 'test-results/sticky-error-240.png' });
+  await configure(page, { failSave: false });
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
 });
