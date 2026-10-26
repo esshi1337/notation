@@ -32,7 +32,7 @@ fn schema_seven_stickies_migrate_to_eight_without_touching_titles_or_maximum_pla
     assert_eq!(state.draft.unwrap()["content"], "ordinary");
     drop(db);
     let connection = rusqlite::Connection::open(&path).unwrap();
-    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 8);
+    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 9);
     // SQLite also rejects invalid color/markup if a future caller misses validation.
     assert!(connection.execute("UPDATE sticky_notes SET color='red' WHERE id=?1", [id]).is_err());
     assert!(connection.execute("UPDATE sticky_notes SET html=?2 WHERE id=?1", rusqlite::params![id, "x".repeat(131073)]).is_err());

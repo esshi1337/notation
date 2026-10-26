@@ -650,6 +650,26 @@ mod desktop {
             database.get()?.read_sticky(&id)?;
             admission.reserve(&id)?
         };
+        build_sticky_window(&app, &database.get()?, &manager, &id, reserved, false)
+    }
+    #[tauri::command]
+    async fn new_sticky_note(window: tauri::WebviewWindow, id: String, app: tauri::AppHandle, database: State<'_, DatabaseState>, manager: State<'_, sticky::StickyManager>) -> Result<(), String> {
+        sticky::authorize_note(window.label(), &id)?;
+        let db = database.get()?;
+        let note = {
+            let mut admission = manager.lock()?;
+            db.read_sticky(&id)?;
+            admission.reserve_new(&db)?
+        };
+        build_sticky_window(&app, &db, &manager, &note.id, true, true)
+    }
+    #[tauri::command]
+    async fn drag_sticky_note(window: tauri::WebviewWindow, id: String) -> Result<(), String> {
+        sticky::authorize_note(window.label(), &id)?;
+        window.start_dragging().map_err(|error| error.to_string())
+    }
+    // Main-list opens and the sticky plus button share focus, construction and cleanup.
+    fn build_sticky_window(app: &tauri::AppHandle, database: &storage::Database, manager: &sticky::StickyManager, id: &str, reserved: bool, created: bool) -> Result<(), String> {
         let label = format!("sticky-{id}");
         if !reserved {
             let existing = app.get_webview_window(&label).ok_or("Sticky window is still opening. Try again shortly.")?;
@@ -657,12 +677,15 @@ mod desktop {
             return existing.set_focus().map_err(|e| e.to_string());
         }
         // No parent/owner: these windows stay independent when main is minimized.
-        let result = tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(format!("index.html?sticky={id}").into()))
+        let result = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App(format!("index.html?sticky={id}").into()))
             .title("Sticky note — Notation").inner_size(340.0, 380.0).min_inner_size(240.0, 200.0)
-            .resizable(true).always_on_top(true).build();
+            .decorations(false).resizable(true).always_on_top(true).build();
         if let Err(error) = result {
-            manager.lock()?.release(&id);
-            return Err(format!("Could not open sticky window: {error}"));
+            let cleanup = manager.lock()?.failed_open(database, id, created);
+            return Err(match cleanup {
+                Ok(()) => format!("Could not open sticky window: {error}"),
+                Err(cleanup) => format!("Could not open sticky window: {error}. {cleanup}"),
+            });
         }
         Ok(())
     }
@@ -867,15 +890,13 @@ mod desktop {
                 wiki_candidates,
                 create_wiki_note,
                 list_sticky_notes, create_sticky_note, open_sticky_note, delete_sticky_note,
-                read_sticky_note, update_sticky_note, close_sticky_note
+                read_sticky_note, update_sticky_note, close_sticky_note, new_sticky_note, drag_sticky_note
                 ];
                 move |invoke: tauri::ipc::Invoke| {
                     // Custom app commands have no generated ACL. Keep sticky webviews
                     // out of ordinary drafts, files, scripts and lifecycle commands too.
-                    if invoke.message.webview_ref().label().starts_with("sticky-")
-                        && !matches!(invoke.message.command(), "read_sticky_note" | "update_sticky_note" | "close_sticky_note")
-                    {
-                        invoke.resolver.reject("Sticky windows may only read, update and close their own note.");
+                    if let Err(error) = sticky::authorize_command(invoke.message.webview_ref().label(), invoke.message.command()) {
+                        invoke.resolver.reject(error);
                         return true;
                     }
                     commands(invoke)
