@@ -19,14 +19,14 @@ work in this repository.
   `tests/native`; `playwright.config.ts` configures the e2e suite.
 - `scripts/` — build, bundling, and installer tooling (Python and Node).
 - `orchestration/` — local multi-model orchestration docs.
-- `.codex/` and `opencode.json` — project-level Codex and OpenCode
-  configuration (Serena MCP, agent definitions, compaction).
+- `.codex/` and `orchestration/roles.json` — project-level native Codex
+  configuration (Serena MCP, model roles, compaction).
 
 ## Project orchestration and file boundaries
 
 Start this project's main session with `scripts/notation-advisor`. This selects
 Astra High inside the mandatory Linux Bubblewrap sandbox. The global
-`notation-advisor` alias and direct `codex`/`opencode` commands do not provide
+`notation-advisor` alias and direct `codex` commands do not provide
 these project boundaries. Never use them as a sandbox fallback. Use an
 independent clone; the launcher deliberately rejects linked worktrees.
 
@@ -39,21 +39,22 @@ and a concrete benefit justify parallel work.
 | Role | Model | Task profile |
 | --- | --- | --- |
 | Astra main | gpt-6-astra, High | Requirements, scoped issues, advice, integration, PRs and merges |
-| `deepseek` | opencodex/combo/deepseek-auto, High | Default general coding, bounded features, routine fixes, refactors and regression tests |
-| `sol` | opencodex/gpt-6.1-sol, High | Complex problems, ambiguous bugs, multiple systems/services and security-sensitive implementation |
-| `challenger` / `security` | opencodex/zai/glm-5.3-flash, High | Independent adversarial review and targeted checks: bugs, logic, errors, races, leaks and security |
+| `deepseek` | combo/deepseek-auto, High | Default general coding, bounded features, routine fixes, refactors and regression tests |
+| `sol` | gpt-6.1-sol, High | Complex problems, ambiguous bugs, multiple systems/services and security-sensitive implementation |
+| `challenger` / `security` | zai/glm-5.3-flash, High | Independent adversarial review and targeted checks: bugs, logic, errors, races, leaks and security |
 
 DeepSeek's combo uses moving upstream aliases. The catalog's exact 1017 route
 returned `provider.no-route` during setup; do not claim a revision pin.
-Existing scout definitions remain search-only; do not launch them directly
-outside the project sandbox or turn them into standing teams.
+Use a bounded `--read-only` worker for scouting; do not turn scouts into
+standing teams. Every role uses the existing OpenCodex Responses gateway;
+workers execute through native `codex exec`, with recursive agents disabled.
 
 Implementers require explicit existing `--write` files/directories or
 `--read-only`. Their source is otherwise read-only, Git metadata and harness
 policy are protected, and they receive no GitHub or native Codex credentials.
-Reviewers have read-only source, no Serena mutations, and only fixed
-`scripts/notation-review-check <suite>` shell permissions. Tests execute in
-the same filesystem boundary with disposable scratch/cache output. Network
+Reviewers have read-only source, no Serena mutations or general shell, and
+a small `notation_review` MCP surface for reads, diffs and fixed checks.
+Tests execute in the same filesystem boundary with disposable scratch/cache output. Network
 access remains available for model providers and tools; never describe this
 as a network sandbox. See `orchestration/README.md` for exact boundaries.
 
@@ -172,5 +173,6 @@ Keep credentials and local configuration out of version control; use example
 files with placeholder values. Generated artifacts (`node_modules/`,
 `dist/`, `src-tauri/target/`, `playwright-report/`, `test-results/`,
 `public/pdfjs/`, `src-tauri/resources/engines/`) are gitignored. Model
-provider credentials live in the OpenAI/DeepSeek/OpenCode auth stores outside
-this repository; never print, copy, or commit them.
+provider credentials stay in the existing OpenCodex host stores outside
+this repository; never print, copy, or commit them. No model role receives
+native Codex authentication; the existing gateway authenticates upstream.

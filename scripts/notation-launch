@@ -1,28 +1,93 @@
 #!/usr/bin/env python3
-"""Project-only model entrypoint. No unsandboxed fallback or auth copies."""
+"""Project-only native Codex entrypoint through the existing OpenCodex gateway."""
 import argparse
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
+import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from notation_sandbox import build, exec_sandbox, validate_writes
 
-ROLES = {'sol': 'sol-implementer', 'deepseek': 'deepseek-implementer',
-         'challenger': 'glm-reviewer', 'security': 'glm-security-reviewer'}
+GATEWAY = 'http://127.0.0.1:10100'
+ROLES = json.loads((ROOT / 'orchestration/roles.json').read_text())
+
+
+def gateway_catalog():
+    """Require the already-running owner gateway; never start another service."""
+    try:
+        with urllib.request.urlopen(GATEWAY + '/readyz', timeout=3) as response:
+            ready = json.load(response)
+        if ready.get('service') != 'opencodex' or ready.get('status') != 'ready':
+            raise ValueError('gateway is not ready')
+    except Exception as error:
+        raise RuntimeError('Existing OpenCodex gateway is unavailable; start or repair it on the host') from error
+    catalog = Path('/opt/notation-models.json')
+    if not catalog.is_file():
+        catalog = Path.home() / '.opencodex/codex-models.json'
+    try:
+        data = json.loads(catalog.read_text())
+        models = {entry['slug'] for entry in data['models']}
+        if not all(role['model'] in models for role in ROLES.values()):
+            raise ValueError('required role model is absent')
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise RuntimeError('Existing OpenCodex model catalog is missing required role metadata') from error
+    return catalog
+
+
+def codex_command(role, prompt=None, read_only=False):
+    policy = ROLES[role]
+    reviewer = role in ('challenger', 'security')
+    command = ['/usr/bin/codex']
+    if role != 'advisor':
+        command += ['exec', '--ignore-user-config', '--ephemeral', '--json']
+    command += ['--cd', '/work', '--model', policy['model'],
+                '--sandbox', 'danger-full-access', '-c', 'approval_policy="never"']
+    config = {
+        'model_provider': 'opencodex',
+        'model_providers.opencodex': {'name': 'OpenCodex', 'base_url': GATEWAY + '/v1',
+                                    'wire_api': 'responses', 'requires_openai_auth': False},
+        'model_catalog_json': '/opt/notation-models.json',
+        'model_reasoning_effort': policy['reasoning_effort'],
+        'developer_instructions': policy['instructions'],
+        'features.multi_agent': False, 'features.multi_agent_v2': False,
+        'agents.enabled': False, 'features.apps': False, 'features.plugins': False,
+        'features.memories': False, 'features.browser_use': False,
+        'features.computer_use': False, 'web_search': 'disabled',
+        'features.shell_tool': not reviewer,
+        'features.unified_exec': not reviewer,
+        'mcp_servers.serena': {'command': 'uvx',
+            'args': ['-p', '3.13', '--from', 'serena-agent==1.7.0', 'serena',
+                     'start-mcp-server', '--context', 'codex', '--project-from-cwd',
+                     '--open-web-dashboard', 'False'],
+            'enabled': not (reviewer or read_only), 'startup_timeout_sec': 60},
+        'mcp_servers.notation_review': {'command': '/usr/bin/python3',
+            'args': ['/work/scripts/notation-review-tools'], 'enabled': reviewer},
+    }
+    for key, value in config.items():
+        # JSON scalar syntax is TOML-compatible; inline tables need TOML '='.
+        if isinstance(value, dict):
+            value = '{' + ','.join(k + '=' + json.dumps(v) for k, v in value.items()) + '}'
+        else:
+            value = json.dumps(value)
+        command += ['-c', key + '=' + value]
+    if prompt:
+        command.append(prompt)
+    return command
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('role', choices=['advisor', *ROLES])
+    parser.add_argument('role', choices=list(ROLES))
     parser.add_argument('--write', action='append', default=[], metavar='REPO_PATH')
     parser.add_argument('--read-only', action='store_true')
     parser.add_argument('prompt', nargs='?')
     args = parser.parse_args()
+    if os.environ.get('NOTATION_WORKER'):
+        parser.error('workers cannot launch nested model sessions')
     reviewer = args.role in ('challenger', 'security')
     if args.role != 'advisor' and not args.prompt:
         parser.error('a bounded task/review packet is required')
@@ -33,47 +98,21 @@ def main():
     validate_writes(ROOT, args.write)
     if args.write:
         subprocess.run([str(ROOT / 'scripts/notation-task'), 'check'], cwd=ROOT, check=True)
-    inline = json.loads(os.environ.get('OPENCODE_CONFIG_CONTENT', '{}'))
-    if not (inline.get('provider', {}).get('opencodex') or
-            inline.get('providers', {}).get('opencodex')):
-        if os.environ.get('NOTATION_LAUNCH_ARGS'):
-            raise RuntimeError('OpenCodex did not inject a provider; refusing to run')
-        proxy = shutil.which('opencodex')
-        if not proxy:
-            raise RuntimeError('OpenCodex required; no direct/unsandboxed fallback')
-        env = dict(os.environ, PATH=f"{ROOT / 'scripts/sandbox-bin'}:{os.environ['PATH']}",
-                   NOTATION_LAUNCH_ARGS=json.dumps(sys.argv[1:]))
-        os.execve(proxy, [proxy, 'opencode'], env)
-    # Provider catalog/auth is the only inherited OpenCode configuration. Host
-    # agents, plugins, permissions and MCP servers cannot override project rules.
-    providers = {key: inline[key] for key in ('provider', 'providers') if key in inline}
-    inline = json.loads((ROOT / 'opencode.json').read_text())
-    inline.update(providers)
-    if reviewer or args.read_only:
-        inline.setdefault('mcp', {})['serena'] = {'enabled': False}
-    env = {'OPENCODE_CONFIG_CONTENT': json.dumps(inline)}
+    catalog = gateway_catalog()
+    env = {'CODEX_HOME': '/agent-home/.codex'}
     if args.role == 'advisor':
         env['GH_TOKEN'] = subprocess.check_output(['gh', 'auth', 'token'], text=True).strip()
         if not env['GH_TOKEN']:
             raise RuntimeError('GitHub authentication unavailable')
-        command = ['/usr/bin/codex', '--cd', '/work', '--model', 'gpt-6-astra',
-                   '-c', 'model_reasoning_effort="high"', '--sandbox', 'danger-full-access',
-                   '--ask-for-approval', 'never']
-        if args.prompt:
-            command.append(args.prompt)
     else:
-        models = {'sol': 'opencodex/gpt-6.1-sol#high',
-                  'deepseek': 'opencodex/combo/deepseek-auto#high',
-                  'challenger': 'opencodex/zai/glm-5.3-flash#high',
-                  'security': 'opencodex/zai/glm-5.3-flash#high'}
-        command = ['/usr/bin/opencode', 'run', '--standalone', '--agent', ROLES[args.role],
-                   '--model', models[args.role], args.prompt]
-    argv = build(ROOT, args.role, command, env, args.write)
+        env['NOTATION_WORKER'] = '1'
+    command = codex_command(args.role, args.prompt, args.read_only)
+    argv = build(ROOT, args.role, command, env, args.write, model_catalog=catalog)
     exec_sandbox(argv)
 
 
 if __name__ == '__main__':
     try:
         main()
-    except (ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         sys.exit(f'Notation launcher refused: {error}')

@@ -10,7 +10,7 @@ from notation_sandbox import build, exec_sandbox
 
 SUITES = ('check', 'store', 'preferences', 'documents', 'markdown', 'tables',
           'export', 'canvas', 'workspace', 'citations', 'hemingway', 'code',
-          'e2e', 'native', 'orchestration')
+          'e2e', 'sticky', 'native', 'orchestration')
 
 
 def suite_command(suite):
@@ -21,6 +21,8 @@ def suite_command(suite):
                 'src-tauri/Cargo.toml', '--no-default-features']
     if suite == 'orchestration':
         return ['/usr/bin/python3', 'tests/orchestration_test.py']
+    if suite == 'sticky':
+        return ['/usr/bin/npx', '--no-install', 'playwright', 'test', 'tests/e2e/sticky-notes.spec.ts']
     return ['/usr/bin/npm', '--ignore-scripts', 'run',
             'check' if suite == 'check' else 'test:' + suite]
 
@@ -30,7 +32,7 @@ def main():
         raise ValueError('Exactly one fixed suite argument is required')
     command = suite_command(sys.argv[1])
     env = {}
-    if sys.argv[1] == 'e2e':
+    if sys.argv[1] in ('e2e', 'sticky'):
         env['NOTATION_TEST_WORKERS'] = '2'
         if Path('/usr/bin/chromium').is_file():
             env['PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH'] = '/usr/bin/chromium'
