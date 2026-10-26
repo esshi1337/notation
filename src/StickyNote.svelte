@@ -227,18 +227,19 @@
   {/if}
 </main>
 <style>
-  [data-color="black"] { --paper: #202020; }
+  [data-color="black"] { --paper: #000000; }
   [data-color="yellow"] { --paper: #fff3b0; } [data-color="green"] { --paper: #d9edbd; } [data-color="blue"] { --paper: #cde8fa; } [data-color="pink"] { --paper: #f9d4df; } [data-color="purple"] { --paper: #e5d8f5; } [data-color="gray"] { --paper: #e5e5e2; }
   .sticky-note { --ink: #302b17; --muted: #615735; --bar: #0000000c; --hover: #00000012; --error: #8c221b; box-sizing: border-box; height: 100dvh; position: relative; display: flex; flex-direction: column; background: var(--paper); color: var(--ink); font-family: 'Source Sans 3', ui-sans-serif, sans-serif; }
-  .sticky-note[data-color="black"] { --ink: #f3f3f3; --muted: #bababa; --bar: #181818; --hover: #ffffff20; --error: #ffb4ab; }
+  .sticky-note[data-color="black"] { --ink: #f3f3f3; --muted: #bababa; --bar: #000000; --hover: #ffffff20; --error: #ffb4ab; }
   header { display: flex; align-items: center; height: 34px; flex-shrink: 0; background: var(--bar); user-select: none; }
   .drag-space { flex: 1; align-self: stretch; }
   button { display: inline-grid; place-items: center; height: 32px; min-width: 34px; padding: 2px 8px; background: transparent; color: inherit; border: 0; border-radius: 0; cursor: pointer; font: inherit; }
   button:hover:not(:disabled), button[aria-pressed="true"] { background: var(--hover); }
   button:disabled { opacity: .4; cursor: default; }
-  button:focus-visible, .paper:focus-visible { outline: 2px solid var(--muted); outline-offset: -2px; }
+  button:focus-visible { outline: 2px solid var(--muted); outline-offset: -2px; }
   .plus, .close { font-size: 24px; font-weight: 400; }
   .options { position: absolute; z-index: 1; top: 34px; right: 0; max-width: 100%; padding: 8px; box-sizing: border-box; background: var(--paper); box-shadow: 0 3px 8px #0005; }
+  .sticky-note[data-color="black"] .options { border: 1px solid #ffffff20; }
   .colors { display: flex; gap: 6px; padding: 4px 0 8px; }
   .swatch { background: var(--paper); min-width: 24px; width: 24px; height: 24px; padding: 0; border: 1px solid #888; }
   .swatch:hover:not(:disabled), .swatch[aria-pressed="true"] { background: var(--paper); outline: 2px solid var(--muted); outline-offset: -4px; }

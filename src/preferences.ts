@@ -12,19 +12,23 @@ export type UIPreferences = {
 
 export const DEFAULT_UI_PREFERENCES: Readonly<UIPreferences> = {
   userThemes: [], selectedThemeId: '',
-  darkPreset: 'midnight', lightPreset: 'default', density: 'compact', accentColor: '#d8d8df',
+  darkPreset: 'amoled', lightPreset: 'default', density: 'compact', accentColor: '#d8d8df',
   editorFont: 'mono', lineHeight: 1.7, readingWidth: 756, sidebarWidth: 260, sidebarRailWidth: 'standard', sidebarPosition: 'left',
   showStatusBar: true, tabSize: 4, indentWithTabs: false, languageIntelligenceEnabled: false, showLineNumbers: true, focusMode: false, smoothScrolling: true, performanceMode: false, scriptsEnabled: false,
 };
 
-export const UI_SETTINGS_VERSION = 2;
+export const UI_SETTINGS_VERSION = 3;
 
 export function migrateSettings(settings: Record<string, unknown>): Record<string, unknown> {
-  if (Number(settings.uiSettingsVersion) >= UI_SETTINGS_VERSION) return settings;
+  const version = Number(settings.uiSettingsVersion);
+  if (version >= UI_SETTINGS_VERSION) return settings;
   const next: Record<string, unknown> = { ...settings };
   // Pre-v2 persistence wrote the whole UI object, so a stored tabSize of 2
   // is the old automatic default, not a deliberate user choice.
-  if (next.tabSize === 2) next.tabSize = DEFAULT_UI_PREFERENCES.tabSize;
+  if (!(version >= 2) && next.tabSize === 2) next.tabSize = DEFAULT_UI_PREFERENCES.tabSize;
+  // Midnight was the old default. Move implicit and previously versioned
+  // defaults to AMOLED once; later v3 choices remain untouched.
+  if (next.darkPreset === undefined || next.darkPreset === 'midnight') next.darkPreset = DEFAULT_UI_PREFERENCES.darkPreset;
   next.uiSettingsVersion = UI_SETTINGS_VERSION;
   return next;
 }

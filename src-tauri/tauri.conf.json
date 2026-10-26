@@ -22,7 +22,7 @@
         "minWidth": 720,
         "minHeight": 480,
         "theme": "Dark",
-        "backgroundColor": "#111111"
+        "backgroundColor": "#000000"
       }
     ],
     "security": {

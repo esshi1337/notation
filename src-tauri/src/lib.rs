@@ -679,7 +679,7 @@ mod desktop {
         // No parent/owner: these windows stay independent when main is minimized.
         let result = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App(format!("index.html?sticky={id}").into()))
             .title("Sticky note — Notation").inner_size(340.0, 380.0).min_inner_size(240.0, 200.0)
-            .decorations(false).resizable(true).always_on_top(true).build();
+            .decorations(false).resizable(true).always_on_top(true).background_color(tauri::window::Color(0, 0, 0, 255)).build();
         if let Err(error) = result {
             let cleanup = manager.lock()?.failed_open(database, id, created);
             return Err(match cleanup {
