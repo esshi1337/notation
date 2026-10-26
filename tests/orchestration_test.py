@@ -275,6 +275,34 @@ class Entrypoints(unittest.TestCase):
                 self.assertTrue(any(c.startswith('mcp_servers.notation_review=') and 'enabled=true' in c for c in command))
                 self.assertTrue(any(c.startswith('mcp_servers.serena=') and 'enabled=false' in c for c in command))
 
+    def test_context_profiles_are_explicit_and_preserve_role_permissions(self):
+        launch = self.load_script('notation-launch')
+        expected = {'advisor': (272000, 244800), 'sol': (256000, 205000),
+                    'deepseek': (128000, 102000), 'challenger': (192000, 154000),
+                    'security': (192000, 154000)}
+        for role, (window, compact) in expected.items():
+            default = launch.codex_command(role, 'packet')
+            self.assertIn(f'model_context_window={window}', default)
+            self.assertIn(f'model_auto_compact_token_limit={compact}', default)
+            large = launch.codex_command(role, 'packet', context_profile='large')
+            large_window, large_compact = ((272000, 244800) if role == 'advisor' else
+                                           (500000, 400000) if role == 'sol' else (256000, 205000))
+            self.assertIn(f'model_context_window={large_window}', large)
+            self.assertIn(f'model_auto_compact_token_limit={large_compact}', large)
+            # Changing the budget must not change tools, identity or sandbox flags.
+            strip = lambda cmd: [x for x in cmd if not x.startswith(
+                ('model_context_window=', 'model_auto_compact_token_limit='))]
+            self.assertEqual(strip(default), strip(large))
+        result = subprocess.run([str(ROOT / 'scripts/notation-worker'), 'security',
+                                 '--context-profile', 'unbounded', 'review'], capture_output=True)
+        self.assertEqual(result.returncode, 2)
+        with patch.dict(launch.ROLES['sol']['context_profiles'], default={}):
+            with self.assertRaisesRegex(ValueError, 'missing or malformed'):
+                launch.codex_command('sol', 'packet')
+        with patch.dict(launch.ROLES['sol']['context_profiles']['default'], compact_at=256000):
+            with self.assertRaises(ValueError):
+                launch.codex_command('sol', 'packet')
+
     def test_nested_worker_launch_is_rejected_before_network(self):
         result = subprocess.run([str(ROOT / 'scripts/notation-worker'), 'deepseek', '--read-only', 'inspect'],
                                 env=dict(os.environ, NOTATION_WORKER='1'), capture_output=True, text=True)

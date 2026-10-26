@@ -40,6 +40,35 @@ are moving aliases. A live attempt to use the catalog's exact
 `ELabs/deepseek-v4.1-flash-1017` returned `provider.no-route`; the setup does
 not pretend that the working combo is an immutable 1017 pin.
 
+## Project context profiles
+
+The launcher explicitly overrides the shared catalog's context and automatic
+compaction limits using `context_profiles` in `orchestration/roles.json`.
+These are token budgets for this project, not claims about upstream capacity.
+The shared gateway catalog is unchanged. New sessions pick up these settings.
+
+| Role | Default window | Compact at | Large window | Large compact at |
+| --- | ---: | ---: | ---: | ---: |
+| Astra advisor | 272,000 | 244,800 | 272,000 | 244,800 |
+| Sol | 256,000 | 205,000 | 500,000 | 400,000 |
+| DeepSeek | 128,000 | 102,000 | 256,000 | 205,000 |
+| GLM challenger/security | 192,000 | 154,000 | 256,000 | 205,000 |
+
+Use the default for bounded work. Select `--context-profile large` only when
+related source, callers and tests require broader investigation; it does not
+change permissions, model routing or the write-set. Astra stays at its existing
+budget in both profiles. There is no arbitrary numeric CLI override.
+
+```sh
+scripts/notation-worker sol --context-profile large --write src '<cross-system packet>'
+scripts/notation-worker security --context-profile large '<broad review packet>'
+```
+
+Keep input packets around 2–6k tokens and reports under 1k. Implementers should
+checkpoint and return after two compactions; this is a prompt instruction,
+not an enforced counter. Revisit budgets using observed compaction frequency
+and rereading across real tasks, not advertised maximum model capacity.
+
 ## Issue to PR
 
 Inspect existing issues before creating one. Define a single problem, scope,
