@@ -14,7 +14,7 @@
   let content = { title: '', text: '', html: '' };
   let message = $state('Loading…'), error = $state('');
   let empty = $state(true);
-  let disposed = false, destroying = false, revision = 0, saved = 0;
+  let disposed = false, destroying = false, revision = 0, saved = 0, closeAttempt = 0;
   let timer: ReturnType<typeof setTimeout> | undefined, worker: Promise<void> | null = null;
   let unclose = $state<(() => void) | undefined>();
   const current = getCurrentWindow();
@@ -92,7 +92,7 @@
   }
   async function closeNote() {
     if (closing || disposed || destroying) return;
-    closing = true; cancelTimer();
+    closing = true; closeAttempt++; cancelTimer();
     try {
       if (loaded) await flush();
       if (disposed) return;
@@ -107,6 +107,7 @@
   async function load() {
     if (loading || closing || disposed || destroying) return;
     loading = true;
+    const initialCloseAttempt = closeAttempt;
     try {
       const note = await invoke<StickyContent>('read_sticky_note', { id });
       if (!disposed && !destroying && unclose) {
@@ -114,7 +115,9 @@
         else editor.textContent = legacyStickyText(note);
         color = stickyColors.includes(note.color as StickyColor) ? note.color as StickyColor : 'yellow';
         empty = editor.innerText.trim().length === 0;
-        loaded = true; message = 'Saved'; error = '';
+        loaded = true;
+        // A later close failure must remain visible when this earlier read finishes.
+        if (closeAttempt === initialCloseAttempt) { message = 'Saved'; error = ''; }
         // Reading never writes or truncates a legacy title/body combination.
         try { validateSticky(editor.innerText, sanitizeSticky(editor.innerHTML)); }
         catch (cause) { error = String(cause); }

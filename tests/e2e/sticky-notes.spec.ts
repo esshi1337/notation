@@ -479,3 +479,19 @@ test('failed close during initial loading leaves read retry usable', async ({ pa
   await text.fill('Recovered after close failed');
   await expect.poll(async () => (await mockState(page)).updates.at(-1)?.text).toBe('Recovered after close failed');
 });
+
+
+test('late initial read preserves a failed-close alert', async ({ page }) => {
+  await stickyWindow(page, { holdRead: true, holdDestroy: true, failDestroy: true });
+  await expect.poll(async () => (await mockState(page)).calls.some(call => call.cmd === 'read_sticky_note')).toBe(true);
+  await page.getByRole('button', { name: 'Close sticky', exact: true }).click();
+  await expect.poll(async () => (await mockState(page)).calls.some(call => call.cmd === 'close_sticky_note')).toBe(true);
+  await page.evaluate(() => (window as unknown as { stickyMock: { releaseDestroy: () => void } }).stickyMock.releaseDestroy());
+  await expect(page.getByRole('alert')).toContainText('destroy unavailable');
+  await page.evaluate(() => (window as unknown as { stickyMock: { releaseRead: () => void } }).stickyMock.releaseRead());
+  await expect(page.getByRole('textbox', { name: 'Sticky text' })).toBeEnabled();
+  await expect(page.getByRole('alert')).toContainText('destroy unavailable');
+  await expect(page.getByRole('status')).toHaveText('Not closed — retry saving');
+  await page.getByRole('textbox', { name: 'Sticky text' }).fill('Still editable');
+  await expect(page.getByRole('status')).toHaveText('Saved');
+});
