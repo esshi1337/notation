@@ -3,7 +3,7 @@ import { runCommand } from './commands';
 
 const id = '0123456789abcdef0123456789abcdef';
 
-async function stickyWindow(page: Page, options: { loadDelay?: number; failLoad?: boolean; failSave?: boolean; failDestroy?: boolean; note?: { title: string; text: string; html?: string | null; color?: string }; listenerDelay?: number } = {}) {
+async function stickyWindow(page: Page, options: { holdRead?: boolean; holdDestroy?: boolean; loadDelay?: number; failLoad?: boolean; failSave?: boolean; failDestroy?: boolean; note?: { title: string; text: string; html?: string | null; color?: string }; listenerDelay?: number } = {}) {
   await page.addInitScript(({ id, options }) => {
     const callbacks = new Map<number, (event: unknown) => void>();
     let next = 1;
@@ -12,7 +12,8 @@ async function stickyWindow(page: Page, options: { loadDelay?: number; failLoad?
       updates: [] as Record<string, unknown>[],
       failSave: !!options.failSave, failLoad: !!options.failLoad, failDestroy: !!options.failDestroy,
       delay: 0, active: 0, maxActive: 0, destroyed: false, closeHandler: 0,
-      readDelays: [] as number[],
+      readDelays: [] as number[], readFinished: false,
+      releaseRead: undefined as (() => void) | undefined, releaseDestroy: undefined as (() => void) | undefined,
       note: options.note ?? { title: 'Saved title', text: 'Saved body', html: null, color: 'yellow' },
     };
     Object.assign(window, { stickyMock: state, isTauri: true, __TAURI_INTERNALS__: {
@@ -24,8 +25,10 @@ async function stickyWindow(page: Page, options: { loadDelay?: number; failLoad?
         if (cmd === 'plugin:event|listen') { await new Promise(resolve => setTimeout(resolve, options.listenerDelay ?? 0)); state.closeHandler = Number(args.handler); return 1; }
         if (cmd === 'plugin:event|unlisten') return;
         if (cmd === 'read_sticky_note') {
+          if (options.holdRead && !state.readFinished) await new Promise<void>(resolve => { state.releaseRead = resolve; });
           await new Promise(resolve => setTimeout(resolve, state.readDelays.shift() ?? options.loadDelay ?? 0));
           if (state.failLoad) throw new Error('read unavailable');
+          state.readFinished = true;
           return { id, ...state.note };
         }
         if (cmd === 'update_sticky_note') {
@@ -36,6 +39,7 @@ async function stickyWindow(page: Page, options: { loadDelay?: number; failLoad?
             state.updates.push(args); Object.assign(state.note, args); return;
         }
         if (cmd === 'close_sticky_note') {
+          if (options.holdDestroy) await new Promise<void>(resolve => { state.releaseDestroy = resolve; });
           if (state.failDestroy) throw new Error('destroy unavailable');
           state.destroyed = true; return;
         }
@@ -94,6 +98,7 @@ test('main panel creates, reopens and confirms deletion through native commands 
   const panel = page.getByRole('region', { name: 'Sticky notes', exact: true });
   const saved = panel.getByRole('button', { name: 'Saved sticky', exact: true });
   await expect(saved).toBeVisible();
+  await panel.screenshot({ path: 'test-results/sticky-notes-list.png' });
   await saved.click();
   await panel.getByRole('button', { name: 'Delete Saved sticky', exact: true }).click();
   expect(await page.evaluate(() => (window as unknown as { panelMock: { exists: boolean } }).panelMock.exists)).toBe(true);
@@ -117,7 +122,7 @@ test('isolated native entry disables initial editing, renders plaintext, and nev
   await text.fill('<img src=x onerror=alert(1)> **not rich text**');
   await expect.poll(async () => (await mockState(page)).updates.at(-1)?.text).toBe('<img src=x onerror=alert(1)> **not rich text**');
   await expect(page.getByRole('textbox', { name: 'Sticky title' })).toHaveCount(0);
-  await expect(page.getByRole('status')).toHaveCount(0);
+  await expect(page.getByRole('status')).toHaveText('Saved');
   await expect(page.locator('img')).toHaveCount(0);
   const state = await mockState(page);
   expect(state.updates.at(-1)?.text).toBe('<img src=x onerror=alert(1)> **not rich text**');
@@ -409,4 +414,84 @@ test('drops outside the writing surface cannot navigate the note and the guard i
   expect((await mockState(page)).updates).toHaveLength(0);
   await disposeSticky(page);
   expect(await page.evaluate(() => window.dispatchEvent(new DragEvent('drop', { cancelable: true })))).toBe(true);
+});
+
+
+test('empty note hint stays out of saved content and save feedback remains visible', async ({ page }) => {
+  await page.setViewportSize({ width: 340, height: 380 });
+  await stickyWindow(page, { note: { title: '', text: '', html: '', color: 'yellow' } });
+  const text = page.getByRole('textbox', { name: 'Sticky text' });
+  await expect(text).toHaveClass(/empty/);
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  expect((await mockState(page)).updates).toHaveLength(0);
+  await configure(page, { delay: 650 });
+  await text.fill('Remember the small things');
+  await expect(text).not.toHaveClass(/empty/);
+  await expect(page.getByRole('status')).toHaveText('Unsaved');
+  await expect(page.getByRole('status')).toHaveText('Saving…');
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  expect((await mockState(page)).updates.at(-1)?.text).toBe('Remember the small things');
+  await text.blur();
+  await page.screenshot({ path: 'test-results/sticky-writing-340.png' });
+  await text.fill('');
+  await expect(text).toHaveClass(/empty/);
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  // A cleared contenteditable may retain its native trailing line break.
+  expect((await mockState(page)).updates.at(-1)?.text.trim()).toBe('');
+  await page.screenshot({ path: 'test-results/sticky-empty-340.png' });
+});
+
+test('sticky controls and retry remain reachable at native minimum size', async ({ page }) => {
+  await page.setViewportSize({ width: 240, height: 200 });
+  await stickyWindow(page, { failSave: true });
+  const text = page.getByRole('textbox', { name: 'Sticky text' });
+  await expect(text).toBeEnabled();
+  await text.fill('Keep this note');
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page.getByRole('status')).toHaveText('Not saved');
+  for (const label of ['Bold', 'Italic', 'Bullets', 'Close sticky', 'Gray paper', 'Retry']) {
+    const button = page.getByRole('button', { name: label, exact: true });
+    await expect(button).toBeInViewport();
+    const box = await button.boundingBox();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(240);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(240);
+  await page.screenshot({ path: 'test-results/sticky-error-240.png' });
+  await configure(page, { failSave: false });
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+});
+
+
+test('failed close during initial loading leaves read retry usable', async ({ page }) => {
+  await stickyWindow(page, { holdRead: true, holdDestroy: true, failDestroy: true });
+  await expect.poll(async () => (await mockState(page)).calls.some(call => call.cmd === 'read_sticky_note')).toBe(true);
+  await page.getByRole('button', { name: 'Close sticky', exact: true }).click();
+  await expect.poll(async () => (await mockState(page)).calls.some(call => call.cmd === 'close_sticky_note')).toBe(true);
+  await page.evaluate(() => (window as unknown as { stickyMock: { releaseRead: () => void } }).stickyMock.releaseRead());
+  await expect.poll(() => page.evaluate(() => (window as unknown as { stickyMock: { readFinished: boolean } }).stickyMock.readFinished)).toBe(true);
+  await page.evaluate(() => (window as unknown as { stickyMock: { releaseDestroy: () => void } }).stickyMock.releaseDestroy());
+  await expect(page.getByRole('alert')).toContainText('destroy unavailable');
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  const text = page.getByRole('textbox', { name: 'Sticky text' });
+  await expect(text).toBeEnabled();
+  await text.fill('Recovered after close failed');
+  await expect.poll(async () => (await mockState(page)).updates.at(-1)?.text).toBe('Recovered after close failed');
+});
+
+
+test('late initial read preserves a failed-close alert', async ({ page }) => {
+  await stickyWindow(page, { holdRead: true, holdDestroy: true, failDestroy: true });
+  await expect.poll(async () => (await mockState(page)).calls.some(call => call.cmd === 'read_sticky_note')).toBe(true);
+  await page.getByRole('button', { name: 'Close sticky', exact: true }).click();
+  await expect.poll(async () => (await mockState(page)).calls.some(call => call.cmd === 'close_sticky_note')).toBe(true);
+  await page.evaluate(() => (window as unknown as { stickyMock: { releaseDestroy: () => void } }).stickyMock.releaseDestroy());
+  await expect(page.getByRole('alert')).toContainText('destroy unavailable');
+  await page.evaluate(() => (window as unknown as { stickyMock: { releaseRead: () => void } }).stickyMock.releaseRead());
+  await expect(page.getByRole('textbox', { name: 'Sticky text' })).toBeEnabled();
+  await expect(page.getByRole('alert')).toContainText('destroy unavailable');
+  await expect(page.getByRole('status')).toHaveText('Not closed — retry saving');
+  await page.getByRole('textbox', { name: 'Sticky text' }).fill('Still editable');
+  await expect(page.getByRole('status')).toHaveText('Saved');
 });
