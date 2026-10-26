@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const MAX_CONTENT: usize = 4 * 1024 * 1024;
 const REVISION_LIMIT: usize = 50;
 const RUN_LIMIT: usize = 200;
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 
 pub fn now() -> i64 {
     SystemTime::now()
@@ -273,6 +273,16 @@ PRAGMA user_version=2;
                 tx.execute_batch("ALTER TABLE sticky_notes ADD COLUMN html TEXT CHECK(html IS NULL OR length(CAST(html AS BLOB))<=131072);").map_err(database_error)?;
             }
             tx.execute_batch("PRAGMA user_version=8;").map_err(database_error)?;
+            tx.commit().map_err(database_error)?;
+        }
+        if version < 9 {
+            let tx = connection.transaction().map_err(database_error)?;
+            // Rebuild to extend the color CHECK and change only the new-row default.
+            tx.execute_batch("CREATE TABLE sticky_notes_v9(id TEXT PRIMARY KEY, title TEXT NOT NULL CHECK(length(CAST(title AS BLOB))<=256), text TEXT NOT NULL CHECK(length(CAST(text AS BLOB))<=65536), updated_at INTEGER NOT NULL, color TEXT NOT NULL DEFAULT 'black' CHECK(color IN ('black','yellow','green','blue','pink','purple','gray')), html TEXT CHECK(html IS NULL OR length(CAST(html AS BLOB))<=131072));
+INSERT INTO sticky_notes_v9(id,title,text,updated_at,color,html) SELECT id,title,text,updated_at,color,html FROM sticky_notes;
+DROP TABLE sticky_notes;
+ALTER TABLE sticky_notes_v9 RENAME TO sticky_notes;
+PRAGMA user_version=9;").map_err(database_error)?;
             tx.commit().map_err(database_error)?;
         }
         Ok(Self {

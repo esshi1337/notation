@@ -1,6 +1,6 @@
 import DOMPurify from 'dompurify';
 
-export const stickyColors = ['yellow', 'green', 'blue', 'pink', 'purple', 'gray'] as const;
+export const stickyColors = ['black', 'yellow', 'green', 'blue', 'pink', 'purple', 'gray'] as const;
 export type StickyColor = typeof stickyColors[number];
 export type StickyContent = { title: string; text: string; color?: string; html?: string | null };
 
@@ -8,7 +8,7 @@ export type StickyContent = { title: string; text: string; color?: string; html?
 // resource-bearing tags, attributes (including style), SVG, or custom elements.
 export function sanitizeSticky(html: string): string {
   return DOMPurify.sanitize(html, {
-    ALLOWED_TAGS: ['p', 'div', 'br', 'b', 'strong', 'i', 'em', 'ul', 'li'],
+    ALLOWED_TAGS: ['p', 'div', 'br', 'b', 'strong', 'i', 'em', 'u', 's', 'strike', 'del', 'ul', 'li'],
     ALLOWED_ATTR: [], ALLOW_DATA_ATTR: false, ALLOW_ARIA_ATTR: false,
   });
 }

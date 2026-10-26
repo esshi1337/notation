@@ -9,7 +9,7 @@ use std::sync::{Arc, Barrier};
 const ID: &str = "0123456789abcdef0123456789abcdef";
 
 #[test]
-fn migration_six_to_eight_preserves_ordinary_state_and_independent_notes() {
+fn migration_six_to_nine_preserves_ordinary_state_and_independent_notes() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("state.sqlite3");
     let db = Database::open(&path).unwrap();
@@ -34,7 +34,7 @@ fn migration_six_to_eight_preserves_ordinary_state_and_independent_notes() {
     db.update_sticky(&a.id, "<b>plain title</b>", "<script>plain text</script>")
         .unwrap();
     assert_eq!(db.read_sticky(&b.id).unwrap().text, "");
-    assert_eq!(db.read_sticky(&b.id).unwrap().color, "yellow");
+    assert_eq!(db.read_sticky(&b.id).unwrap().color, "black");
     assert!(db.read_sticky(&b.id).unwrap().html.is_none());
     drop(db);
     let db = Database::open(&path).unwrap();
@@ -237,4 +237,104 @@ fn storage_errors_are_reported_not_replaced() {
     assert!(db.list_stickies().unwrap_err().contains("database"));
     assert!(db.create_sticky().is_err());
     assert!(db.read_sticky(ID).is_err());
+}
+
+#[test]
+fn schema_eight_preserves_every_color_and_snapshot_while_new_notes_default_black() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("state.sqlite3");
+    drop(Database::open(&path).unwrap());
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.execute_batch("DROP TABLE sticky_notes;
+CREATE TABLE sticky_notes(id TEXT PRIMARY KEY, title TEXT NOT NULL CHECK(length(CAST(title AS BLOB))<=256), text TEXT NOT NULL CHECK(length(CAST(text AS BLOB))<=65536), updated_at INTEGER NOT NULL, color TEXT NOT NULL DEFAULT 'yellow' CHECK(color IN ('yellow','green','blue','pink','purple','gray')), html TEXT CHECK(html IS NULL OR length(CAST(html AS BLOB))<=131072));
+PRAGMA user_version=8;").unwrap();
+    let colors = ["yellow", "green", "blue", "pink", "purple", "gray"];
+    for (n, color) in colors.iter().enumerate() {
+        connection.execute("INSERT INTO sticky_notes VALUES(?1,?2,?3,?4,?5,?6)",
+            rusqlite::params![format!("{n:032x}"), "old title", "é".repeat(MAX_TEXT / 2), n as i64, color, "<u>keep</u><strike>this</strike>"]).unwrap();
+    }
+    drop(connection);
+    let db = Database::open(&path).unwrap();
+    for (n, color) in colors.iter().enumerate() {
+        let note = db.read_sticky(&format!("{n:032x}")).unwrap();
+        assert_eq!(&note.color, color);
+        assert_eq!(note.title, "old title");
+        assert_eq!(note.text, "é".repeat(MAX_TEXT / 2));
+        assert_eq!(note.html.as_deref(), Some("<u>keep</u><strike>this</strike>"));
+    }
+    let new = db.create_sticky().unwrap();
+    assert_eq!(db.read_sticky(&new.id).unwrap().color, "black");
+    drop(db);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 9);
+    assert!(connection.execute("UPDATE sticky_notes SET color='red'", []).is_err());
+    assert!(connection.execute("UPDATE sticky_notes SET text=?1", ["x".repeat(MAX_TEXT + 1)]).is_err());
+    assert!(connection.execute("UPDATE sticky_notes SET title=?1", ["x".repeat(MAX_TITLE + 1)]).is_err());
+    assert!(connection.execute("UPDATE sticky_notes SET html=?1", ["x".repeat(MAX_HTML + 1)]).is_err());
+    drop(connection);
+    assert_eq!(Database::open(&path).unwrap().read_sticky(&new.id).unwrap().color, "black");
+}
+
+#[test]
+fn plus_admission_and_failed_construction_preserve_existing_notes_and_release_reservations() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Database::open(&dir.path().join("state.sqlite3")).unwrap();
+    let original = db.create_sticky().unwrap();
+    db.update_sticky(&original.id, "keep", "precious text").unwrap();
+    let mut admission = Admission::default();
+    admission.reserve(&original.id).unwrap();
+    admission.failed_open(&db, &original.id, false).unwrap();
+    assert_eq!(db.read_sticky(&original.id).unwrap().text, "precious text");
+    admission.check_delete(&original.id).unwrap();
+    for _ in 0..100 {
+        let new = admission.reserve_new(&db).unwrap();
+        assert!(admission.check_delete(&new.id).is_err());
+        admission.failed_open(&db, &new.id, true).unwrap();
+        admission.check_delete(&new.id).unwrap();
+        assert_eq!(db.list_stickies().unwrap().len(), 1);
+    }
+    admission.set_closing(true).unwrap();
+    assert!(admission.reserve_new(&db).is_err());
+    admission.set_closing(false).unwrap();
+    for n in 0..MAX_NOTES { admission.reserve(&format!("{n:032x}")).unwrap(); }
+    assert!(admission.reserve_new(&db).is_err());
+    assert_eq!(db.list_stickies().unwrap().len(), 1);
+    for n in 0..MAX_NOTES { admission.release(&format!("{n:032x}")); }
+    // The database limit is independent of window admission.
+    for _ in 1..MAX_NOTES { db.create_sticky().unwrap(); }
+    assert!(admission.reserve_new(&db).is_err());
+    admission.set_closing(true).unwrap();
+}
+
+#[test]
+fn rollback_storage_failure_is_reported_and_does_not_leak_window_admission() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("state.sqlite3");
+    let db = Database::open(&path).unwrap();
+    let mut admission = Admission::default();
+    let note = admission.reserve_new(&db).unwrap();
+    rusqlite::Connection::open(&path).unwrap().execute_batch("CREATE TRIGGER fail_delete BEFORE DELETE ON sticky_notes BEGIN SELECT RAISE(FAIL,'disk unavailable'); END;").unwrap();
+    let error = admission.failed_open(&db, &note.id, true).unwrap_err();
+    assert!(error.contains("disk unavailable"));
+    assert!(error.contains(&note.id));
+    assert!(error.contains("saved notes list"));
+    admission.check_delete(&note.id).unwrap();
+    assert_eq!(db.list_stickies().unwrap().len(), 1);
+    admission.set_closing(true).unwrap();
+}
+
+#[test]
+fn sticky_dispatch_only_allows_own_note_operations_and_new_note_creation() {
+    use notation_lib::sticky::authorize_command;
+    let label = format!("sticky-{ID}");
+    for command in ["read_sticky_note", "update_sticky_note", "close_sticky_note", "drag_sticky_note", "new_sticky_note"] {
+        authorize_command(&label, command).unwrap();
+        authorize_note(&label, ID).unwrap();
+        assert!(authorize_note(&label, "abcdef0123456789abcdef0123456789").is_err());
+        assert!(authorize_note("main", ID).is_err());
+    }
+    for command in ["create_sticky_note", "open_sticky_note", "delete_sticky_note", "list_sticky_notes", "persist_state", "read_file", "run_script", "launch_ready", "plugin:window|start_dragging"] {
+        assert!(authorize_command(&label, command).is_err(), "{command}");
+        authorize_command("main", command).unwrap();
+    }
 }
