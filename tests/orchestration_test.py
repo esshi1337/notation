@@ -20,6 +20,117 @@ workflow = importlib.util.module_from_spec(spec)
 loader.exec_module(workflow)
 
 
+loader = importlib.machinery.SourceFileLoader('notation_install', str(ROOT / 'scripts/notation-install'))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+installer = importlib.util.module_from_spec(spec)
+loader.exec_module(installer)
+
+
+class AppUpdates(unittest.TestCase):
+    def test_source_mutation_is_rejected_and_concurrent_updates_serialize(self):
+        import multiprocessing
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            header = b'\x7fELF0000AI\x02'
+            live = directory / 'Notation.AppImage'
+            live.write_bytes(header + b'old')
+            first, second = directory / 'first', directory / 'second'
+            first.write_bytes(header + b'first')
+            second.write_bytes(header + b'second')
+            copy = installer.shutil.copyfileobj
+            def mutate(source, output):
+                copy(source, output)
+                first.write_bytes(replacement)
+            for replacement in (header, header + b'other'):
+                first.write_bytes(header + b'first')
+                with patch.object(installer.shutil, 'copyfileobj', side_effect=mutate), self.assertRaises(ValueError):
+                    installer.update(directory, first)
+            self.assertEqual(live.read_bytes(), header + b'old')
+            first.write_bytes(header + b'first')
+            ctx = multiprocessing.get_context('fork')
+            processes = [ctx.Process(target=installer.update, args=(directory, path)) for path in (first, second)]
+            for process in processes:
+                process.start()
+            for process in processes:
+                process.join(10)
+                self.assertEqual(process.exitcode, 0)
+            self.assertEqual({live.read_bytes(), (directory / 'Notation.AppImage.previous').read_bytes()}, {first.read_bytes(), second.read_bytes()})
+            self.assertFalse(list(directory.glob('.notation-stage-*')))
+
+    def test_failed_replace_preserves_live_and_previous_and_cleans_staging(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            live = directory / 'Notation.AppImage'
+            previous = directory / 'Notation.AppImage.previous'
+            artifact = directory / 'input'
+            header = b'\x7fELF0000AI\x02'
+            for path, data in ((live, b'live'), (previous, b'previous'), (artifact, b'new')):
+                path.write_bytes(header + data)
+            real_replace = os.replace
+            for target in (live, previous):
+                def fail(source, destination):
+                    if destination == target:
+                        raise OSError('injected replacement failure')
+                    return real_replace(source, destination)
+                (directory / '.notation-stage-abandoned').write_bytes(b'stale')
+                with patch.object(installer.os, 'replace', side_effect=fail), self.assertRaises(OSError):
+                    installer.update(directory, artifact)
+                self.assertEqual(live.read_bytes(), header + b'live')
+                self.assertEqual(previous.read_bytes(), header + b'previous')
+                self.assertFalse(list(directory.glob('.notation-stage-*')))
+            def fail_restoration(source, destination):
+                if source.name.startswith('.notation-recovery-'):
+                    raise OSError('injected backup and restoration failure')
+                return real_replace(source, destination)
+            with patch.object(installer.os, 'replace', side_effect=fail_restoration), self.assertRaises(RuntimeError):
+                installer.update(directory, artifact)
+            recovery = list(directory.glob('.notation-recovery-*'))
+            self.assertEqual(len(recovery), 1)
+            self.assertEqual(recovery[0].read_bytes(), header + b'live')
+            with self.assertRaisesRegex(ValueError, 'manual inspection'):
+                installer.update(directory, artifact)
+            recovery[0].unlink()
+            previous.unlink()
+            with self.assertRaises(FileNotFoundError):
+                installer.update(directory, rollback=True)
+            artifact.unlink()
+            os.mkfifo(artifact)
+            with self.assertRaises(ValueError):
+                installer.update(directory, artifact)
+
+    def test_atomic_update_rollback_and_rejected_inputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / 'install'
+            directory.mkdir()
+            old = b'\x7fELF' + b'0' * 4 + b'AI\x02old'
+            new = old[:-3] + b'new'
+            live = directory / 'Notation.AppImage'
+            live.write_bytes(old)
+            artifact = Path(tmp) / 'build.AppImage'
+            artifact.write_bytes(new)
+            installer.update(directory, artifact)
+            self.assertEqual(live.read_bytes(), new)
+            self.assertEqual((directory / 'Notation.AppImage.previous').read_bytes(), old)
+            installer.update(directory, rollback=True)
+            self.assertEqual(live.read_bytes(), old)
+            self.assertEqual((directory / 'Notation.AppImage.previous').read_bytes(), new)
+            artifact.write_bytes(b'invalid')
+            with self.assertRaises(ValueError):
+                installer.update(directory, artifact)
+            self.assertEqual(live.read_bytes(), old)
+            artifact.unlink()
+            artifact.symlink_to(live)
+            with self.assertRaises(OSError):
+                installer.update(directory, artifact)
+            previous = directory / 'Notation.AppImage.previous'
+            previous.unlink()
+            previous.symlink_to(live)
+            with self.assertRaises(ValueError):
+                installer.update(directory, live)
+            self.assertEqual(live.read_bytes(), old)
+            self.assertFalse(list(directory.glob('.notation-*')))
+
+
 class Boundaries(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='notation-boundary-')
@@ -37,6 +148,27 @@ class Boundaries(unittest.TestCase):
         return subprocess.run(build(self.root, role, ['/usr/bin/python3', '-c', code], writes=writes),
                               capture_output=True, text=True,
                               env=dict(os.environ, NOTATION_HOST_SECRET='must-not-leak'))
+
+    def test_app_mount_is_advisor_only_and_not_inherited_by_workers(self):
+        app = self.host / 'install'
+        app.mkdir()
+        (app / 'canary').write_text('old')
+        code = "from pathlib import Path; Path('/opt/notation-install/canary').write_text('new')"
+        result = subprocess.run(build(self.root, 'advisor', ['/usr/bin/python3', '-c', code], app_install_dir=app), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((app / 'canary').read_text(), 'new')
+        for role in ('sol', 'deepseek', 'challenger', 'security'):
+            with self.assertRaises(ValueError):
+                build(self.root, role, ['/usr/bin/true'], app_install_dir=app)
+            result = self.sandbox(role, "from pathlib import Path; assert not Path('/opt/notation-install').exists()")
+            self.assertEqual(result.returncode, 0, result.stderr)
+        # A nested worker started by the advisor must lose the advisor mount/token.
+        (self.root / 'scripts').mkdir()
+        import shutil
+        shutil.copyfile(ROOT / 'scripts/notation_sandbox.py', self.root / 'scripts/notation_sandbox.py')
+        nested = "import sys, subprocess; sys.path.insert(0, '/work/scripts'); from notation_sandbox import build; [subprocess.run(build('/work', role, ['/usr/bin/python3', '-c', \"import os; from pathlib import Path; assert 'GH_TOKEN' not in os.environ; assert not Path('/opt/notation-install').exists()\"]), check=True) for role in ('sol', 'deepseek', 'security')]"
+        result = subprocess.run(build(self.root, 'advisor', ['/usr/bin/python3', '-c', nested], {'GH_TOKEN': 'canary'}, app_install_dir=app), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_reviewer_hides_personal_files_and_environment_and_cannot_edit_source_or_git(self):
         code = f'''

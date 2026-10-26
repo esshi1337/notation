@@ -227,3 +227,49 @@ The `sticky` suite runs only `tests/e2e/sticky-notes.spec.ts`. The native
 suite needs Rust and platform libraries; e2e needs Playwright browsers. Test
 only relevant areas, report unavailable prerequisites, and never update
 snapshots or weaken tests through the reviewer command.
+
+### Host permissions and local app updates
+
+The desktop launcher uses an independent `orchestrator` clone and the advisor's
+`default` context profile. The outer Bubblewrap boundary remains mandatory even
+though the inner Codex process reports unrestricted sandbox mode.
+
+| Session | Writable scope | GitHub credential | Host app installation |
+| --- | --- | --- | --- |
+| Advisor (Astra) | Checkout, Git, session history | Existing account token for push/PR/merge | Only `~/.local/opt/notation`, mounted at `/opt/notation-install` |
+| Sol / DeepSeek | Explicit existing source write-set and scratch | None | Absent |
+| Challenger / security / fixed review checks | Scratch only | None | Absent |
+
+The advisor launcher requires the existing installation directory. It does not
+mount the rest of the home directory, desktop sockets, credential stores or
+system administration interfaces. GitHub token scope is the existing account's
+scope, not a repository-limited credential. Network access is shared; this is a
+filesystem boundary, not a network sandbox. The advisor is trusted to integrate
+code and operate GitHub; issue/review hooks are local guardrails.
+
+After building and validating an AppImage, the advisor can run:
+
+```sh
+scripts/notation-install install /tmp/cargo-target/release/bundle/appimage/Notation.AppImage
+scripts/notation-install rollback
+```
+
+Use the actual generated artifact path. The installer accepts a regular type-2
+AppImage, stages and atomically replaces the live file, and retains the preceding
+image as `Notation.AppImage.previous`. Header validation is a format check, not
+proof of artifact authenticity. Only install the reviewed build. A lock serializes
+updates; symlink targets are rejected. The existing desktop entry and launcher
+keep pointing at the same live file. Updates apply on the next launch; this
+command does not terminate or restart an active app. A first-time installation
+still uses the host's `scripts/install-desktop.py` setup command.
+
+The update lock coordinates this helper's callers only: do not run the host's
+first-time installer or other writers concurrently. Staging rejects a source
+whose size or timestamps change during copying and clears abandoned staging
+files on the next run. The live-file rename is atomic; the live/previous pair
+is not a crash-atomic transaction. Failed replacements restore the prior live
+image where filesystem operations remain available; a failed restoration reports
+its retained recovery path for manual inspection. Recovery files left by an
+interruption block subsequent updates until inspected; they are never swept as
+abandoned staging. Neither this check nor the
+header check defends against a malicious concurrent writer with advisor access.
