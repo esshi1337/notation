@@ -25,6 +25,9 @@ test('custom appearance and editor preferences persist and reset to defaults', a
   await settings.getByRole('spinbutton', { name: 'Line height' }).fill('2');
   await settings.getByRole('spinbutton', { name: 'Reading width' }).fill('700');
   await settings.getByRole('checkbox', { name: 'Show line numbers' }).uncheck();
+  const refresh = settings.getByRole('checkbox', { name: 'Automatically reload external changes', exact: true });
+  await expect(refresh).not.toBeChecked();
+  await refresh.check();
   await page.keyboard.press('Escape');
   await expect(settings).not.toBeVisible();
 
@@ -47,7 +50,9 @@ test('custom appearance and editor preferences persist and reset to defaults', a
   await expect(settings.getByRole('spinbutton', { name: 'Line height' })).toHaveValue('2');
   await expect(settings.getByRole('spinbutton', { name: 'Reading width' })).toHaveValue('700');
   await expect(settings.getByRole('checkbox', { name: 'Show line numbers' })).not.toBeChecked();
+  await expect(settings.getByRole('checkbox', { name: 'Automatically reload external changes', exact: true })).toBeChecked();
   await settings.getByRole('button', { name: 'Reset editor', exact: true }).click();
+  await expect(settings.getByRole('checkbox', { name: 'Automatically reload external changes', exact: true })).not.toBeChecked();
   await expectSetting(page, 'Editor font', 'mono');
   await expect(settings.getByRole('spinbutton', { name: 'Line height' })).toHaveValue('1.7');
   await expect(settings.getByRole('spinbutton', { name: 'Reading width' })).toHaveValue('756');

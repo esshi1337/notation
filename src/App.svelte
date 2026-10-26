@@ -240,18 +240,81 @@
     editable: path => documents.some(tab=>tab.path===path && !tab.hemingway),
     error: message => { error = message; },
   });
-  async function checkDisk(tab: DocumentTab = active) {
-    if (!desktop || !tab.path) return;
-    const baseline=tab.savedContent, path=tab.path;
-    try { const disk=await readDiskFile(path); if(tab.path===path && tab.savedContent===baseline){ if(disk!==baseline)diskConflicts[tab.id]='This file changed on disk. Your unsaved edits are preserved.'; else delete diskConflicts[tab.id]; } }
-    catch(cause){ if(tab.path===path)diskConflicts[tab.id]='File unavailable on disk: '+String(cause); }
+  // One read at a time, with a single coalesced follow-up. Only the active
+  // saved document is polled; focus checks still detect conflicts when off.
+  let diskGeneration = 0, diskReading = false, diskQueued = false, diskDisposed = false;
+  let diskTimer: ReturnType<typeof setTimeout> | undefined;
+  function invalidateDiskCheck() {
+    diskGeneration++;
+    clearTimeout(diskTimer); diskTimer = undefined;
   }
-  $effect(()=>{ const id=activeId; untrack(()=>{const tab=documents.find(item=>item.id===id);if(tab)void checkDisk(tab);}); });
-  onMount(()=>{const focus=()=>{gitRefresh++;void checkDisk();};window.addEventListener('focus',focus);return()=>window.removeEventListener('focus',focus);});
+  function scheduleDiskCheck() {
+    clearTimeout(diskTimer); diskTimer = undefined;
+    if (!diskDisposed && desktop && ui.automaticallyReloadExternalChanges && !busy && !workspaceBusy && !closingWindow) {
+      diskTimer = setTimeout(() => { diskTimer = undefined; void checkDisk(); }, 750);
+    }
+  }
+  async function checkDisk(tab: DocumentTab = active) {
+    if (diskDisposed || !desktop || tab !== active) return;
+    if (diskReading) { diskQueued = true; return; }
+    const path = tab.path;
+    // Restored metadata is untrusted. Drafts and malformed paths are not files.
+    if (typeof path !== 'string' || path.includes('\0') || !(/^(?:\/|[a-z]:[\\/])/iu.test(path))) return;
+    if (busy || workspaceBusy || closingWindow) return;
+    clearTimeout(diskTimer); diskTimer = undefined;
+    diskReading = true;
+    const generation = diskGeneration, lifetime = tab.lifetime;
+    const content = tab.content, baseline = tab.savedContent, name = tab.name, savedName = tab.savedName;
+    const autoReload = ui.automaticallyReloadExternalChanges;
+    const current = () => !diskDisposed && generation === diskGeneration && activeId === tab.id
+      && documents.find(item => item.id === tab.id) === tab && tab.lifetime === lifetime && tab.path === path
+      && tab.content === content && tab.savedContent === baseline && tab.name === name && tab.savedName === savedName
+      && !busy && !workspaceBusy && !closingWindow;
+    try {
+      const disk = await readDiskFile(path);
+      if (!current()) return;
+      if (disk === baseline) { delete diskConflicts[tab.id]; return; }
+      if (autoReload && ui.automaticallyReloadExternalChanges && !tabDirty(tab) && !tab.hemingway && discardDecisions === 0) {
+        const target = editors[tab.id], selection = { ...tab.selection };
+        // Apply through the existing editor so history/residency stay intact.
+        // The editor clamps raw selection offsets to the new document length.
+        if (target?.apply(disk, content, 'input.external')) {
+          tab.savedContent = disk; tab.updatedAt = Date.now();
+          target.restoreSelection(selection);
+          delete diskConflicts[tab.id];
+          status = 'Reloaded ' + tab.name + ' from disk';
+          return;
+        }
+      }
+      diskConflicts[tab.id] = 'This file changed on disk. Your unsaved edits are preserved.';
+    } catch (cause) {
+      if (current()) diskConflicts[tab.id] = 'File unavailable on disk: ' + String(cause);
+    } finally {
+      diskReading = false;
+      if (diskQueued && !diskDisposed) { diskQueued = false; void checkDisk(); }
+      else scheduleDiskCheck();
+    }
+  }
+  $effect(() => {
+    // Deliberately exclude content and diskConflicts from reactive dependencies.
+    // Editor mutations invalidate synchronously through onChange below.
+    activeId; active.lifetime; active.path; active.hemingway;
+    ui.automaticallyReloadExternalChanges; busy; workspaceBusy; closingWindow;
+    untrack(() => { invalidateDiskCheck(); void checkDisk(); });
+  });
+  onMount(() => {
+    const focus = () => { gitRefresh++; void checkDisk(); };
+    window.addEventListener('focus', focus);
+    return () => {
+      diskDisposed = true; diskQueued = false; invalidateDiskCheck();
+      window.removeEventListener('focus', focus);
+    };
+  });
 
   function selectTab(id: string) {
     if (!documents.some((tab) => tab.id === id)) return;
     if (!visibleIds.includes(id)) visibleIds = [...visibleIds, id];
+    if (activeId !== id) invalidateDiskCheck();
     activeId = id;
   }
   async function canDiscard(tab: DocumentTab) {
@@ -268,12 +331,14 @@
     const shared = Object.entries(workspaceViews).some(([key, view]) => key !== workspaceKey(catalog.activeId) && view.tabIds.includes(id));
     if (!tab) return;
     if (shared && visibleIds.length === 1 && documents.length >= 64) { error = 'Close another tab before closing the last view of this shared file (64-tab limit).'; return; }
-    if (!shared && !await canDiscard(tab)) return;
+    invalidateDiskCheck();
+    if (!shared && !await canDiscard(tab)) { scheduleDiskCheck(); return; }
     const index = visibleIds.indexOf(id);
     visibleIds = visibleIds.filter(value => value !== id);
     if (!shared) documents = documents.filter(item => item.id !== id);
     if (!visibleIds.length) { const blank = createTab(); documents.push(blank); visibleIds = [blank.id]; }
     if (activeId === id) activeId = visibleIds[Math.max(0, Math.min(index - 1, visibleIds.length - 1))];
+    scheduleDiskCheck();
     await tick();
     if (previousControl instanceof HTMLElement && !previousControl.isConnected && document.activeElement === document.body) {
       document.querySelector<HTMLElement>('.document-tab.active [role="tab"]')?.focus();
@@ -283,6 +348,7 @@
   async function workspaceAction(command: string, args: Record<string, unknown> = {}) {
     if (workspaceBusy || busy) throw new Error('Another operation is in progress.');
     if (documents.length >= 64 && (command === 'create_workspace' || (command === 'select_workspace' && !workspaceViews[workspaceKey(String(args.id))]))) throw new Error('Close an unused tab before opening a new workspace (64-tab limit).');
+    invalidateDiskCheck();
     workspaceBusy = true;
     workspaceViews[workspaceKey(catalog.activeId)] = captureWorkspaceView(documents, visibleIds, activeId, layout);
     try {
@@ -360,6 +426,7 @@
     if (busy || workspaceBusy) return false;
     const existing = documents.find((tab) => tab.path === selected);
     if (existing) { selectTab(existing.id); if (line) { layout = 'source'; await tick(); editors[existing.id]?.revealLine(line); } return true; }
+    invalidateDiskCheck();
     busy = true; error = '';
     try {
       const result = await invoke<DocumentResult>(launched ? 'read_launch_document' : 'read_document', { path: selected });
@@ -469,6 +536,7 @@
   async function importFile(event: Event) {
     const file = (event.currentTarget as HTMLInputElement).files?.[0];
     if (!file) return;
+    invalidateDiskCheck();
     busy = true;
     try {
       if (file.size > 4 * 1024 * 1024) throw new Error('Document exceeds the 4 MiB editor limit.');
@@ -483,6 +551,7 @@
   async function saveDocument(saveAs = false) {
     if (busy || workspaceBusy) return;
     const tab = active, saveContent = tab.content, originalName = tab.name, saveName = usableName(tab.name);
+    invalidateDiskCheck();
     busy = true; error = '';
     try {
       if (desktop) {
@@ -664,7 +733,7 @@
       status = 'Font size ' + fontSize + 'px';
       return;
     }
-    if (id === 'view.hemingway') { const tab = active; tab.hemingway = !tab.hemingway; tab.updatedAt = Date.now(); if (tab.hemingway) void cellsFor(tab).stop(); status = tab.hemingway ? 'Hemingway mode on — deletion blocked' : 'Hemingway mode off'; error = ''; await tick(); editors[tab.id]?.focus(); return; }
+    if (id === 'view.hemingway') { invalidateDiskCheck(); const tab = active; tab.hemingway = !tab.hemingway; tab.updatedAt = Date.now(); if (tab.hemingway) void cellsFor(tab).stop(); status = tab.hemingway ? 'Hemingway mode on — deletion blocked' : 'Hemingway mode off'; error = ''; await tick(); editors[tab.id]?.focus(); return; }
     if (active.hemingway && hemingwayCommandBlocked(id)) { error = HEMINGWAY_MESSAGE; return; }
     if (id === 'code.quickOpen' || id === 'code.search') { fileNavigator = id === 'code.search' ? 'search' : 'files'; return; }
     if (id.startsWith('code.')) {
@@ -866,7 +935,7 @@
       <section class="pane source-pane" class:code-source={codeDocument} aria-label="Source editor" hidden={!active.hemingway && (effectiveLayout === 'preview' || canvasVisible)}>
         {#if active.hemingway}<div class="pane-heading" role="status" aria-label="Hemingway mode"><span>HEMINGWAY MODE</span><span class="pane-hint">Deletion blocked · Commands → Hemingway mode</span></div>{:else if effectiveLayout === 'split'}<div class="pane-heading"><span>SOURCE</span><span class="pane-hint">{standalone ? '.mmd' : '.md'}</span></div>{/if}
         {#if diskConflicts[activeId]}<div class="disk-conflict-banner" role="alert"><span>{diskConflicts[activeId]}</span><button onclick={() => comparingDisk = activeId}>Compare / reload</button><button onclick={() => delete diskConflicts[activeId]}>Keep editing</button></div>{/if}
-        {#each documents as tab (tab.lifetime)}<div class="editor-tab-host" hidden={tab.id !== activeId}><Editor bind:this={editors[tab.id]} value={tab.content} codeLanguage={ui.performanceMode ? 'plaintext' : detectLanguage(tab.name, tab.language)} intelligenceEnabled={desktop && intelligenceEnabled} tabSize={ui.tabSize} indentWithTabs={ui.indentWithTabs} onIntelligence={(value) => intelligenceStates[tab.id] = value} hemingway={tab.hemingway} initialSelection={tab.selection} active={tab.id === activeId} {wrap} showLineNumbers={ui.showLineNumbers} appearance={[fontSize, ui.editorFont, ui.lineHeight, ui.readingWidth].join(':')} live={tab.id === activeId && effectiveLayout === 'live' && !canvasDocument} standalone={tab.name.toLowerCase().endsWith('.mmd')} {theme} folds={tab.folds} cells={cellsFor(tab)} sourcePath={tab.path ?? tab.id} loadEmbed={loadEmbedded} onOpenPath={(path) => void openPath(path)} onOpenWiki={(target, path) => void openWiki(target, tab.id, path)} onEditProperties={() => editProperties(tab.id)} wikiCandidates={(context) => candidatesFor(tab.id, context)} onChange={(value) => { tab.content = value; tab.updatedAt = Date.now(); }} onSelection={(selection) => tab.selection = selection} /></div>{/each}
+        {#each documents as tab (tab.lifetime)}<div class="editor-tab-host" hidden={tab.id !== activeId}><Editor bind:this={editors[tab.id]} value={tab.content} codeLanguage={ui.performanceMode ? 'plaintext' : detectLanguage(tab.name, tab.language)} intelligenceEnabled={desktop && intelligenceEnabled} tabSize={ui.tabSize} indentWithTabs={ui.indentWithTabs} onIntelligence={(value) => intelligenceStates[tab.id] = value} hemingway={tab.hemingway} initialSelection={tab.selection} active={tab.id === activeId} {wrap} showLineNumbers={ui.showLineNumbers} appearance={[fontSize, ui.editorFont, ui.lineHeight, ui.readingWidth].join(':')} live={tab.id === activeId && effectiveLayout === 'live' && !canvasDocument} standalone={tab.name.toLowerCase().endsWith('.mmd')} {theme} folds={tab.folds} cells={cellsFor(tab)} sourcePath={tab.path ?? tab.id} loadEmbed={loadEmbedded} onOpenPath={(path) => void openPath(path)} onOpenWiki={(target, path) => void openWiki(target, tab.id, path)} onEditProperties={() => editProperties(tab.id)} wikiCandidates={(context) => candidatesFor(tab.id, context)} onChange={(value) => { invalidateDiskCheck(); scheduleDiskCheck(); tab.content = value; tab.updatedAt = Date.now(); }} onSelection={(selection) => tab.selection = selection} /></div>{/each}
       </section>
       <section class="pane preview-pane" aria-label="Preview pane" hidden={effectiveLayout === 'source' || effectiveLayout === 'live' || canvasVisible || active.hemingway}>{#if effectiveLayout === 'split'}<div class="pane-heading"><span>PREVIEW</span></div>{/if}{#if !active.hemingway && !canvasVisible && (effectiveLayout === 'split' || effectiveLayout === 'preview')}<Preview documentId={active.lifetime} content={active.content} {standalone} {theme} folds={active.folds} onToggleTask={togglePreviewTask} onEditSource={(from) => void editSource(from)} cells={cellsFor(active)} sourcePath={active.path ?? active.id} loadEmbed={loadEmbedded} onOpenPath={(path) => void openPath(path)} onOpenWiki={wikiHandler(activeId)} onEditProperties={propertiesHandler(activeId)} />{/if}</section>
       {#if canvasVisible}<Canvas content={active.content} documentId={active.lifetime} path={active.path} apply={applyCanvas} openNote={(file,subpath)=>void openWiki(file+(subpath||''),activeId,'')} noteCandidates={canvasNoteCandidates} renderCard={renderCanvasCard} undo={()=>editor?.undoEdit()} redo={()=>editor?.redoEdit()} />{/if}
@@ -878,7 +947,7 @@
   {#if symbolTarget}{@const target=editors[symbolTarget]}<RenameDocument name={target?.symbolName() ?? ''} label="Rename symbol" fieldLabel="Symbol name" rename={(name)=>{void target?.renameSymbol(name)?.then(count=>{status=`Renamed symbol in ${count} files · save each changed file to write to disk`;}).catch(cause=>error=String(cause));}} close={()=>symbolTarget=null} />{/if}
   {#if diskTarget?.path}{@const target=diskTarget}<DiskConflict path={target.path!} content={target.content} read={readDiskFile} reload={(content)=>{if(target.hemingway){error=HEMINGWAY_MESSAGE;return;}target.content=content;target.savedContent=content;target.updatedAt=Date.now();delete diskConflicts[target.id];comparingDisk=null;}} close={()=>comparingDisk=null} />{/if}
   {#if paletteOpen}<CommandPalette commands={paletteItems} execute={(id) => void runCommand(id)} close={() => paletteOpen = false} {theme} />{/if}
-  {#if renameTarget}<RenameDocument name={renameTarget.name} rename={(name) => { const target = documents.find((tab) => tab.id === renameId); if (target) { target.name = name; target.updatedAt = Date.now(); } }} close={() => renameId = null} />{/if}
+  {#if renameTarget}<RenameDocument name={renameTarget.name} rename={(name) => { const target = documents.find((tab) => tab.id === renameId); if (target) { invalidateDiskCheck(); scheduleDiskCheck(); target.name = name; target.updatedAt = Date.now(); } }} close={() => renameId = null} />{/if}
   {#if wikiChoice}<WikiChooser resolution={wikiChoice.resolution} busy={wikiBusy} {error} choose={(path) => void chooseWiki(path)} create={() => void chooseWiki()} close={() => { wikiChoice = null; wikiSerial++; }} />{/if}
   {#if languageTarget && documents.find(tab => tab.id === languageTarget)}{@const target = documents.find(tab => tab.id === languageTarget)!}<DocumentLanguage name={target.name} language={target.language} {theme} change={(value) => target.language = value} close={() => languageTarget = null} />{/if}
   {#if settingsOpen}<Settings bind:builtInTheme {theme} bind:fontSize bind:wrap bind:layout bind:agentEditsEnabled bind:prefs={ui} bind:shortcuts {themeImportReset} onpreview={(value) => themePreview = value} disableTheme={disableCustomTheme} close={() => { themePreview = null; settingsOpen = false; }} />{/if}

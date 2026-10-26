@@ -56,6 +56,13 @@ in both modes; the other engines require the desktop renderer. Inline math
 uses `$...$`; display math uses `$$...$$` with bundled KaTeX fonts and no network
 request.
 
+To follow file edits made by an external editor or agent, enable
+**Settings → Editor → Automatically reload external changes**. It starts off.
+In the desktop app, the displayed file and preview update automatically when
+there are no unsaved edits. Unsaved changes and Hemingway mode are protected;
+use **Compare / reload** to inspect a conflict. Inactive tabs are checked when
+selected. Workspace indexes still need **Refresh index** after external edits.
+
 **Hemingway mode** from Commands makes the current tab literal text. Typing at an
 empty caret works, while deletion, selection replacement, cut, drag/drop, undo,
 and redo are blocked. Copy, navigation, Find, and Save remain available. Turn it

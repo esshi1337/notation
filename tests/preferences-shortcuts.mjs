@@ -83,6 +83,15 @@ try {
   });
   const event = (key, extra = {}) => ({ key, code: key.length === 1 ? 'Key' + key.toUpperCase() : key, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, isComposing: false, ...extra });
 
+  check('external refresh is opt-in and accepts only a stored boolean', () => {
+    assert.equal(preferences.DEFAULT_UI_PREFERENCES.automaticallyReloadExternalChanges, false);
+    for (const value of [undefined, null, false, 0, 1, 'true', 'false', {}, []]) {
+      assert.equal(preferences.readUIPreferences({ automaticallyReloadExternalChanges: value }).automaticallyReloadExternalChanges, false);
+    }
+    const stored = JSON.parse(JSON.stringify(preferences.readUIPreferences({ automaticallyReloadExternalChanges: true })));
+    assert.equal(preferences.readUIPreferences(stored).automaticallyReloadExternalChanges, true);
+    assert.equal(preferences.readUIPreferences(preferences.DEFAULT_UI_PREFERENCES).automaticallyReloadExternalChanges, false);
+  });
   check('default indent size is four spaces', () => {
     assert.equal(preferences.DEFAULT_UI_PREFERENCES.tabSize, 4);
     assert.equal(preferences.readUIPreferences({}).tabSize, 4);

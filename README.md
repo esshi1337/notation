@@ -594,6 +594,16 @@ check for external edits; Compare / reload lets you inspect the difference,
 keep editing, or explicitly replace the buffer. Save As can preserve a separate
 copy. The disk comparison is not an operating-system lock on other editors.
 
+**Settings → Editor → Automatically reload external changes** follows edits
+made by other tools or agents to the file currently displayed in the desktop
+app. It is off by default. When enabled, a clean file and its preview refresh
+automatically within a few seconds, including while Notation stays focused.
+Unsaved edits, renamed buffers, and Hemingway mode keep their content and offer
+the existing conflict controls instead. Missing or temporarily unavailable files
+keep their displayed content; checking resumes when the file becomes available.
+Other tabs are checked when selected. This setting does not refresh workspace
+search indexes; use **Refresh index** for those.
+
 Language servers run locally. Svelte project configuration/preprocessors are
 not executed automatically. The optional Svelte pack bypasses project Prettier
 configuration and plugins through pinned patches. Rust build scripts, procedural
