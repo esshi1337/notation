@@ -192,10 +192,10 @@
 
 <main class="sticky-note" data-color={color} aria-label="Sticky note">
   <header role="toolbar" tabindex="-1" aria-label="Note controls" onpointerdown={dragBar}>
-    <button class="plus" aria-label="New sticky note" title="New note" disabled={creating || closing} onclick={newNote}>+</button>
+    <button aria-label="New sticky note" title="New note" disabled={creating || closing} onclick={newNote}><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg></button>
     <span class="drag-space" aria-hidden="true"></span>
-    <button aria-label="Note options" title="More options" aria-expanded={menu} aria-controls="note-options" onclick={() => menu = !menu}>···</button>
-    <button class="close" aria-label="Close sticky" title="Close note" disabled={closing || creating} onclick={closeNote}>×</button>
+    <button aria-label="Note options" title="More options" aria-expanded={menu} aria-controls="note-options" onclick={() => menu = !menu}><svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><circle cx="4" cy="10" r="1.5" /><circle cx="10" cy="10" r="1.5" /><circle cx="16" cy="10" r="1.5" /></svg></button>
+    <button aria-label="Close sticky" title="Close note" disabled={closing || creating} onclick={closeNote}><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg></button>
   </header>
   {#if menu}
     <div id="note-options" class="options" role="group" aria-label="Note options">
@@ -237,7 +237,8 @@
   button:hover:not(:disabled), button[aria-pressed="true"] { background: var(--hover); }
   button:disabled { opacity: .4; cursor: default; }
   button:focus-visible { outline: 2px solid var(--muted); outline-offset: -2px; }
-  .plus, .close { font-size: 24px; font-weight: 400; }
+  header button { width: 34px; padding: 0; flex-shrink: 0; }
+  header svg { display: block; width: 20px; height: 20px; }
   .options { position: absolute; z-index: 1; top: 34px; right: 0; max-width: 100%; padding: 8px; box-sizing: border-box; background: var(--paper); box-shadow: 0 3px 8px #0005; }
   .sticky-note[data-color="black"] .options { border: 1px solid #ffffff20; }
   .colors { display: flex; gap: 6px; padding: 4px 0 8px; }
