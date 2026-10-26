@@ -120,7 +120,8 @@
         catch (cause) { error = String(cause); }
       }
     } catch (cause) { if (!disposed && !destroying) { error = String(cause); message = 'Could not load'; } }
-    finally { if (!disposed && !destroying) loading = false; }
+    // A failed close can return to this window after a read settled during destruction.
+    finally { if (!disposed) loading = false; }
   }
   onMount(() => {
     document.addEventListener('selectionchange', rememberSelection);
