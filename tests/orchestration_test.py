@@ -296,6 +296,9 @@ class Entrypoints(unittest.TestCase):
         result = subprocess.run([str(ROOT / 'scripts/notation-worker'), 'security',
                                  '--context-profile', 'unbounded', 'review'], capture_output=True)
         self.assertEqual(result.returncode, 2)
+        with patch.dict(launch.ROLES['sol']['context_profiles'], default={}):
+            with self.assertRaisesRegex(ValueError, 'missing or malformed'):
+                launch.codex_command('sol', 'packet')
         with patch.dict(launch.ROLES['sol']['context_profiles']['default'], compact_at=256000):
             with self.assertRaises(ValueError):
                 launch.codex_command('sol', 'packet')

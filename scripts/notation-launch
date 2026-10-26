@@ -40,9 +40,13 @@ def gateway_catalog():
 
 def codex_command(role, prompt=None, read_only=False, context_profile="default"):
     policy = ROLES[role]
-    context = policy['context_profiles'][context_profile]
-    if not (type(context['window']) is int and type(context['compact_at']) is int
-            and 0 < context['compact_at'] < context['window']):
+    try:
+        context = policy['context_profiles'][context_profile]
+        window, compact_at = context['window'], context['compact_at']
+    except (KeyError, TypeError) as error:
+        raise ValueError('missing or malformed context profile') from error
+    if not (type(window) is int and type(compact_at) is int
+            and 0 < compact_at < window):
         raise ValueError('invalid context profile limits')
     reviewer = role in ('challenger', 'security')
     command = ['/usr/bin/codex']
