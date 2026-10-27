@@ -30,6 +30,14 @@ async function checkGeometry(page: Page, side: 'left' | 'right', overlay = false
   expect(result.editor.width).toBeGreaterThan(160);
 }
 
+async function setToolPanelWidth(page: Page, width: '220' | '260' | '340') {
+  await openSettings(page);
+  await setSetting(page, 'Tool panel width', width);
+  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await settings.getByRole('button', { name: 'Close settings' }).click();
+  await expect(page.locator('main.app')).toHaveCSS('--sidebar-width', `${width}px`);
+}
+
 test('sidebar moves the active tool with it, preserves edits and undo, and persists its setting', async ({ page }) => {
   await page.goto('/');
   await runCommand(page, 'Source');
@@ -99,3 +107,58 @@ test('narrow windows keep tools reachable on either side and appearance reset re
   await checkGeometry(page, 'left', true);
   await page.screenshot({ path: 'test-results/sidebar-narrow.png' });
 });
+
+for (const viewportWidth of [480, 1280] as const) {
+  test(`app menu covers an overflowing sidebar scrollbar edge at ${viewportWidth}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: viewportWidth, height: 420 });
+    await page.goto('/');
+    await setToolPanelWidth(page, '220');
+    await sidebar(page).getByRole('button', { name: 'Templates panel', exact: true }).click();
+    const templates = page.getByRole('region', { name: 'Templates', exact: true });
+    await expect(templates).toBeVisible();
+
+    const panel = page.locator('.sidebar-panel .utility-panel');
+    const overflow = await panel.evaluate(element => ({ client: element.clientHeight, scroll: element.scrollHeight }));
+    expect(overflow.scroll).toBeGreaterThan(overflow.client + 40);
+
+    const appMenu = page.getByRole('button', { name: 'App menu', exact: true });
+    const menu = page.getByRole('menu', { name: 'App menu', exact: true });
+    await appMenu.click();
+    await expect(menu).toBeVisible();
+
+    const edge = await page.evaluate(() => {
+      const utility = document.querySelector<HTMLElement>('.sidebar-panel .utility-panel')!;
+      const openMenu = document.querySelector<HTMLElement>('.compact-menu')!;
+      const utilityRect = utility.getBoundingClientRect();
+      const menuRect = openMenu.getBoundingClientRect();
+      const x = utilityRect.right - 5;
+      const y = utilityRect.top + Math.min(80, utilityRect.height / 2);
+      return {
+        x, y,
+        menu: { left: menuRect.left, right: menuRect.right, top: menuRect.top, bottom: menuRect.bottom },
+        covered: document.elementFromPoint(x, y)?.closest('.compact-menu') === openMenu,
+      };
+    });
+    expect(edge.menu.left).toBeLessThan(edge.x);
+    expect(edge.menu.right).toBeGreaterThan(edge.x);
+    expect(edge.menu.top).toBeLessThan(edge.y);
+    expect(edge.menu.bottom).toBeGreaterThan(edge.y);
+    expect(edge.covered).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`sidebar-menu-over-scrollbar-${viewportWidth}.png`) });
+
+    await menu.getByRole('menuitem', { name: 'Settings', exact: true }).click();
+    const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+    await expect(settings).toBeVisible();
+    await settings.getByRole('button', { name: 'Close settings' }).click();
+    await appMenu.click();
+    await expect(menu).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+
+    const before = await panel.evaluate(element => element.scrollTop);
+    await page.mouse.move(edge.x, edge.y);
+    await page.mouse.wheel(0, 240);
+    await expect.poll(() => panel.evaluate(element => element.scrollTop)).toBeGreaterThan(before);
+    await page.screenshot({ path: testInfo.outputPath(`sidebar-scroll-after-dismiss-${viewportWidth}.png`) });
+  });
+}
