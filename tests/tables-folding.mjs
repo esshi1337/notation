@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
-const server = await createServer({ cacheDir: 'node_modules/.vite-tables-folding', optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, hmr: false }, logLevel: 'error' });
+const server = await createServer({ cacheDir: 'node_modules/.vite/tables-folding', optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, hmr: false }, logLevel: 'error' });
 let passed = 0;
 function test(name, run) { run(); passed++; console.log('✓ ' + name); }
 try {
   const { markdownTables, splitTableRow, serializeTable, replaceTable, parseCSV, exportCSV, tableFromCSV, sortTableRows } = await server.ssrLoadModule('/src/tables.ts');
   const { markdownFolds, markdownFolding, performFold } = await server.ssrLoadModule('/src/folding.ts');
+  const { reducedFormatting, REDUCED_FORMATTING_SIZE } = await server.ssrLoadModule('/src/reduced-formatting.ts');
   const { EditorState, Compartment } = await import('@codemirror/state');
   const { foldedRanges } = await import('@codemirror/language');
   test('table row scanner preserves escaped pipes and matching code spans', () => {
@@ -67,6 +68,47 @@ try {
     assert.equal(foldedRanges(state).size, 1); assert.equal(state.doc.toString(), text);
     assert.equal(performFold(target, 'Unfold all'), true); assert.equal(foldedRanges(state).size, 0);
     assert.equal(performFold(target, 'Fold all'), true); assert.equal(foldedRanges(state).size, 2); assert.equal(state.doc.toString(), text);
+  });
+  test('folds follow edits instead of a stale cache and keep exact Unicode/control text', () => {
+    const first = '# One\nbody';
+    const second = '# One\nbody\n\n## Two\ntext\n\n> quote\n> more\n';
+    const before = markdownFolds(first);
+    const after = markdownFolds(second);
+    assert.notEqual(before, after);
+    // The baseline parser also folds the single body line under an ATX heading.
+    assert.deepEqual(before, [{ from: 5, to: 10, header: 0, kind: 'heading' }]);
+    assert.ok(after.some((range) => range.kind === 'heading' && range.header === 0));
+    assert.ok(after.some((range) => range.kind === 'Blockquote'));
+    const samples = ['*a*_b_ c', '中文标题\n内容', '👩‍👩‍👧‍👦 emoji', 'e\u0301 combining', '\u202Ebidirectional\u202C', 'nul\u0000byte', 'crlf\r\nheading\r\n---\r\n'];
+    for (const sample of samples) {
+      const folds = markdownFolds(sample);
+      for (const range of folds) assert.ok(range.from >= 0 && range.to <= sample.length && range.header <= range.from && range.from < range.to);
+    }
+    assert.ok(markdownFolds('Title\n=====\nbody').some((range) => range.kind === 'heading' && range.header === 0));
+    assert.ok(markdownFolds('$$\nx^2\n$$').some((range) => range.kind === 'NotationMathBlock'));
+  });
+  test('block grammar respects list boundaries, HTML and indented code', () => {
+    const nested = '- item\n\n  # Nested\n  body\n\nOutside\n';
+    assert.deepEqual(markdownFolds(nested), [
+      { from: 6, to: 25, header: 0, kind: 'ListItem' },
+      { from: 18, to: 25, header: 8, kind: 'heading' },
+    ]);
+    assert.deepEqual(markdownFolds('<div>\n# Not a heading\n</div>\n\n# Real\nbody\n'),
+      [{ from: 36, to: 41, header: 30, kind: 'heading' }]);
+    assert.deepEqual(markdownFolds('    # code\n    body\n\nNext\n'),
+      [{ from: 10, to: 19, header: 0, kind: 'CodeBlock' }]);
+    const fenced = '> ```md\n> # fake\n> ```\n\n# real\nbody';
+    assert.equal(markdownFolds(fenced).filter(fold => fold.kind === 'heading').length, 1);
+  });
+  test('folding a large punctuation-heavy document stays bounded and never strips source', () => {
+    const text = '*_*_*_*_'.repeat(64 * 1024) + '\n# Heading\n' + 'body line\n'.repeat(2000);
+    assert.ok(text.length >= REDUCED_FORMATTING_SIZE);
+    const started = performance.now();
+    const folds = markdownFolds(text);
+    const elapsed = performance.now() - started;
+    assert.ok(folds.some((range) => range.kind === 'heading'), 'heading fold remains available');
+    assert.ok(elapsed < 1500, 'folding scan took ' + elapsed.toFixed(1) + 'ms');
+    assert.equal(reducedFormatting(text).reduced, true);
   });
   console.log(passed + ' table and folding scenarios passed.');
 } finally { await server.close(); }

@@ -640,6 +640,26 @@ in RAM, cache limits and verification commands. The
 [measured performance report](docs/performance-report.md) includes packaged-app
 stress results, language-server costs and remaining optimization targets.
 
+### Automatic reduced formatting
+
+Normal mode temporarily uses **Source** for a large or punctuation-heavy Markdown
+note. A notice above the editor explains the change. Syntax highlighting, folding,
+inline widgets and rendered preview pause for that document; text, selection,
+undo/redo and saving remain available. Smaller notes still use their chosen layout.
+When the document shrinks enough, its chosen layout and rich formatting return.
+Previously collapsed editor blocks return expanded after this transition.
+This does not enable the global Performance mode or change its other settings.
+
+The guard runs before parsing a changed editor state. It uses conservative
+thresholds measured in UTF-16 code units: 256 Ki units for size, or at least
+64 Ki units with 35% Markdown punctuation or a run of 256 identical delimiters.
+Restoration uses lower thresholds (below 192 Ki units, under 28% punctuation and
+runs shorter than 192; notes below 48 Ki units always restore). This prevents
+formatting from repeatedly toggling while typing at a boundary. These heuristics
+are not a universal latency guarantee; unusually costly smaller notes can still
+benefit from Performance mode. Emoji and other Unicode text are preserved.
+See the [responsiveness measurements and remaining limits](docs/markdown-responsiveness-20261030.md).
+
 ## Project agents and contribution workflow
 
 Start the sandboxed Astra session with `scripts/notation-advisor`. Work starts

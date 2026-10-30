@@ -3,6 +3,7 @@ import { runCommand } from './commands';
 
 test('inactive unvisited editors support guarded edits and raw CRLF selections without DOM', async ({ page }) => {
   await page.goto('/');
+  await expect(page.getByRole('textbox', { name: 'Document source', exact: true })).toBeVisible();
   const result = await page.evaluate(async () => {
     const sveltePath = '/node_modules/svelte/src/index-client.js';
     const editorPath = '/src/Editor.svelte';

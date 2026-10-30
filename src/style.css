@@ -474,6 +474,8 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .cm-panel button { cursor: pointer; }
 .cm-tooltip { background: var(--bar) !important; color: var(--text) !important; border: 1px solid var(--border) !important; }
 .preview-scroll { overflow: auto; flex: 1; min-width: 0; padding: 40px 40px 80px; }
+.preview-reduced-notice { margin: 0 0 16px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--code); color: var(--muted); }
+.preview-reduced-source { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
 .only-preview .preview-scroll { padding-top: 64px; }
 .markdown-body { width: 100%; min-width: 0; max-width: var(--reading-width, 756px); margin: 0 auto; color: var(--text); font-family: 'Source Sans 3', Inter, ui-sans-serif, system-ui, sans-serif; font-size: 16px; line-height: 26px; overflow-wrap: anywhere; overflow-x: hidden; }
 .cm-content .markdown-body { white-space: normal; }
@@ -838,3 +840,5 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .language-setup summary { cursor: pointer; }
 
 .language-dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+
+.formatting-notice { padding: 8px 14px; color: var(--muted); border-bottom: 1px solid var(--border); font-size: 12px; flex-shrink: 0; }

@@ -1,11 +1,11 @@
 import { Prec, StateEffect, StateField } from '@codemirror/state';
-import type { EditorState, Extension, Range } from '@codemirror/state';
+import type { EditorState, Extension, Range, Text } from '@codemirror/state';
 import { Decoration, EditorView, WidgetType, keymap } from '@codemirror/view';
 import type { DecorationSet } from '@codemirror/view';
 import { ensureSyntaxTree, syntaxTree, foldedRanges } from '@codemirror/language';
 import { renderMermaidInto } from './mermaid';
 import type { DiagramTheme } from './mermaid';
-import { analyzeCallouts, analyzeMarkdown, analyzeQuotes, containsCallout, featureParser, markdownSource, taskName } from './markdown-features';
+import { analyzeCallouts, analyzeMarkdown, analyzeQuotes, containsCallout, featureParser, taskName } from './markdown-features';
 import type { CalloutSpan, MathSpan, QuoteSpan, TaskSpan } from './markdown-features';
 import { renderMathInto } from './math';
 import { toggleTask } from './tasks';
@@ -24,11 +24,10 @@ import type { CitationSpan } from './citations';
 import { citationScope, hydrateCitations } from './render-citations';
 import { inlineVariables } from './variables';
 import type { VariableSpan } from './variables';
+import { formattingStatus } from './reduced-formatting';
 
 export type LiveNavigation = { openWiki?: (target: string, sourcePath?: string) => void; editProperties?: () => void; sourcePath?: string; loadEmbed?: (target: string, sourcePath?: string) => Promise<EmbedDocument>; openPath?: (path: string) => void; cells?: CellSession; variables?:Record<string,unknown>; citationScope?:string; citationGroups?:string[]; documentSource?:string; includeBibliography?:boolean; variableSource?:string };
 
-let citationText: string | undefined, citationSpans: CitationSpan[] = [];
-function liveCitations(text: string) { if (citationText !== text) { citationText = text; citationSpans = (renderMarkdown(text).citations ?? []).sort((a,b) => a.from - b.from); } return citationSpans; }
 function citationNavigate(view: EditorView, id: string, scope: string) {
   const from = id.startsWith(scope + 'cite-') ? Number(id.slice((scope + 'cite-').length)) : view.state.doc.length;
   view.dispatch({ effects: EditorView.scrollIntoView(Number.isFinite(from) ? Math.min(view.state.doc.length, from) : view.state.doc.length, { y: 'center' }) });
@@ -333,8 +332,55 @@ function activeLines(state: EditorState): Set<number> {
   return lines;
 }
 
+// Everything here depends only on the document text, not on the selection,
+// focus or fold state. CodeMirror documents are immutable, so caching by the
+// immutable Text object allows entries to be collected when that version
+// is no longer retained. This is not a hard cache-memory budget.
+type DocumentAnalysis = {
+  text: string;
+  frontmatter: ReturnType<typeof parseFrontmatter>;
+  citations: CitationSpan[];
+  citationGroups: string[];
+  footnotes: ReturnType<typeof extractFootnotes>;
+  features: ReturnType<typeof analyzeMarkdown>;
+  blocks: ReturnType<typeof scanBlockReferences>;
+  callouts: CalloutSpan[];
+  tables: ReturnType<typeof markdownTables>;
+  richQuotes: QuoteSpan[];
+  variables: VariableSpan[];
+  occludedTree: ReturnType<typeof featureParser.parse> | null;
+};
+const analysisByDoc = new WeakMap<Text, DocumentAnalysis>();
+
+function documentAnalysis(doc: Text): DocumentAnalysis {
+  const known = analysisByDoc.get(doc);
+  if (known) return known;
+  const text = doc.toString();
+  const frontmatter = parseFrontmatter(text);
+  const citations = (renderMarkdown(text).citations ?? []).sort((a, b) => a.from - b.from);
+  const footnotes = extractFootnotes(text);
+  const callouts = analyzeCallouts(text);
+  const analysis: DocumentAnalysis = {
+    text, frontmatter, citations, footnotes, callouts,
+    citationGroups: orderedCitationGroups(text, citations.map((span) => span.raw)),
+    features: analyzeMarkdown(text),
+    blocks: scanBlockReferences(text),
+    tables: markdownTables(text).filter((table) => !table.error),
+    richQuotes: analyzeQuotes(text).filter((quote) => !callouts.some((callout) => callout.from === quote.from) && containsCallout(quote.body)),
+    variables: inlineVariables(text, frontmatter?.values ?? {}),
+    occludedTree: frontmatter?.closed || footnotes.definitions.length ? featureParser.parse(footnotes.source) : null,
+  };
+  analysisByDoc.set(doc, analysis);
+  return analysis;
+}
+
 function decorationsFor(state: EditorState, theme: DiagramTheme, standalone: boolean, folds: Map<string, boolean>, navigation: LiveNavigation): DecorationSet {
   const decorations: Range<Decoration>[] = [];
+  // A synchronous parser cannot be interrupted, so large or pathological
+  // documents skip rich decoration completely. The editor also removes this
+  // extension when it notices the same status, but this guard covers the
+  // transaction that crosses the threshold, including paste and replacement.
+  if (formattingStatus(state.doc).reduced) return Decoration.none;
   const active = activeLines(state);
   const touchesActive = (from: number, to: number) => {
     for (let line = state.doc.lineAt(from).number; line <= state.doc.lineAt(to).number; line++) {
@@ -370,21 +416,16 @@ function decorationsFor(state: EditorState, theme: DiagramTheme, standalone: boo
     return Decoration.set(decorations, true);
   }
 
-  const text = state.doc.toString(), frontmatter = parseFrontmatter(text);
-  const citations = liveCitations(text);
-  navigation={...navigation,variables:frontmatter?.values??{},documentSource:text,variableSource:frontmatter?.raw??'',citationGroups:orderedCitationGroups(text,citations.map(span => span.raw)),includeBibliography:false};
-  const footnotes=extractFootnotes(text);
-  const tree = frontmatter?.closed || footnotes.definitions.length ? featureParser.parse(footnotes.source) : ensureSyntaxTree(state, state.doc.length, 50) ?? syntaxTree(state);
-  const features = analyzeMarkdown(text);
-  for (const block of scanBlockReferences(text)) hide(block.markerFrom,block.markerTo);
-  const callouts = analyzeCallouts(text);
-  const tables = markdownTables(text).filter(table => !table.error);
+  const analysis = documentAnalysis(state.doc);
+  const { text, frontmatter, citations, footnotes, features, callouts, tables, variables } = analysis;
+  navigation={...navigation,variables:frontmatter?.values??{},documentSource:text,variableSource:frontmatter?.raw??'',citationGroups:analysis.citationGroups,includeBibliography:false};
+  const tree = analysis.occludedTree ?? ensureSyntaxTree(state, state.doc.length, 50) ?? syntaxTree(state);
+  for (const block of analysis.blocks) hide(block.markerFrom,block.markerTo);
   for (const table of tables) if (!widgetHidden(table.from, table.to)) decorations.push(Decoration.replace({ widget:new DocumentWidget(text.slice(table.from,table.to),table.from,theme,navigation,'table'),block:true }).range(table.from,table.to));
-  const richQuotes = analyzeQuotes(text).filter((quote) => !callouts.some((callout) => callout.from === quote.from) && containsCallout(quote.body));
+  const richQuotes = analysis.richQuotes;
   const insideCallout = (from: number) => [...callouts, ...richQuotes, ...footnotes.definitions, ...tables].some((callout) => from >= callout.from && from < callout.to);
   for (const citation of citations) if (!insideCallout(citation.from) && !widgetHidden(citation.from, citation.to)) decorations.push(Decoration.replace({ widget: new CitationWidget(citation,text,navigation), inclusive:false }).range(citation.from,citation.to));
   if (citations.length || frontmatter?.values.nocite) decorations.push(Decoration.widget({ widget: new BibliographyWidget(text,citations,navigation), block:true, side:1 }).range(state.doc.length));
-  const variables=inlineVariables(text,navigation.variables??{});
   for(const variable of variables)if(!insideCallout(variable.from)&&!widgetHidden(variable.from,variable.to))decorations.push(Decoration.replace({widget:new VariableWidget(variable)}).range(variable.from,variable.to));
   for(const definition of footnotes.definitions)if(!widgetHidden(definition.from,definition.to))decorations.push(Decoration.replace({widget:new DocumentWidget('[^'+definition.id+']\n\n'+text.slice(definition.from,definition.to),definition.from,theme,navigation,'footnote'),block:true}).range(definition.from,definition.to));
   const footnoteIds=[...new Set(footnotes.references.map(ref=>ref.id))];

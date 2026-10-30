@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
-const server = await createServer({ cacheDir: 'node_modules/.vite-markdown-features', optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, hmr: false }, logLevel: 'error' });
+const server = await createServer({ cacheDir: 'node_modules/.vite/markdown-features', optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, hmr: false }, logLevel: 'error' });
 let passed = 0;
 function check(name, run) { run(); passed++; console.log('✓ ' + name); }
 try {
   const { renderMarkdown, calloutKind, calloutIcon } = await server.ssrLoadModule('/src/render-markdown.ts');
   const { analyzeMarkdown, markdownSource } = await server.ssrLoadModule('/src/markdown-features.ts');
+  const { reducedFormatting, REDUCED_FORMATTING_SIZE, REDUCED_FORMATTING_MIN } = await server.ssrLoadModule('/src/reduced-formatting.ts');
   const { wikiCompletionAt, findWikiHeadingLine, scanWikiHeadings } = await server.ssrLoadModule('/src/wiki-links.ts');
   check('nested callouts map every checkbox back to its exact Markdown marker', () => {
     const text = '> [!warning] Outer\n> [] first\n>\n> > [!question]- Inner\n> > - [x] second\n> >\n> > [[Other#Heading|alias]] and $x$\n> >\n> > ```mermaid\n> > graph TD; A-->B\n> > ```\n\n- [ ] third';
@@ -76,6 +77,33 @@ try {
     assert.equal(renderMarkdown('> [!note]\n> ---\n> hello\n> ---').frontmatter, null);
     const result = renderMarkdown('---\ntitle: unfinished\n\n# Visible\n\n[] task');
     assert.equal(result.frontmatter, null); assert.equal(result.tasks.length, 1); assert.match(result.html, /Visible/);
+  });
+  check('reduced formatting protects large or punctuation-heavy documents without editing text', () => {
+    assert.ok(REDUCED_FORMATTING_MIN < REDUCED_FORMATTING_SIZE);
+    assert.equal(reducedFormatting('').reduced, false);
+    for (const sample of ['# Small note', '中文标题与内容', '👩‍👩‍👧‍👦 emoji', 'e\u0301 combining', '\u202Ebidirectional\u202C', 'nul\u0000byte', 'crlf\r\nline\r\n'])
+      assert.equal(reducedFormatting(sample).reduced, false, 'small document stays rich: ' + JSON.stringify(sample));
+    const prose = 'ordinary words and sentences. '.repeat(3000);
+    assert.equal(reducedFormatting(prose).reduced, false);
+    const heavy = '*_*_*_*_'.repeat(10_000);
+    const status = reducedFormatting(heavy);
+    assert.equal(status.reduced, true); assert.equal(status.reason, 'density');
+    assert.equal(reducedFormatting(heavy.slice(0, 1024)).reduced, false, 'shrinking restores rich formatting');
+    assert.equal(reducedFormatting('a'.repeat(70_000) + '*'.repeat(300)).reduced, true, 'long delimiter run');
+    const large = 'x'.repeat(REDUCED_FORMATTING_SIZE);
+    assert.equal(reducedFormatting(large).reduced, true); assert.equal(reducedFormatting(large).reason, 'size');
+    assert.equal(reducedFormatting('x'.repeat(REDUCED_FORMATTING_SIZE - 1)).reduced, false);
+    const mixed = ('😀 中文 e\u0301 \u202E $x$ [a](b) ' + 'word '.repeat(8)).repeat(1000);
+    assert.equal(reducedFormatting(mixed).size, mixed.length);
+  });
+  check('formatting hysteresis holds at boundaries and restores after meaningful shrink', () => {
+    const large = reducedFormatting('x'.repeat(256 * 1024));
+    assert.equal(reducedFormatting('x'.repeat(256 * 1024 - 1), large).reduced, true);
+    assert.equal(reducedFormatting('x'.repeat(192 * 1024 - 1), large).reduced, false);
+    const dense = reducedFormatting('*_'.repeat(40000));
+    assert.equal(reducedFormatting('*_'.repeat(30000), dense).reduced, true);
+    assert.equal(reducedFormatting('*_'.repeat(20000), dense).reduced, false);
+    assert.equal(reducedFormatting('normal words '.repeat(6000), dense).reduced, false);
   });
   console.log(`Markdown features: ${passed} scenarios passed`);
 } finally { await server.close(); }

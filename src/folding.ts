@@ -1,10 +1,16 @@
 import { codeFolding, foldAll, foldEffect, foldService, foldedRanges, unfoldAll, unfoldEffect } from '@codemirror/language';
-import type { EditorState, Extension } from '@codemirror/state';
+import type { EditorState, Extension, Text } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { featureParser, markdownSource } from './markdown-features';
 
 export type FoldAction = 'Fold block' | 'Unfold block' | 'Fold all' | 'Unfold all';
 export type MarkdownFold = { from: number; to: number; header: number; kind: string };
+// Keep the established block grammar (including nested containers and HTML),
+// but folding never needs inline delimiter resolution.
+const blockParser = featureParser.configure({ remove: [
+  'Escape', 'Entity', 'InlineCode', 'HTMLTag', 'Emphasis', 'HardBreak',
+  'Link', 'Image', 'LinkEnd', 'NotationMath',
+] });
 let cachedText: string | undefined, cached: MarkdownFold[] = [];
 export function markdownFolds(text: string): MarkdownFold[] {
   if (text === cachedText) return cached;
@@ -15,7 +21,7 @@ export function markdownFolds(text: string): MarkdownFold[] {
     while (to > from && /[\r\n]/u.test(text[to - 1])) to--;
     if (to > from && text.slice(from, to).includes('\n')) ranges.push({ from, to, header: lineStart(header), kind });
   };
-  featureParser.parse(markdownSource(text)).iterate({ enter(ref) {
+  blockParser.parse(markdownSource(text)).iterate({ enter(ref) {
     const node = ref.node, name = node.name;
     if (/^(?:ATXHeading[1-6]|SetextHeading[12])$/u.test(name)) {
       const level = Number(name.slice(-1)); let end = node.parent?.to ?? text.length;
@@ -28,15 +34,30 @@ export function markdownFolds(text: string): MarkdownFold[] {
   // there so a nested subtree can collapse without hiding unrelated siblings.
   ranges.sort((a, b) => a.header - b.header || a.to - b.to || (a.kind === 'ListItem' ? -1 : b.kind === 'ListItem' ? 1 : 0));
   cachedText = text;
-  return cached = ranges.filter((range, index) => !ranges.slice(0, index).some((other) => other.from === range.from && other.to === range.to));
+  const seen = new Set<string>();
+  return cached = ranges.filter(range => {
+    const key = `${range.from}:${range.to}`;
+    if (seen.has(key)) return false;
+    seen.add(key); return true;
+  });
 }
-function rangesFor(state: EditorState) { return markdownFolds(state.doc.toString()); }
+const byDocument = new WeakMap<Text, { ranges: MarkdownFold[]; headers: Map<number, MarkdownFold> }>();
+function foldsFor(state: EditorState) {
+  let result = byDocument.get(state.doc);
+  if (!result) {
+    const ranges = markdownFolds(state.doc.toString()), headers = new Map<number, MarkdownFold>();
+    for (const range of ranges) if (!headers.has(range.header)) headers.set(range.header, range);
+    result = { ranges, headers }; byDocument.set(state.doc, result);
+  }
+  return result;
+}
+function rangesFor(state: EditorState) { return foldsFor(state).ranges; }
 export const markdownFolding: Extension = [
   EditorView.theme({ '.cm-foldPlaceholder': { backgroundColor: 'var(--code)', color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: '2px', padding: '0 5px', font: 'inherit', lineHeight: '1.2', cursor: 'pointer' }, '.cm-foldGutter .cm-gutterElement': { cursor: 'pointer', padding: '0 4px' } }),
   codeFolding({ placeholderDOM(_view, onclick) {
     const button = document.createElement('button'); button.className = 'cm-foldPlaceholder'; button.textContent = '…'; button.setAttribute('aria-label', 'Unfold block'); button.title = 'Unfold block'; button.addEventListener('click', onclick); return button;
   } }),
-  foldService.of((state, start) => rangesFor(state).find((range) => range.header === start) ?? null),
+  foldService.of((state, start) => foldsFor(state).headers.get(start) ?? null),
 ];
 export function performFold(view: EditorView, action: FoldAction): boolean {
   if (action === 'Unfold all') return unfoldAll(view);

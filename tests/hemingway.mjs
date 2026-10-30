@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import { EditorState, Compartment } from '@codemirror/state';
 import { history, undo, redo } from '@codemirror/commands';
 import { hemingwayAllows, hemingwayProtection, compositionBoundary, hemingwayComposition, hemingwayCommandBlocked } from '../src/hemingway.ts';
-import { createTab, serializeTab, restoreTabs } from '../src/documents.ts';
+import { createServer } from 'vite';
+// Resolve the same extensionless TypeScript imports as the application.
+const server = await createServer({ configFile: false, cacheDir: 'node_modules/.vite/hemingway', optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, hmr: false }, logLevel: 'error' });
+let documents;
+try { documents = await server.ssrLoadModule('/src/documents.ts'); } finally { await server.close(); }
+const { createTab, serializeTab, restoreTabs } = documents;
 let passed = 0;
 function test(name, run) { run(); passed++; console.log('✓ ' + name); }
 const locked = (doc = 'Existing', selection) => EditorState.create({ doc, selection, extensions: hemingwayProtection });

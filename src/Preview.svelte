@@ -5,6 +5,7 @@
   import { renderContent, clearRenderedContent } from './render-content';
   import type { EmbedDocument } from './render-content';
   import type { TaskToggle } from './markdown-features';
+  import { reducedFormatting } from './reduced-formatting';
 
   let { documentId, content, standalone, theme, folds, onToggleTask, onEditSource, onOpenWiki, onEditProperties, sourcePath, loadEmbed, onOpenPath, cells }: { documentId: number; content: string; standalone: boolean; theme: 'dark' | 'light'; folds: Map<string, boolean>; onToggleTask: (request: TaskToggle) => boolean; onEditSource: (from: number) => void; onOpenWiki?: (target: string, sourcePath?: string) => void; onEditProperties?: () => void; sourcePath?: string; loadEmbed?: (target: string, sourcePath?: string) => Promise<EmbedDocument>; onOpenPath?: (path: string) => void; cells?: CellSession } = $props();
   let container: HTMLDivElement;
@@ -15,6 +16,24 @@
 
   async function renderPreview(text: string, raw: boolean, palette: 'dark' | 'light', ticket: number) {
     if (!container || ticket !== generation) return;
+    const reduced = !raw && reducedFormatting(text).reduced;
+    if (reduced) {
+      // Rendering the full document would duplicate the expensive parse the
+      // editor is already avoiding. Show the exact source instead, so no text
+      // is hidden or rewritten, and say why the preview is plain.
+      clearRenderedContent(container);
+      container.textContent = '';
+      const notice = document.createElement('p');
+      notice.className = 'preview-reduced-notice';
+      notice.setAttribute('role', 'status');
+      notice.textContent = 'Reduced formatting — text unchanged. This document is large or punctuation-heavy, so the preview shows its Markdown source.';
+      const source = document.createElement('pre');
+      source.className = 'preview-reduced-source';
+      source.textContent = text;
+      container.append(notice, source);
+      rendering = false;
+      return;
+    }
     const result = raw ? {
       html: '<div class="diagram" data-diagram="0"><span class="diagram-loading">Rendering diagram…</span></div>',
       tasks: [], maths: [], diagrams: [text], callouts: [], links: [], frontmatter: null,

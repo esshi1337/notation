@@ -60,7 +60,7 @@ globalThis.window = { __TAURI_INTERNALS__: {
   },
 } };
 const server = await createServer({
-  cacheDir: 'node_modules/.vite-persistence-profile',
+  cacheDir: 'node_modules/.vite/persistence-profile',
   optimizeDeps: { noDiscovery: true, include: [] },
   server: { middlewareMode: true }, logLevel: 'error',
 });

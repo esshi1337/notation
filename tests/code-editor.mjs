@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 import { Text } from '@codemirror/state';
-const server = await createServer({cacheDir:'node_modules/.vite-code-tests',optimizeDeps:{noDiscovery:true,include:[]},server:{middlewareMode:true,hmr:false},logLevel:'error'});
+const server = await createServer({cacheDir:'node_modules/.vite/code-tests',optimizeDeps:{noDiscovery:true,include:[]},server:{middlewareMode:true,hmr:false},logLevel:'error'});
 try {
   const {detectLanguage,documentFileName}=await server.ssrLoadModule('/src/code-languages.ts');
   for(const [name,language] of [['index.ts','typescript'],['App.svelte','svelte'],['main.rs','rust'],['module.mjs','javascript'],['notes.md','markdown'],['LICENSE','plaintext']])assert.equal(detectLanguage(name),language);

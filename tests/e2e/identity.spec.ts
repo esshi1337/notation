@@ -36,7 +36,8 @@ test('dark chrome loads exact exports, centers icons, and distinguishes unsaved 
   const requested = localAssets(page);
   await page.goto('/');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await expect(page.locator('html')).toHaveCSS('--bg', '#111111');
+  await expect(page.locator('html')).toHaveAttribute('data-dark-preset', 'amoled');
+  await expect(page.locator('html')).toHaveCSS('--bg', '#000000');
   for (const source of ['/identity/0-9dfae.svg', '/identity/0-cdc53.svg', '/identity/0-a3bc6.svg', '/identity/0-2cf7a.svg', '/identity/0-9bd4d.svg']) await expectAsset(page, requested, source);
   await expectCenteredInButton(page.getByRole('button', { name: 'App menu', exact: true }).locator('svg'), 18, 15.27);
   await expectCenteredInButton(page.getByRole('button', { name: 'New document', exact: true }).locator('svg'), 18, 18);
