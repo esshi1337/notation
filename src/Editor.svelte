@@ -45,8 +45,11 @@
   import type { FoldAction } from './folding';
   import { hemingwayAllows, hemingwayProtection } from './hemingway';
   import { editorToRaw, rawToEditor, sourceEolEffect, sourceFormat, sourceText } from './source-format';
+  import { StateField } from '@codemirror/state';
+  import { formattingStatus, reducedFormatting } from './reduced-formatting';
+  import type { FormattingStatus } from './reduced-formatting';
 
-  let { codeLanguage = 'markdown', intelligenceEnabled = false, tabSize = 2, indentWithTabs = false, onIntelligence, value, wrap, live, standalone, theme, folds, initialSelection, active = true, showLineNumbers = true, appearance = '', hemingway = false, cells, sourcePath, loadEmbed, onOpenPath, onOpenWiki, onEditProperties, wikiCandidates, onSelection, onChange }: { codeLanguage?: CodeLanguage; intelligenceEnabled?: boolean; tabSize?: number; indentWithTabs?: boolean; onIntelligence?: (state: IntelligenceState) => void; value: string; wrap: boolean; live: boolean; standalone: boolean; theme: 'dark' | 'light'; folds: Map<string, boolean>; initialSelection?: DocumentSelection; active?: boolean; showLineNumbers?: boolean; appearance?: string; hemingway?: boolean; cells?: CellSession; sourcePath?: string; loadEmbed?: (target: string, sourcePath?: string) => Promise<{ path: string; content: string; label: string; key: string }>; onOpenPath?: (path: string) => void; onOpenWiki?: (target: string, sourcePath?: string) => void; onEditProperties?: () => void; wikiCandidates?: (context: WikiCompletion) => Promise<WikiCandidate[]>; onSelection?: (selection: DocumentSelection) => void; onChange: (value: string) => void } = $props();
+  let { codeLanguage = 'markdown', intelligenceEnabled = false, tabSize = 2, indentWithTabs = false, onIntelligence, value, wrap, live, standalone, theme, folds, initialSelection, active = true, showLineNumbers = true, appearance = '', hemingway = false, cells, sourcePath, loadEmbed, onOpenPath, onOpenWiki, onEditProperties, wikiCandidates, onSelection, onFormatting, onChange }: { codeLanguage?: CodeLanguage; intelligenceEnabled?: boolean; tabSize?: number; indentWithTabs?: boolean; onIntelligence?: (state: IntelligenceState) => void; value: string; wrap: boolean; live: boolean; standalone: boolean; theme: 'dark' | 'light'; folds: Map<string, boolean>; initialSelection?: DocumentSelection; active?: boolean; showLineNumbers?: boolean; appearance?: string; hemingway?: boolean; cells?: CellSession; sourcePath?: string; loadEmbed?: (target: string, sourcePath?: string) => Promise<{ path: string; content: string; label: string; key: string }>; onOpenPath?: (path: string) => void; onOpenWiki?: (target: string, sourcePath?: string) => void; onEditProperties?: () => void; wikiCandidates?: (context: WikiCompletion) => Promise<WikiCandidate[]>; onSelection?: (selection: DocumentSelection) => void; onFormatting?: (status: FormattingStatus) => void; onChange: (value: string) => void } = $props();
   let host: HTMLDivElement;
   let view: EditorView | undefined;
   let retainedState: EditorState | undefined;
@@ -72,6 +75,18 @@
   const protection = new Compartment();
   let protectedMode = false;
   let savedFolds: {from:number;to:number}[] = [];
+  let formattingReduced = $state(false);
+  let formattingReason = $state<FormattingStatus['reason']>(null);
+
+  const formattingState = StateField.define<FormattingStatus>({
+    create: state => formattingStatus(state.doc),
+    update: (status, tr) => tr.docChanged ? formattingStatus(tr.newDoc, status) : status,
+  });
+  function evaluateFormatting(state: EditorState) {
+    const status = state.field(formattingState);
+    formattingReduced = codeLanguage === 'markdown' && !hemingway && status.reduced;
+    formattingReason = formattingReduced ? status.reason : null;
+  }
 
   function currentState() { return view?.state ?? retainedState; }
   function rawPosition(text: string, position: number) {
@@ -95,6 +110,7 @@
     const transaction = current.update(spec);
     if (!accepts([transaction])) return false;
     retainedState = transaction.state;
+    evaluateFormatting(retainedState);
     if (savedScroll && transaction.docChanged) savedScroll = savedScroll.map(transaction.changes);
     if (protectedMode && transaction.docChanged) savedFolds = savedFolds.map(range => ({from:transaction.changes.mapPos(range.from,-1),to:transaction.changes.mapPos(range.to,1)}));
     if (transaction.docChanged) onChange(sourceText(transaction.state));
@@ -191,15 +207,26 @@
     { tag: [tags.number, tags.bool, tags.null], color: 'var(--code-number)' },
   ]);
 
-  function syntax() {
-    if (hemingway) return [];
+  function syntax(reduced = formattingReduced) {
+    if (hemingway || (codeLanguage === 'markdown' && reduced)) return [];
     return codeLanguage === 'markdown'
       ? [markdown({ extensions: [mathMarkdown] }), markdownFolding, syntaxHighlighting(highlighting), highlightActiveLine(), wikiCompletion(context => standalone || !wikiCandidates ? Promise.resolve([]) : wikiCandidates(context))]
       : [codeSyntax, syntaxHighlighting(highlighting), highlightActiveLine(), bracketMatching(), closeBrackets(), indentOnInput(), keymap.of(closeBracketsKeymap)];
   }
+  function presentationExtensions(reduced = formattingReduced) {
+    if (hemingway) return [];
+    // Reduced mode keeps plain source text and optional line numbers, without
+    // rich widgets or folding. Text, undo and selection are untouched.
+    if (reduced) return [showLineNumbers ? lineNumbers() : []];
+    return live ? livePreview(theme, standalone, folds, { openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells })
+      : [showLineNumbers ? lineNumbers() : [], standalone ? [] : foldGutter()];
+  }
   function createState() {
     const text = value;
     const selection = pendingSelection;
+    const status = codeLanguage === 'markdown' && !hemingway ? reducedFormatting(text) : { reduced: false, reason: null };
+    formattingReduced = status.reduced;
+    formattingReason = status.reason;
     retainedState = EditorState.create({
       doc: text,
       selection: selection ? { anchor: rawToEditor(text, selection.anchor), head: rawToEditor(text, selection.head) } : undefined,
@@ -207,12 +234,22 @@
         sourceFormat(text),
         history(), drawSelection(), intelligence.of([]), indentation.of([EditorState.tabSize.of(tabSize), indentUnit.of(indentWithTabs ? "\t" : " ".repeat(tabSize))]),
         protection.of(hemingway ? hemingwayProtection : []),
+        formattingState,
+        // Extenders run before the new state/language parser is constructed.
+        // Never read tr.state here: doing so would perform the work we avoid.
+        EditorState.transactionExtender.of(tr => {
+          if (!tr.docChanged || codeLanguage !== 'markdown' || hemingway) return null;
+          const before = tr.startState.field(formattingState);
+          const next = formattingStatus(tr.newDoc, before);
+          if (before.reduced === next.reduced) return null;
+          return { effects: [language.reconfigure(syntax(next.reduced)), presentation.reconfigure(presentationExtensions(next.reduced))] };
+        }),
         language.of(syntax()),
         search({ top: true }), highlightSelectionMatches(),
         keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
         wrapping.of(wrap ? EditorView.lineWrapping : []),
         livePreviewFocus,
-        presentation.of(hemingway ? [] : live ? livePreview(theme, standalone, folds, { openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells }) : [showLineNumbers ? lineNumbers() : [], standalone ? [] : foldGutter()]),
+        presentation.of(presentationExtensions()),
         commands.of(hemingway || standalone || codeLanguage !== 'markdown' ? [] : [slashCommands, wikiNavigation({ openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells })]),
         EditorView.contentAttributes.of({
           'aria-label': 'Document source', 'aria-multiline': 'true', spellcheck: 'false',
@@ -226,6 +263,7 @@
           if (update.docChanged) {
             if (savedScroll) savedScroll = savedScroll.map(update.changes);
             if (protectedMode) savedFolds = savedFolds.map(range => ({from:update.changes.mapPos(range.from,-1),to:update.changes.mapPos(range.to,1)}));
+            evaluateFormatting(update.state);
             onChange(sourceText(update.state));
           }
           if (update.docChanged || update.selectionSet) onSelection?.({ anchor: editorToRaw(update.state, update.state.selection.main.anchor), head: editorToRaw(update.state, update.state.selection.main.head) });
@@ -239,6 +277,7 @@
   function wake() {
     if (view) return;
     const editorState = retainedState ?? createState();
+    evaluateFormatting(editorState);
     const scrollTo = savedScroll ?? (pendingScrollIntoView ? EditorView.scrollIntoView(editorState.selection.main.head) : undefined);
     const current = new EditorView({
       parent: host,
@@ -291,9 +330,12 @@
 
   $effect(() => {
     const locked = hemingway;
-    const nextSyntax = syntax();
+    const reduced = formattingReduced;
     const current = currentState();
     if (!current) return;
+    evaluateFormatting(current);
+    const nextSyntax = syntax(formattingReduced);
+    void reduced;
     const effects = [protection.reconfigure(locked ? hemingwayProtection : []), language.reconfigure(nextSyntax)];
     if (locked && !protectedMode) {
       savedFolds = []; foldedRanges(current).between(0,current.doc.length,(from,to) => { savedFolds.push({from,to}); });
@@ -323,8 +365,15 @@
     const raw = standalone;
     const folded = folds;
     const numbers = showLineNumbers;
+    const reduced = formattingReduced;
     if (!currentState()) return;
-    dispatch({ effects: presentation.reconfigure(locked ? [] : enabled ? livePreview(palette, raw, folded, { openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells }) : [numbers ? lineNumbers() : [], raw ? [] : foldGutter()]) });
+    void [locked, enabled, palette, raw, folded, numbers, reduced];
+    dispatch({ effects: presentation.reconfigure(presentationExtensions()) });
+  });
+
+  $effect(() => {
+    const reduced = formattingReduced, reason = formattingReason;
+    untrack(() => onFormatting?.({ reduced, reason, size: currentState()?.doc.length ?? value.length }));
   });
 
   $effect(() => {

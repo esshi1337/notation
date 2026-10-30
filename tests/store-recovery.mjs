@@ -11,7 +11,7 @@ const baseDraft = {
 const baseScript = { id: 'script-one', name: 'Transform', code: 'return "saved";', cwd: null, updatedAt: 100 };
 const baseSession = { activeTabId: baseDraft.id, tabs: [baseDraft, { ...baseDraft, id: 'draft-two', name: 'second.md', content: 'Inactive DB text' }], updatedAt: 100 };
 const baseState = { settings: {}, draft: baseDraft, scriptDraft: baseScript, scripts: [], workspace: null, recents: [] };
-const server = await createServer({ cacheDir: 'node_modules/.vite-store-recovery', optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true }, logLevel: 'error' });
+const server = await createServer({ cacheDir: 'node_modules/.vite/store-recovery', optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true }, logLevel: 'error' });
 let sequence = 0;
 
 async function fixture({ cachedDraft = baseDraft, cachedScript = baseScript, cachedSession = null, pendingRecovery = null, database = baseState, failWrites = false, failCache = false, cacheLimit = Infinity, native = true, scriptLibrary = null } = {}) {

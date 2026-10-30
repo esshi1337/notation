@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
-const server = await createServer({ cacheDir: 'node_modules/.vite-export-tests', optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, hmr: false }, logLevel: 'error' });
+const server = await createServer({ cacheDir: 'node_modules/.vite/export-tests', optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, hmr: false }, logLevel: 'error' });
 let passed = 0;
 function test(name, run) { run(); passed++; console.log('✓ ' + name); }
 try {
