@@ -43,4 +43,4 @@ chmod +x "$tools/cc" "$tools/ar"
 
 key="${target//-/_}"
 export "CC_$key=$tools/cc" "CXX_$key=$tools/cc" "AR_$key=$tools/ar"
-exec cargo check --manifest-path "$root/src-tauri/Cargo.toml" --features desktop --tests --target "$target" "$@"
+cargo check --manifest-path "$root/src-tauri/Cargo.toml" --features desktop --tests --target "$target" "$@"
