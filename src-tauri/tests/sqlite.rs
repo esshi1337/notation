@@ -32,7 +32,7 @@ fn schema_seven_stickies_migrate_to_eight_without_touching_titles_or_maximum_pla
     assert_eq!(state.draft.unwrap()["content"], "ordinary");
     drop(db);
     let connection = rusqlite::Connection::open(&path).unwrap();
-    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 9);
+    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 10);
     // SQLite also rejects invalid color/markup if a future caller misses validation.
     assert!(connection.execute("UPDATE sticky_notes SET color='red' WHERE id=?1", [id]).is_err());
     assert!(connection.execute("UPDATE sticky_notes SET html=?2 WHERE id=?1", rusqlite::params![id, "x".repeat(131073)]).is_err());
@@ -835,4 +835,31 @@ fn escaped_draft_limits_rollback_session_and_settings_and_preserve_explicit_null
     database.persist(clear).unwrap();
     let cleared = database.bootstrap(None).unwrap();
     assert!(cleared.session.is_none() && cleared.draft.is_none() && cleared.script_draft.is_none());
+}
+
+#[test]
+fn schema_nine_gains_path_indexes_used_by_tag_and_property_lookups() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("state.sqlite3");
+    let database = Database::open(&path).unwrap();
+    database.persist(StateUpdate { settings: Some(json!({"theme":"light"})), ..Default::default() }).unwrap();
+    drop(database);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.execute_batch("DROP INDEX cache_tags_path; DROP INDEX cache_properties_path; INSERT INTO cache_tags(path,line,tag) VALUES('/kept.md',1,'kept'); PRAGMA user_version=9;").unwrap();
+    drop(connection);
+    let database = Database::open(&path).unwrap();
+    assert_eq!(database.bootstrap(None).unwrap().settings["theme"], "light");
+    drop(database);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 10);
+    assert_eq!(connection.query_row("SELECT count(*) FROM cache_tags WHERE path='/kept.md'", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+    let plan = |sql: &str| -> String {
+        let mut statement = connection.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        let rows = statement.query_map([], |row| row.get::<_, String>(3)).unwrap();
+        rows.map(Result::unwrap).collect::<Vec<_>>().join("\n")
+    };
+    let tags = plan("SELECT f.path FROM cache_files f WHERE EXISTS(SELECT 1 FROM cache_tags t WHERE t.path=f.path AND t.tag='x')");
+    assert!(tags.contains("cache_tags_path"), "{tags}");
+    let properties = plan("SELECT f.path FROM cache_files f WHERE EXISTS(SELECT 1 FROM cache_properties p WHERE p.path=f.path AND p.key='x')");
+    assert!(properties.contains("cache_properties_path"), "{properties}");
 }
