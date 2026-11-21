@@ -360,6 +360,14 @@ try {
       assert.ok(accelerator && !accelerator.includes('Mod') && !/[⌘⇧⌥]/u.test(accelerator), command.id);
     }
   });
+  const chrome = await server.ssrLoadModule('/src/window-chrome.ts');
+  check('computed colours convert to the #rrggbb the native window takes', () => {
+    assert.equal(chrome.hexColor('rgb(0, 0, 0)'), '#000000');
+    assert.equal(chrome.hexColor('rgb(250, 249, 247)'), '#faf9f7');
+    assert.equal(chrome.hexColor('rgba(18, 52, 86, 0.5)'), '#123456');
+    assert.equal(chrome.hexColor('rgb(255 128 0)'), '#ff8000');
+    for (const value of ['', 'transparent', '#fff', 'color(srgb 1 1 1)', 'rgb(a, b, c)']) assert.equal(chrome.hexColor(value), null, value);
+  });
   check('smooth scrolling defaults follow the platform and stored choices win', () => {
     assert.equal(preferences.DEFAULT_UI_PREFERENCES.smoothScrolling, !platform.isMac);
     assert.equal(preferences.readUIPreferences({ smoothScrolling: false }).smoothScrolling, false);

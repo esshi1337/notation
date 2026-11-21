@@ -53,7 +53,8 @@
         "trafficLightPosition": {
           "x": 14,
           "y": 16
-        }
+        },
+        "visible": false
       }
     ]
   }

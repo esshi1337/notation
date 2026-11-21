@@ -257,6 +257,8 @@ class MacosPlatformTest(unittest.TestCase):
         [base_window], [mac_window] = base['app']['windows'], macos['app']['windows']
         overlay = {'titleBarStyle': 'Overlay', 'hiddenTitle': True, 'trafficLightPosition': {'x': 14, 'y': 16}}
         self.assertEqual(mac_window, {**base_window, **overlay})
+        # Both start hidden; the app presents the window once its theme is applied.
+        self.assertIs(base_window['visible'], False)
         self.assertFalse(set(overlay) & set(base_window))
         capability = json.loads((ROOT / 'src-tauri/capabilities/macos.json').read_text())
         self.assertEqual((capability['platforms'], capability['windows']), (['macOS'], ['main']))

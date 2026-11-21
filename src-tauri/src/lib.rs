@@ -904,6 +904,55 @@ mod desktop {
         }
         Ok(())
     }
+    /// `#rrggbb` as an opaque window colour.
+    fn opaque_color(value: &str) -> Option<tauri::window::Color> {
+        let digits = value.strip_prefix('#')?;
+        if digits.len() != 6 || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        let channel = |at: usize| u8::from_str_radix(&digits[at..at + 2], 16).ok();
+        Some(tauri::window::Color(channel(0)?, channel(2)?, channel(4)?, 255))
+    }
+    /// The main window is created hidden so no unpainted, wrongly coloured
+    /// window is ever shown. The frontend calls this after its first frame,
+    /// and again when the theme changes: the native background (visible
+    /// before paint and along the edges while resizing) and the light/dark
+    /// appearance follow the theme, then the window is shown.
+    #[tauri::command]
+    fn present_main_window(
+        window: tauri::WebviewWindow,
+        background: String,
+        theme: String,
+    ) -> Result<(), String> {
+        sticky::authorize_main(window.label())?;
+        let color = opaque_color(&background).ok_or("Window background must be #rrggbb.")?;
+        let appearance = match theme.as_str() {
+            "light" => tauri::Theme::Light,
+            "dark" => tauri::Theme::Dark,
+            _ => return Err("Window theme must be light or dark.".into()),
+        };
+        // Appearance and colour are cosmetic; showing the window is not.
+        let _ = window.set_background_color(Some(color));
+        let _ = window.set_theme(Some(appearance));
+        if !window.is_visible().unwrap_or(false) {
+            window.show().map_err(|error| error.to_string())?;
+            let _ = window.set_focus();
+        }
+        Ok(())
+    }
+    /// If the frontend never presents the window (it failed to start), show
+    /// it anyway so the failure is visible rather than an invisible process.
+    const PRESENT_FALLBACK: std::time::Duration = std::time::Duration::from_secs(4);
+    fn present_fallback(handle: tauri::AppHandle) {
+        std::thread::spawn(move || {
+            std::thread::sleep(PRESENT_FALLBACK);
+            if let Some(main) = handle.get_webview_window("main") {
+                if !main.is_visible().unwrap_or(true) {
+                    let _ = main.show();
+                }
+            }
+        });
+    }
     fn handle_menu_event(app: &tauri::AppHandle, id: &str) {
         if let Some(command) = id.strip_prefix(MENU_COMMAND_PREFIX) {
             let _ = app.emit_to("main", "notation:menu-command", command);
@@ -1087,6 +1136,7 @@ mod desktop {
                 });
                 app.manage(AgentState { backend, endpoint });
                 app.manage(DatabaseState(database));
+                present_fallback(app.handle().clone());
                 Ok(())
             })
             .plugin(tauri_plugin_dialog::init())
@@ -1136,6 +1186,7 @@ mod desktop {
                 render_citations,
                 open_external,
                 set_menu_shortcuts,
+                present_main_window,
                 get_tasks,
                 get_tags,
                 get_backlinks,
