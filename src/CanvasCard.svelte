@@ -16,4 +16,4 @@
 </script>
 <div class="canvas-card-render" bind:this={host}></div>
 {#if error}<div role="alert" class="canvas-card-error">{error}</div>{/if}
-<style>.canvas-card-render{padding:10px;overflow:auto;height:100%;font-size:12px;line-height:1.5;white-space:pre-wrap}.canvas-card-render :global(p){margin:.4em 0}.canvas-card-render :global(img),.canvas-card-render :global(svg){max-width:100%}.canvas-card-render :global(pre){font-size:10px}.canvas-card-error{font-size:11px;padding:8px;color:var(--error)}</style>
+<style>.canvas-card-render{padding:10px;overflow:auto;height:100%;font-size:12px;line-height:1.5;white-space:pre-wrap}.canvas-card-render :global(p){margin:.4em 0}.canvas-card-render :global(img),.canvas-card-render :global(svg){max-width:100%}.canvas-card-render :global(pre){font-size:11px}.canvas-card-error{font-size:12px;padding:8px;color:var(--error)}</style>

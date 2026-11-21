@@ -141,14 +141,14 @@
   .smart-table td { min-width: 105px; padding: 0; border: 1px solid var(--border); vertical-align: top; }
   .smart-table tr:first-child td { border-top: 0; }
   .smart-table td:first-child { border-left: 0; }
-  .smart-table textarea { display: block; min-width: 105px; width: 100%; min-height: 32px; height: 32px; resize: vertical; border: 0; border-radius: 0; background: var(--bg); color: var(--text); padding: 6px; font: 11px/1.5 'Source Sans 3',sans-serif; }
+  .smart-table textarea { display: block; min-width: 105px; width: 100%; min-height: 32px; height: 32px; resize: vertical; border: 0; border-radius: 0; background: var(--bg); color: var(--text); padding: 6px; font:12px/1.5 'Source Sans 3',sans-serif; }
   .smart-table .table-header textarea { font-weight: 600; background: var(--code); }
   .smart-table .selected-cell { outline: 1px solid var(--muted); outline-offset: -1px; }
-  .table-choice { display: block; width: 100%; margin-top: 7px; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+  .table-choice { display: block; width: 100%; text-align: left; white-space: normal; overflow-wrap: anywhere; }
   .table-footer { position: sticky; bottom: -24px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 16px; margin: 4px -16px -24px; background: var(--bar); border-top: 1px solid var(--border); z-index: 2; }
-  .table-footer span { color: var(--muted); font-size: 10px; }
-  .table-apply { border-color: var(--border); font-size: 10px; padding: 5px 7px; }
-  .table-csv summary,.table-structure summary { cursor: pointer; color: var(--muted); font-size: 10px; }
+  .table-footer span { color: var(--muted); font-size:12px; }
+  .table-apply { border-color: var(--border); font-size:12px; padding: 5px 7px; }
+  .table-csv summary,.table-structure summary { cursor: pointer; color: var(--muted); font-size:12px; }
   .table-csv .panel-note,.table-csv .panel-actions,.table-structure .panel-actions { margin-top: 8px; }
   .table-column-settings { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .table-column-settings label { display: grid; min-width: 0; gap: 5px; color: var(--muted); }

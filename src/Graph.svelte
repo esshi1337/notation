@@ -184,9 +184,10 @@
   .graph-panel { min-width: 0; }
   .graph-panel .graph-local { flex-direction: row; align-items: center; margin: 0; gap: 7px; }
   .graph-local input { width: 12px; flex: 0 0 12px; padding: 0; }
-  .graph-clear { align-self: flex-start; padding: 0; color: var(--muted); font-size: 10px; }
+  .graph-clear { align-self: flex-start; padding: 0; color: var(--muted); font-size:12px; }
   .graph-actions { align-items: center; }
-  .graph-zoom { min-width: 34px; text-align: center; color: var(--muted); font: 10px 'IBM Plex Mono', monospace; }
+  .graph-actions button { min-width: 28px; }
+  .graph-zoom { min-width: 34px; text-align: center; color: var(--muted); font:11px 'IBM Plex Mono', monospace; }
   .graph-viewport { position: relative; height: clamp(220px, 46vh, 480px); min-height: 200px; max-height: 60vh; margin: 8px 0; padding: 0; overflow: hidden; border: 1px solid var(--border); background: var(--bg); cursor: grab; touch-action: none; user-select: none; }
   .graph-viewport:active { cursor: grabbing; }
   .graph-canvas { display: block; width: 100%; height: 100%; max-width: 100%; }
@@ -199,10 +200,10 @@
   .note-label { fill: var(--text); font: 12px 'Source Sans 3', ui-sans-serif, sans-serif; pointer-events: none; }
   .note-node.selected .note-label { fill: var(--bg); }
   .note-node:focus-visible .note-card { stroke: var(--text); stroke-width: 2; }
-  .graph-hint { margin: -4px 0 0; color: var(--muted); font-size: 9px; }
+  .graph-hint { margin: -4px 0 0; color: var(--muted); font-size:12px; }
   .graph-empty { padding: 12px; }
-  .graph-panel details { color: var(--muted); font-size: 10px; }
+  .graph-panel details { color: var(--muted); font-size:12px; }
   .graph-panel summary { cursor: pointer; }
   .graph-note-row { display: block; width: 100%; padding: 6px; text-align: left; font-size: 12px; }
-  .graph-note-row small { display: block; color: var(--muted); overflow-wrap: anywhere; font-size: 10px; }
+  .graph-note-row small { display: block; color: var(--muted); overflow-wrap: anywhere; font-size:12px; }
 </style>
