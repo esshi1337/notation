@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { enableScripts, openSettings, runCommand, setSetting, expectSetting } from './commands';
+import { enableScripts, openSettings, runCommand, setSetting, expectSetting, settled } from './commands';
 
 const sidebar = (page: Page) => page.getByRole('navigation', { name: 'App sidebar' });
 const source = (page: Page) => page.getByRole('textbox', { name: 'Document source' });
@@ -11,6 +11,8 @@ async function position(page: Page, side: 'left' | 'right') {
   await expect(page.locator('.content-area')).toHaveAttribute('data-sidebar-position', side);
 }
 async function checkGeometry(page: Page, side: 'left' | 'right', overlay = false) {
+  // The panel slides in; measure the settled frame.
+  await settled(page.locator('.sidebar-panel'));
   const result = await page.evaluate(() => {
     const rect = (selector: string) => { const r = document.querySelector(selector)!.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width }; };
     return { rail: rect('.app-navigation'), panel: rect('.sidebar-panel'), editor: rect('.content-area > .workspace'), width: innerWidth, scrollWidth: document.documentElement.scrollWidth };

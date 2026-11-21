@@ -48,6 +48,7 @@
   import RenameDocument from './RenameDocument.svelte';
   import { migrateSettings, preferencesStyle, readUIPreferences, UI_SETTINGS_VERSION } from './preferences';
   import { smoothScrolling } from './smooth-scroll';
+  import { fadeOnChange, pop } from './motion';
   import { COMMANDS, commandForEvent, formatShortcut, readShortcutOverrides, shortcutFor } from './shortcuts';
   import type { CommandId } from './shortcuts';
   import type { CommandItem } from './ui-commands';
@@ -930,12 +931,13 @@
     {#if !ui.focusMode}
       <aside class="app-sidebar" aria-label="Application tools">
         <Sidebar items={sidebarItems} execute={(id) => void runCommand(id)} {theme} />
-        {#if visiblePanel}<div class="sidebar-panel" class:sidebar-graph={panel === 'graph'}>
+        {#if visiblePanel}<div class="sidebar-panel" class:sidebar-graph={panel === 'graph'} use:fadeOnChange={panel} in:pop={{ token: 'slow', x: ui.sidebarPosition === 'right' ? 16 : -16, y: 0, scale: 1 }} out:pop={{ token: 'slow', x: ui.sidebarPosition === 'right' ? 16 : -16, y: 0, scale: 1, exit: true }} onintrostart={(event) => event.currentTarget.classList.remove('leaving')} onoutrostart={(event) => event.currentTarget.classList.add('leaving')}>
           {#if panel === 'stickies'}<StickyNotes createRequest={stickyCreateRequest} created={() => stickyCreateRequest = 0} close={() => { panel = null; stickyCreateRequest = 0; }} />{/if}
           {#if panel === 'explorer' && !ui.focusMode}<Explorer workspace={activeWorkspace} currentPath={active.path} openFile={(path) => void openPath(path)} configure={() => panel = 'workspace'} close={() => panel = null} />{/if}
           {#if panel === 'scripts' && scriptsEnabled && !ui.focusMode}<Scripts lockedReason={active.hemingway ? HEMINGWAY_MESSAGE : ''} snapshot={scriptSnapshot} apply={applyScript} close={() => panel = null} />{:else if panel === 'workspace' && !ui.focusMode}<Workspace {catalog} action={workspaceAction} changing={workspaceBusy} currentPath={active.path} openDocument={openPath} close={() => panel = null} />{:else if panel === 'history' && !ui.focusMode}<History lockedReason={active.hemingway ? HEMINGWAY_MESSAGE : ''} currentContent={active.content} documentKey={active.path ?? active.id} snapshot={historySnapshot} restore={restoreRevision} close={() => panel = null} />{:else if panel === 'properties' && !ui.focusMode && !canvasDocument && !active.hemingway}<Properties content={active.content} documentId={active.lifetime} {standalone} apply={applyProperties} editSource={() => { layout = 'source'; void tick().then(() => editor?.reveal(0)); }} close={() => panel = null} />{:else if panel === 'templates' && !ui.focusMode && !canvasDocument && !active.hemingway}<Templates snapshot={scriptSnapshot} apply={applyTemplate} close={()=>panel=null} />{:else if panel === 'export' && !ui.focusMode && !canvasDocument && !active.hemingway}<Export snapshot={()=>({name:active.name,text:active.content,documentId:active.lifetime,path:active.path,sourcePath:active.path??active.id,standalone})} {theme} loadEmbed={loadEmbedded} close={()=>panel=null} />{:else if panel === 'table' && !ui.focusMode && !canvasDocument && !active.hemingway}<SmartTable content={active.content} documentId={active.lifetime} cursor={active.selection?.head ?? 0} {standalone} apply={applyTable} close={()=>panel=null} />{:else if panel === 'graph' && !ui.focusMode}{#key catalog.activeId}<Graph currentPath={active.path} open={(path)=>void openPath(path)} close={()=>panel=null} />{/key}{:else if panel === 'git' && gitRoot && active.path && !ui.focusMode}{#key JSON.stringify([active.path, gitRoot])}<Git documentPath={active.path} repositoryRoot={gitRoot} close={() => panel = null} />{/key}{/if}
         </div>{/if}
       </aside>
+      {#if visiblePanel}<button class="sidebar-scrim" tabindex="-1" aria-label="Close tool panel" onclick={() => { panel = null; stickyCreateRequest = 0; }} in:pop={{ token: 'slow', y: 0, scale: 1 }} out:pop={{ token: 'slow', y: 0, scale: 1, exit: true }}></button>{/if}
     {/if}
     <div class="workspace" class:only-source={effectiveLayout === 'source' || effectiveLayout === 'live' || canvasVisible || active.hemingway} class:only-preview={!active.hemingway && effectiveLayout === 'preview'}>
       <section class="pane source-pane" class:code-source={codeDocument} aria-label="Source editor" hidden={!active.hemingway && (effectiveLayout === 'preview' || canvasVisible)}>

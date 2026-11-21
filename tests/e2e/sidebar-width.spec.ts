@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { expectSetting, openSettings, setSetting } from './commands';
+import { expectSetting, openSettings, setSetting, settled } from './commands';
 
 const presets = [220, 260, 340] as const;
 const sidebar = (page: Page) => page.getByRole('navigation', { name: 'App sidebar' });
@@ -26,6 +26,8 @@ async function setAppearance(page: Page, side: Side, width: number) {
 }
 
 async function expectPanelGeometry(page: Page, tool: Tool, side: Side, width: number, overlay = false) {
+  // The panel slides in; measure the settled frame.
+  await settled(page.locator('.sidebar-panel'));
   const result = await page.evaluate((toolName) => {
     const rect = (selector: string) => {
       const bounds = document.querySelector(selector)!.getBoundingClientRect();
