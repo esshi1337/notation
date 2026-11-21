@@ -145,6 +145,21 @@
     }
   }
   export function focus() { view?.focus(); }
+  /** One-based source line at the top of the viewport; null while hidden. */
+  export function topLine(): number | null {
+    if (!view || !view.scrollDOM.clientHeight) return null;
+    const top = view.scrollDOM.getBoundingClientRect().top - view.documentTop;
+    return view.state.doc.lineAt(view.lineBlockAtHeight(Math.max(0, top + 1)).from).number;
+  }
+  /** Put a source line at the top of the viewport. */
+  export function scrollToLine(number: number) {
+    if (!view) return;
+    const line = view.state.doc.line(Math.max(1, Math.min(view.state.doc.lines, Math.round(number))));
+    savedScroll = undefined;
+    // The first line is the document top, including any padding above it.
+    if (line.number === 1) view.scrollDOM.scrollTop = 0;
+    else view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: 'start', yMargin: 0 }) });
+  }
   export function getView() { return view ?? null; }
   export function comment() { if (view && !hemingway && codeLanguage !== 'markdown') toggleComment(view); }
   export async function codeAction(action: 'definition' | 'references') { const current = view; if (current && intelligenceEnabled) { const module = await loadLanguageIntelligence(); if (view === current && intelligenceEnabled) return module.intelligenceCommand(current, action); } }

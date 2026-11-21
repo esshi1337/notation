@@ -1,6 +1,6 @@
 <script lang="ts">
   import { scrimExit } from './motion';
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import type { CommandId } from './shortcuts';
   import type { CommandItem } from './ui-commands';
   import Icon from './Icon.svelte';
@@ -12,7 +12,9 @@
   let dialog: HTMLDialogElement, search: HTMLInputElement, results: HTMLDivElement;
   let previous: HTMLElement | null = null;
   let matches = $derived(commands.filter((command) => query.toLowerCase().trim().split(/\s+/u).every((word) => (command.label + ' ' + command.group).toLowerCase().includes(word))));
-  $effect(() => { const changed = query; selected = 0; });
+  // Select the first command that can run: Enter on a disabled entry does
+  // nothing. -1 means every match is disabled.
+  $effect(() => { const changed = query; selected = untrack(() => matches.findIndex((command) => !command.disabled)); });
   $effect(() => { const current = selected; queueMicrotask(() => results?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })); });
   function choose(command: CommandItem | undefined) {
     if (!command || command.disabled) return;
@@ -21,7 +23,12 @@
   function keyboard(event: KeyboardEvent) {
     if (event.target === search && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
       event.preventDefault();
-      if (matches.length) selected = (selected + (event.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length;
+      const step = event.key === 'ArrowDown' ? 1 : matches.length - 1;
+      // Walk past disabled entries; stay put when nothing else is enabled.
+      for (let index = selected < 0 && step !== 1 ? 0 : selected, tries = 0; tries < matches.length; tries++) {
+        index = (index + step + matches.length) % matches.length;
+        if (!matches[index].disabled) { selected = index; break; }
+      }
     } else if (event.key === 'Enter' && event.target === search) { event.preventDefault(); choose(matches[selected]); }
     else if (event.key === 'Tab') {
       const controls = Array.from(dialog.querySelectorAll<HTMLElement>('button, input')).filter((element) => element.tabIndex >= 0 && !element.hasAttribute('disabled'));
