@@ -744,8 +744,6 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .diff-counts { color: var(--muted); font-size: 12px; margin: 0; }
 .unified-diff { tab-size: 2; white-space: pre; overflow-x: auto; }
 .revision-comparison summary { cursor: pointer; color: var(--muted); font-size: 12px; }
-.wiki-dialog { width: min(440px,calc(100vw - 32px)); max-height: calc(100vh - 40px); padding: 15px; background: var(--menu); color: var(--text); border: 1px solid var(--border); }
-.wiki-dialog::backdrop { background: #0008; }
 .wiki-candidates { display: grid; gap: 4px; margin: 12px 0; max-height: 280px; overflow: auto; }
 .wiki-candidates button { display: grid; text-align: left; gap: 4px; padding: 9px; }
 .wiki-candidates span { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
@@ -766,7 +764,8 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .frontmatter-properties { margin: 0 0 1em; padding: 10px 12px; border: 1px solid var(--border); border-radius: 3px; font: 12px/1.5 'Source Sans 3', ui-sans-serif, sans-serif; color: var(--muted); }
 .frontmatter-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .frontmatter-heading strong { font-size: 12px; font-weight: 500; }
-.frontmatter-properties button, .frontmatter-source { font-size: 12px; color: var(--muted); padding: 3px 5px; }
+.frontmatter-properties button, .frontmatter-source { min-height: 26px; padding: 3px 10px; border: 1px solid var(--border); border-radius: var(--radius-control); background: transparent; color: var(--text); font-size: 12px; line-height: 18px; white-space: nowrap; }
+.frontmatter-properties button:hover, .frontmatter-source:hover { background: var(--hover); color: var(--heading); }
 .frontmatter-properties dl { display: grid; grid-template-columns: minmax(60px, 1fr) minmax(0, 3fr); gap: 4px 14px; margin: 8px 0 0; }
 .frontmatter-properties dt, .frontmatter-properties dd { margin: 0; overflow-wrap: anywhere; }
 .frontmatter-properties dd { color: var(--text); white-space: pre-wrap; }
@@ -878,15 +877,34 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .code-source .cm-content { max-width: none; margin-inline: 0; width: 100%; }
 .code-source .cm-scroller { font-family: 'IBM Plex Mono', monospace; }
 .disk-conflict-banner { display:flex; align-items:center; gap:10px; padding:10px 14px; flex-wrap:wrap; background:var(--panel); font-size:13px; }
-.file-navigator, .disk-dialog { width:min(720px,calc(100vw - 48px)); max-height:80vh; overflow:auto; padding:20px; color:var(--text); background:var(--panel); border:1px solid var(--border); border-radius:16px; }
-.navigator-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; }
-.navigator-heading button { width:28px; height:28px; border-radius:9px; padding:0; }
-.navigator-query { display:flex; gap:8px; }
-.navigator-query input { flex:1; min-width:0; }
-.navigator-results { max-height:50vh; overflow:auto; margin-top:12px; }
-.navigator-results button { width:100%; text-align:left; display:flex; flex-direction:column; align-items:start; gap:4px; margin:4px 0; padding:10px; }
-.navigator-results small, .navigator-results code { display:block; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.7; }
-.disk-dialog pre { max-height:45vh; overflow:auto; white-space:pre; padding:12px; font:12px/1.6 'IBM Plex Mono',monospace; }
+/* The file navigator, file-changed comparison and wiki chooser share the
+   Settings dialog's surface, radius, shadow and backdrop. */
+.file-navigator, .disk-dialog, .wiki-dialog { width: min(640px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); margin: auto; padding: 20px 24px 24px; overflow: auto; overscroll-behavior: contain; color: var(--text); background: var(--menu); border: 1px solid var(--border); border-radius: var(--radius-dialog); box-shadow: 0 16px 60px #0006; font-size: 13px; line-height: 20px; }
+.wiki-dialog { width: min(460px, calc(100vw - 32px)); }
+.file-navigator::backdrop, .disk-dialog::backdrop, .wiki-dialog::backdrop { background: #0000007a; }
+.navigator-heading, .wiki-dialog > .scripts-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+:is(.navigator-heading, .wiki-dialog > .scripts-heading) strong { color: var(--heading); font-size: 16px; font-weight: 600; line-height: 24px; }
+:is(.navigator-heading, .wiki-dialog > .scripts-heading) button { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border); border-radius: 7px; background: var(--hover); color: var(--muted); font-size: 16px; line-height: 1; }
+:is(.navigator-heading, .wiki-dialog > .scripts-heading) button:hover:not(:disabled) { color: var(--heading); }
+:is(.file-navigator, .disk-dialog) p { margin: 0 0 12px; color: var(--muted); }
+:is(.file-navigator, .disk-dialog) p[role='alert'] { color: var(--error); }
+.disk-dialog > p:first-of-type { color: var(--text); font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 12px; overflow-wrap: anywhere; }
+.navigator-query { display: flex; gap: 8px; }
+.navigator-query input { flex: 1; min-width: 0; height: 36px; padding: 0 12px; font-size: 14px; }
+.navigator-query button { flex: 0 0 auto; min-height: 36px; padding: 0 14px; border-color: var(--border); }
+.navigator-results { max-height: min(50vh, 420px); margin: 12px -8px 0; padding: 0 8px; overflow: auto; overscroll-behavior: contain; }
+.navigator-results button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; margin: 2px 0; padding: 8px 10px; border-radius: var(--radius-control); text-align: left; }
+.navigator-results button:focus-visible { background: var(--hover); }
+.navigator-results strong { color: var(--heading); font-size: 13px; font-weight: 600; }
+.navigator-results small, .navigator-results code { display: block; width: 100%; overflow: hidden; color: var(--muted); font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
+.navigator-results code { color: var(--text); }
+.navigator-results p { margin: 12px 2px 0; }
+.disk-dialog pre { max-height: 45vh; margin: 0 0 12px; overflow: auto; white-space: pre; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--bg); font: 12px/1.6 'IBM Plex Mono', monospace; }
+:is(.disk-dialog, .rename-dialog) .dialog-actions { gap: 8px; }
+:is(.disk-dialog, .rename-dialog) .dialog-actions button { min-height: 32px; padding: 5px 14px; font-size: 13px; }
+.dialog-actions button:last-child:not(:only-child) { background: var(--active); color: var(--heading); }
+.wiki-dialog > button { min-height: 32px; padding: 5px 14px; border-color: var(--border); }
+.wiki-candidates button { border-radius: var(--radius-control); }
 .cm-tooltip { max-width:min(640px,90vw); max-height:40vh; overflow:auto; }
 
 .document-language { min-height: 22px; border: 0; border-radius: 5px; background: transparent; padding: 2px 6px; margin: 0 -2px; color: var(--muted); font: inherit; white-space: nowrap; }
