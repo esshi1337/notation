@@ -103,13 +103,14 @@ fn safe_paths(
         .query_map([], |row| row.get::<_, String>(0))
         .map_err(|error| error.to_string())?;
     let mut paths = Vec::new();
+    let mut validator = PathValidator::new(scope);
     for row in rows {
         let path = row.map_err(|error| error.to_string())?;
         let candidate = Path::new(&path);
         let relative = candidate
             .strip_prefix(scope.legacy_root.as_deref().unwrap_or("/"))
             .unwrap_or(candidate);
-        if !scope.files.contains(&path)
+        if !validator.members.contains(path.as_str())
             && scope.legacy_root.is_some()
             && relative.components().any(|component| {
                 component.as_os_str().to_string_lossy().starts_with('.')
@@ -139,14 +140,92 @@ fn safe_paths(
         ) {
             continue;
         }
-        if scope
-            .resolve(&path)
-            .is_ok_and(|canonical| canonical == candidate && canonical.is_file())
-        {
+        if validator.accepts(&path) {
             paths.push(path);
         }
     }
     Ok(paths)
+}
+/// The reference check: the path resolves inside the workspace, to itself,
+/// and to a regular file.
+fn resolves_to_itself(scope: &crate::workspace_catalog::WorkspaceRecord, path: &str) -> bool {
+    let candidate = Path::new(path);
+    scope
+        .resolve(path)
+        .is_ok_and(|canonical| canonical == candidate && canonical.is_file())
+}
+/// The same check for many paths of one request. `scope.resolve` inspects
+/// every component of every path twice and canonicalizes it, although notes
+/// share their directories. For a plain absolute path the check is
+/// equivalent to: every ancestor directory exists and is not a symbolic
+/// link, the file itself is a regular file and not a link, and the path is a
+/// member or lies under the workspace root. Each directory is inspected once
+/// per request; anything that is not a plain path uses the reference check.
+struct PathValidator<'a> {
+    scope: &'a crate::workspace_catalog::WorkspaceRecord,
+    members: HashSet<&'a str>,
+    root: Option<std::path::PathBuf>,
+    directories: HashMap<std::path::PathBuf, bool>,
+}
+impl<'a> PathValidator<'a> {
+    fn new(scope: &'a crate::workspace_catalog::WorkspaceRecord) -> Self {
+        Self {
+            scope,
+            members: scope.files.iter().map(String::as_str).collect(),
+            // A root that is itself not plain is left to the reference check.
+            root: scope
+                .legacy_root
+                .as_deref()
+                .map(Path::new)
+                .filter(|root| plain(root))
+                .map(Path::to_path_buf),
+            directories: HashMap::new(),
+        }
+    }
+    fn accepts(&mut self, path: &str) -> bool {
+        let candidate = Path::new(path);
+        let member = self.members.contains(path);
+        let under_root = self
+            .root
+            .as_deref()
+            .is_some_and(|root| candidate.starts_with(root) && candidate != root);
+        if !plain(candidate) || !(member || under_root) {
+            return resolves_to_itself(self.scope, path);
+        }
+        let Some(parent) = candidate.parent() else {
+            return false;
+        };
+        self.directory(parent)
+            && std::fs::symlink_metadata(candidate).is_ok_and(|metadata| metadata.is_file())
+            // On a case-insensitive volume (the macOS default) a path can
+            // name a file in another letter case than it is stored under;
+            // the reference check only accepts the stored spelling.
+            && (!cfg!(target_os = "macos")
+                || candidate.canonicalize().is_ok_and(|canonical| canonical == candidate))
+    }
+    /// The directory and all its ancestors exist and none is a symbolic link.
+    fn directory(&mut self, directory: &Path) -> bool {
+        if let Some(known) = self.directories.get(directory) {
+            return *known;
+        }
+        let ancestors = match directory.parent() {
+            Some(parent) => self.directory(parent),
+            None => true,
+        };
+        let valid = ancestors
+            && std::fs::symlink_metadata(directory).is_ok_and(|metadata| metadata.is_dir());
+        self.directories.insert(directory.to_path_buf(), valid);
+        valid
+    }
+}
+/// Absolute, already normalized (no `.`/`..`, no doubled or trailing
+/// separators) and not under a system alias that path checks rewrite.
+fn plain(path: &Path) -> bool {
+    let mut components = path.components();
+    matches!(components.next(), Some(std::path::Component::RootDir))
+        && components.all(|component| matches!(component, std::path::Component::Normal(_)))
+        && path.components().as_path().as_os_str() == path.as_os_str()
+        && explorer::system_path(path) == path
 }
 fn comparison(filter: &PropertyFilter, bindings: &mut Bindings) -> Result<String, String> {
     if filter.key.is_empty() || filter.key.len() > 1024 {
@@ -257,24 +336,31 @@ impl Database {
         let text = request.text.trim();
         let query = text_query(text);
         let text_search = !text.is_empty();
+        let excerpt;
         let (score, snippet) = if text_search && !query.is_empty() {
             let query = bindings.text(query);
-            cte=format!("WITH hits AS MATERIALIZED(SELECT path,bm25(cache_fts) score,snippet(cache_fts,2,'','','…',24) excerpt FROM cache_fts WHERE cache_fts MATCH {query}) ");
+            // Rank every hit, but build excerpts only for the rows of the
+            // returned page: an excerpt per hit (and again for the count)
+            // dominated broad searches.
+            cte=format!("WITH hits AS MATERIALIZED(SELECT rowid id,path,bm25(cache_fts) score FROM cache_fts WHERE cache_fts MATCH {query}) ");
+            // Guarded: for a row that matched by name only `hits.id` is NULL,
+            // and the full-text table does not treat `rowid = NULL` as empty.
+            excerpt = format!("CASE WHEN hits.id IS NOT NULL THEN (SELECT snippet(cache_fts,2,'','','…',24) FROM cache_fts WHERE cache_fts MATCH {query} AND cache_fts.rowid=hits.id) END");
             from.push_str(" LEFT JOIN hits ON hits.path=f.path");
             let name = bindings.text(text);
             conditions.push(format!(
                 "(hits.path IS NOT NULL OR instr(lower(f.name),lower({name}))>0)"
             ));
             (
-                "COALESCE(hits.score,0.0)",
-                "COALESCE(hits.excerpt,substr(f.content,1,160))",
+                "COALESCE(hits.score,0.0)".to_string(),
+                format!("COALESCE({excerpt},substr(f.content,1,160))"),
             )
         } else {
             if text_search {
                 let text = bindings.text(text);
                 conditions.push(format!("instr(lower(f.name),lower({text}))>0"));
             }
-            ("0.0", "substr(f.content,1,160)")
+            ("0.0".to_string(), "substr(f.content,1,160)".to_string())
         };
         if let Some(folder) = folder {
             let prefix = bindings.text(format!(
@@ -669,5 +755,91 @@ impl Database {
                 unresolved: total_unresolved,
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod path_validation_tests {
+    use super::*;
+    use crate::workspace_catalog::WorkspaceRecord;
+    use std::fs;
+
+    #[cfg(unix)]
+    #[test]
+    fn the_per_request_validator_agrees_with_resolving_every_path() {
+        let temporary = tempfile::tempdir().unwrap();
+        let base = temporary.path().canonicalize().unwrap();
+        let root = base.join("notes");
+        let outside = base.join("outside");
+        fs::create_dir_all(root.join("a/b")).unwrap();
+        fs::create_dir_all(root.join("real")).unwrap();
+        fs::create_dir_all(root.join("folder.md")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        for file in ["top.md", "a/one.md", "a/b/two.md", "real/three.md", "a/Ünï cödé.md"] {
+            fs::write(root.join(file), "# note\n").unwrap();
+        }
+        fs::write(outside.join("secret.md"), "secret").unwrap();
+        fs::write(outside.join("member.md"), "member").unwrap();
+        std::os::unix::fs::symlink(root.join("real"), root.join("linked")).unwrap();
+        std::os::unix::fs::symlink(root.join("top.md"), root.join("a/link.md")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("escape")).unwrap();
+        std::os::unix::fs::symlink(&root, base.join("alias")).unwrap();
+        let text = |path: &Path| path.to_str().unwrap().to_string();
+        let root_text = text(&root);
+        let mut paths = vec![
+            format!("{root_text}/top.md"),
+            format!("{root_text}/a/one.md"),
+            format!("{root_text}/a/b/two.md"),
+            format!("{root_text}/real/three.md"),
+            format!("{root_text}/a/Ünï cödé.md"),
+            // Stale, linked, wrong kind, escaping and malformed paths.
+            format!("{root_text}/missing.md"),
+            format!("{root_text}/a/missing/deep.md"),
+            format!("{root_text}/linked/three.md"),
+            format!("{root_text}/a/link.md"),
+            format!("{root_text}/escape/secret.md"),
+            format!("{root_text}/folder.md"),
+            format!("{root_text}/top.md/child.md"),
+            format!("{root_text}/a/../top.md"),
+            format!("{root_text}/./top.md"),
+            format!("{root_text}//top.md"),
+            format!("{root_text}/a/"),
+            format!("{}/alias/top.md", text(&base)),
+            text(&outside.join("secret.md")),
+            text(&outside.join("member.md")),
+            root_text.clone(),
+            "/".into(),
+            "relative/top.md".into(),
+            String::new(),
+        ];
+        paths.sort();
+        let scopes = [
+            WorkspaceRecord { id: "folder".into(), name: "Folder".into(), files: vec![], legacy_root: Some(root_text.clone()) },
+            WorkspaceRecord { id: "mixed".into(), name: "Mixed".into(), files: vec![text(&outside.join("member.md")), format!("{root_text}/a/link.md")], legacy_root: Some(root_text.clone()) },
+            WorkspaceRecord { id: "virtual".into(), name: "Virtual".into(), files: vec![format!("{root_text}/top.md"), text(&outside.join("member.md")), format!("{root_text}/linked/three.md"), format!("{root_text}/missing.md")], legacy_root: None },
+            WorkspaceRecord { id: "via-link".into(), name: "Root through a link".into(), files: vec![], legacy_root: Some(format!("{}/alias", text(&base))) },
+        ];
+        for scope in &scopes {
+            let mut validator = PathValidator::new(scope);
+            let mut accepted = 0;
+            // Twice: the second pass answers from remembered directories.
+            for _ in 0..2 {
+                for path in &paths {
+                    let expected = resolves_to_itself(scope, path);
+                    assert_eq!(validator.accepts(path), expected, "{} in {}", path, scope.id);
+                    accepted += usize::from(expected);
+                }
+            }
+            // Five real notes plus two spellings (`//`, `/./`) that compare
+            // equal to `top.md` as paths; the member outside the root; in the
+            // virtual scope `top.md` (three spellings) and the member.
+            let expected = match scope.id.as_str() {
+                "folder" => 7,
+                "mixed" => 8,
+                "virtual" => 4,
+                _ => 0,
+            };
+            assert_eq!(accepted, 2 * expected, "{}", scope.id);
+        }
     }
 }
