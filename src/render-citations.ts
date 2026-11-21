@@ -1,6 +1,7 @@
 import DOMPurify from 'dompurify';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { citationAt, orderedCitationGroups } from './citations';
+import { scanFrontmatter } from './frontmatter';
 import './citations.css';
 export type CitationResult = { citations: { raw: string; html: string }[]; bibliographyHtml: string; error?: string };
 export type CitationBinding = { element: HTMLElement; raw: string; id?: string };
@@ -8,19 +9,30 @@ type LinkHandler = (id: string) => void;
 const cache = new Map<string,{time:number;pending:boolean;consumers:Set<() => boolean>;promise:Promise<CitationResult>}>();
 let formattingQueue: Promise<unknown> = Promise.resolve();
 let serial = 0;
+/**
+ * What the citation engine needs from the note besides the citation groups.
+ * It reads only frontmatter (bibliography, references, nocite, lang, csl), so
+ * for a note with a closed frontmatter block that block is enough. Keying on
+ * it means body edits do not start another Pandoc run.
+ */
+export function citationMetadataSource(source: string): string {
+  const front = scanFrontmatter(source);
+  return front?.closed ? source.slice(0, front.bodyStart) : source;
+}
 export function citationScope() { return 'notation-citation-' + (++serial) + '-'; }
 export function formatCitations(source: string, sourcePath: string | undefined, groups: string[], current: () => boolean = () => true): Promise<CitationResult> {
   if (!isTauri()) return Promise.reject(new Error('Citation formatting requires the desktop app with bundled Pandoc. Citation source is unchanged.'));
   const ordered = orderedCitationGroups(source, groups);
   if (ordered.length > 100) return Promise.reject(new Error('Citation formatting supports up to 100 distinct groups per note. Edit the source to reduce them.'));
-  const key = JSON.stringify([sourcePath, source, ordered]), previous = cache.get(key);
+  const metadata = citationMetadataSource(source);
+  const key = JSON.stringify([sourcePath, metadata, ordered]), previous = cache.get(key);
   if (previous && (previous.pending || Date.now() - previous.time < 5000)) { previous.consumers.add(current); return previous.promise; }
   const consumers = new Set([current]);
   const entry = { time: Date.now(), pending: true, consumers, promise: Promise.resolve(null as unknown as CitationResult) };
   const promise = new Promise<void>(resolve => setTimeout(resolve, 250)).then(() => {
     const work = formattingQueue.catch(() => {}).then(async () => {
       if (![...consumers].some(consumer => consumer())) throw new Error('Citation source changed before formatting.');
-      const result = await invoke<CitationResult>('render_citations', { content: source, sourcePath: sourcePath && (/^\//u.test(sourcePath) || /^[A-Za-z]:[\\/]/u.test(sourcePath)) ? sourcePath : undefined, citations: ordered });
+      const result = await invoke<CitationResult>('render_citations', { content: metadata, sourcePath: sourcePath && (/^\//u.test(sourcePath) || /^[A-Za-z]:[\\/]/u.test(sourcePath)) ? sourcePath : undefined, citations: ordered });
       if (result.error) throw new Error(result.error); return result;
     });
     formattingQueue = work; return work;

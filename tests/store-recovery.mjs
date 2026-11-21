@@ -306,7 +306,56 @@ try {
     assert.equal(skipped.status().state, 'error');
     assert.match(skipped.status().error, /could not be migrated: script draft/, 'bootstrap exposes skipped legacy fields');
   }
-  console.log('Store recovery: 18 scenario groups passed (including 9 content comparisons)');
+  {
+    // The session's own write-ahead copy is the work on screen, never an offer.
+    const test = await fixture({ cachedSession: baseSession, database: { ...baseState, session: baseSession } });
+    assert.equal(test.status().recoveryOffered, false);
+    const blocked = test.blockNextWrite();
+    const edited = { ...baseDraft, content: baseDraft.content + ' typed now', updatedAt: Date.now() };
+    test.store.persistMetadata({ draft: edited });
+    assert.equal(test.status().state, 'saving');
+    assert.equal(test.status().recoveryOffered, false, 'an in-flight autosave of live work is not a restore offer');
+    assert.equal(JSON.parse(test.data.get('notation.pending-recovery')).draft.content, edited.content, 'the write-ahead copy is still kept for a crash');
+    const write = test.store.flushPersistence();
+    await blocked.started;
+    assert.equal(test.status().recoveryOffered, false);
+    blocked.release();
+    assert.equal(await write, true);
+    // A settings-only save (for example switching view mode) leaves the
+    // already-committed draft in the copy; that must not surface a banner.
+    test.store.persistMetadata({ settings: { layout: 'preview' } });
+    assert.equal(await test.store.flushPersistence(), true);
+    assert.equal(test.status().state, 'saved');
+    assert.equal(test.status().recoveryOffered, false, 'a settings-only save does not offer the current document for restore');
+  }
+  {
+    // A failed write keeps the copy for the next launch without offering the
+    // user their own unsaved-to-database work back in the same session.
+    const test = await fixture({ cachedSession: baseSession, database: { ...baseState, session: baseSession }, failWrites: true });
+    const edited = { ...baseDraft, content: 'Typed while the database is failing', updatedAt: Date.now() };
+    test.store.persistMetadata({ draft: edited });
+    assert.equal(await test.store.flushPersistence(), false);
+    assert.equal(test.status().state, 'error');
+    assert.equal(test.status().recoveryOffered, false);
+    assert.equal(JSON.parse(test.data.get('notation.pending-recovery')).draft.content, edited.content);
+  }
+  {
+    // A newer copy inherited from an earlier run is offered, and the offer
+    // ends once it is dismissed or committed.
+    const newer = { ...baseDraft, content: 'Cached edit before process crash', updatedAt: 200 };
+    const test = await fixture({ cachedDraft: newer });
+    assert.equal(test.status().recoveryOffered, true);
+    assert.equal(test.status().recovery.draft.content, newer.content);
+    test.store.persistMetadata({ settings: { layout: 'split' } });
+    await test.store.flushPersistence();
+    assert.equal(test.status().recoveryOffered, true, 'unrelated saves keep an inherited offer');
+    test.store.dismissRecovery();
+    assert.equal(test.status().recoveryOffered, false);
+    assert.equal(test.status().recovery, null);
+    const browser = await fixture({ native: false, pendingRecovery: { draft: newer, failedAt: 200 } });
+    assert.equal(browser.status().recoveryOffered, true, 'browser mode offers an inherited copy');
+  }
+  console.log('Store recovery: 21 scenario groups passed (including 9 content comparisons)');
 } finally {
   await server.close();
 }
