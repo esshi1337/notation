@@ -24,6 +24,13 @@ test('chrome controls ease their states with the shared motion tokens', async ({
   await expect(commands).toHaveCSS('animation-name', 'focus-ring-in');
   await expect(commands).toHaveCSS('animation-duration', '0.12s');
   await expect(page.locator('.cm-content').first()).toHaveCSS('animation-name', 'none');
+  // Palette selection lands at once; only the released row fades.
+  await page.getByRole('button', { name: 'Commands', exact: true }).click();
+  const options = page.getByRole('dialog', { name: 'Commands', exact: true }).getByRole('option');
+  await expect(options.first()).toHaveAttribute('aria-selected', 'true');
+  await expect(options.first()).toHaveCSS('transition-duration', '0s');
+  expect((await options.nth(1).evaluate((element) => getComputedStyle(element).transitionDuration)).startsWith('0.12s')).toBe(true);
+  await page.keyboard.press('Escape');
   await expect(commands).toHaveCSS('outline-width', '2px');
 });
 
