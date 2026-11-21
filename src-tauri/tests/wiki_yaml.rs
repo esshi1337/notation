@@ -428,3 +428,49 @@ fn completion_returns_the_first_safe_candidates_in_order_even_when_stale_ones_ra
     let typed = database.wiki_candidates("far", source.to_str(), Some(2)).unwrap();
     assert_eq!(typed.iter().map(|candidate| candidate.relative_path.as_str()).collect::<Vec<_>>(), ["far/a.md", "far/b.md"]);
 }
+
+#[test]
+fn the_note_catalog_is_reused_until_the_index_changes() {
+    let temporary = tempfile::tempdir().unwrap();
+    let (database, root) = setup(temporary.path());
+    let source = root.join("Source.md");
+    let target = root.join("Target.md");
+    fs::write(&source, "# Source\n").unwrap();
+    fs::write(&target, "# Target\n## First\n").unwrap();
+    database.index_workspace().unwrap();
+    let from = source.to_str();
+    let headings = |database: &Database| {
+        database.resolve_wiki_link("Target", from).unwrap().candidates[0]
+            .headings
+            .iter()
+            .map(|heading| heading.text.clone())
+            .collect::<Vec<_>>()
+    };
+    // Repeated calls (served from the kept catalog) agree with the first.
+    for _ in 0..3 {
+        assert_eq!(headings(&database), ["Target", "First"]);
+        assert_eq!(database.wiki_candidates("tar", from, None).unwrap().len(), 1);
+    }
+    // A single-note save (body only) is visible at once.
+    write_with_metadata(target.to_str().unwrap(), "# Target\n## First\n## Second ^anchor\n", &Ok(database.clone())).unwrap();
+    assert_eq!(headings(&database), ["Target", "First", "Second ^anchor"]);
+    assert_eq!(database.resolve_wiki_link("Target", from).unwrap().candidates[0].blocks.len(), 1);
+    // So is a save that forces a rebuild (a new alias) and a new note.
+    write_with_metadata(target.to_str().unwrap(), "---\naliases: [Goal]\n---\n# Target\n", &Ok(database.clone())).unwrap();
+    assert_eq!(database.resolve_wiki_link("Goal", from).unwrap().status, "resolved");
+    assert_eq!(headings(&database), ["Target"]);
+    write_with_metadata(root.join("Tarot.md").to_str().unwrap(), "# Tarot\n", &Ok(database.clone())).unwrap();
+    assert_eq!(database.wiki_candidates("tar", from, None).unwrap().len(), 2);
+    // Another handle to the same database sees the same index.
+    let second = Database::open(&database.path).unwrap();
+    assert_eq!(second.wiki_candidates("tar", from, None).unwrap().len(), 2);
+    // Switching workspace empties the index; the kept catalog must not survive it.
+    let other = temporary.path().join("other");
+    fs::create_dir_all(&other).unwrap();
+    fs::write(other.join("Elsewhere.md"), "# Elsewhere\n").unwrap();
+    database.set_workspace(other.to_str().unwrap()).unwrap();
+    assert!(database.wiki_candidates("", other.join("Elsewhere.md").to_str(), None).unwrap().is_empty());
+    database.index_workspace().unwrap();
+    let names = database.wiki_candidates("", other.join("Elsewhere.md").to_str(), None).unwrap();
+    assert_eq!(names.iter().map(|candidate| candidate.name.as_str()).collect::<Vec<_>>(), ["Elsewhere.md"]);
+}

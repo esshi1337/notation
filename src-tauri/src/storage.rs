@@ -37,6 +37,9 @@ pub struct Database {
     /// Read-only view of the index for queries; in WAL mode it reads the
     /// last committed index while the writer rebuilds.
     index_reader: Arc<Mutex<Connection>>,
+    /// The wiki note catalog as last loaded, with the index `data_version`
+    /// it was loaded at.
+    pub(crate) notes: Arc<Mutex<Option<(i64, Arc<Vec<crate::wiki::Candidate>>)>>>,
     pub path: PathBuf,
 }
 
@@ -378,6 +381,7 @@ PRAGMA user_version=9;").map_err(database_error)?;
             connection: Arc::new(Mutex::new(connection)),
             index: Arc::new(Mutex::new(index)),
             index_reader: Arc::new(Mutex::new(index_reader)),
+            notes: Arc::new(Mutex::new(None)),
             path: path.to_path_buf(),
         };
         // An index built for another workspace or membership (a crash between
