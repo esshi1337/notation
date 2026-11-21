@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 
 export const commandPalette = (page: Page) => page.getByRole('dialog', { name: 'Commands', exact: true });
 export const commandResults = (page: Page) => commandPalette(page).getByRole('listbox', { name: 'Commands', exact: true });
@@ -6,7 +6,15 @@ export const commandResults = (page: Page) => commandPalette(page).getByRole('li
 export async function openSettings(page: Page) {
   await page.getByRole('button', { name: 'App menu', exact: true }).click();
   await page.getByRole('menu', { name: 'App menu', exact: true }).getByRole('menuitem', { name: 'Settings', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Settings', exact: true })).toBeVisible();
+  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await expect(settings).toBeVisible();
+  await settled(settings);
+}
+
+/** Wait for an element's enter animation; geometry assertions need the settled frame. */
+export async function settled(target: Locator) {
+  await expect(target).toBeVisible();
+  await target.evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)));
 }
 
 /** Opt in to Scripts through Settings; the preference is off by default. */

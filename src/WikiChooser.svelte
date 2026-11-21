@@ -1,11 +1,12 @@
 <script lang="ts">
+  import { scrimExit } from './motion';
   import { onMount } from 'svelte';
   import type { WikiResolution } from './wiki-navigation';
   let { resolution, busy, error = '', choose, create, close }: { resolution: WikiResolution; busy: boolean; error?: string; choose: (path: string) => void; create: () => void; close: () => void } = $props();
   let dialog: HTMLDialogElement;
   onMount(() => { dialog.showModal(); });
 </script>
-<dialog class="wiki-dialog" bind:this={dialog} aria-label={resolution.status === 'ambiguous' ? 'Choose note' : 'Create note'} oncancel={(event) => { event.preventDefault(); if (!busy) close(); }}>
+<dialog class="wiki-dialog" use:scrimExit bind:this={dialog} aria-label={resolution.status === 'ambiguous' ? 'Choose note' : 'Create note'} oncancel={(event) => { event.preventDefault(); if (!busy) close(); }}>
   <div class="scripts-heading"><strong>{resolution.status === 'ambiguous' ? 'Choose note' : 'Note not found'}</strong><button aria-label="Close note navigation" disabled={busy} onclick={close}>×</button></div>
   {#if error}<div class="script-error" role="alert">{error}</div>{/if}
   {#if resolution.status === 'ambiguous'}<p class="panel-note">Choose a note for [[{resolution.target}]].</p><div class="wiki-candidates">{#each resolution.candidates as candidate}<button disabled={busy} aria-label={'Open ' + candidate.relativePath} onclick={() => choose(candidate.path)}><strong>{candidate.title || candidate.name}</strong><span>{candidate.relativePath}</span></button>{/each}</div>

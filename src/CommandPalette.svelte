@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { scrimExit } from './motion';
   import { onDestroy, onMount } from 'svelte';
   import type { CommandId } from './shortcuts';
   import type { CommandItem } from './ui-commands';
@@ -32,7 +33,7 @@
   onDestroy(() => { if (dialog?.open) dialog.close(); if (previous?.isConnected) previous.focus(); });
 </script>
 
-<dialog class="command-palette" aria-label="Commands" bind:this={dialog} onkeydown={keyboard} oncancel={(event) => { event.preventDefault(); close(); }}>
+<dialog class="command-palette" use:scrimExit aria-label="Commands" bind:this={dialog} onkeydown={keyboard} oncancel={(event) => { event.preventDefault(); close(); }}>
   <span id="command-enabled" hidden>Enabled</span>
   <div class="palette-search-row">
     <Icon name="search" size={20} {theme} />
