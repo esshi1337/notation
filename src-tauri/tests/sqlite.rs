@@ -32,7 +32,7 @@ fn schema_seven_stickies_migrate_to_eight_without_touching_titles_or_maximum_pla
     assert_eq!(state.draft.unwrap()["content"], "ordinary");
     drop(db);
     let connection = rusqlite::Connection::open(&path).unwrap();
-    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 11);
+    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 12);
     // SQLite also rejects invalid color/markup if a future caller misses validation.
     assert!(connection.execute("UPDATE sticky_notes SET color='red' WHERE id=?1", [id]).is_err());
     assert!(connection.execute("UPDATE sticky_notes SET html=?2 WHERE id=?1", rusqlite::params![id, "x".repeat(131073)]).is_err());
@@ -662,7 +662,7 @@ fn session_migration_restores_all_tabs_and_rejects_oversized_or_invalid_updates_
     drop(database);
     let connection = rusqlite::Connection::open(&path).unwrap();
     connection
-        .execute_batch("DROP TABLE sessions; DROP TABLE cache_blocks; DROP TABLE cache_graph_links; DROP TABLE cache_frontmatter; DROP TABLE cache_properties; DROP TABLE cache_headings; PRAGMA user_version=2;")
+        .execute_batch("DROP TABLE sessions; PRAGMA user_version=2;")
         .unwrap();
     drop(connection);
     let database = Database::open(&path).unwrap();
@@ -837,48 +837,136 @@ fn escaped_draft_limits_rollback_session_and_settings_and_preserve_explicit_null
     assert!(cleared.session.is_none() && cleared.draft.is_none() && cleared.script_draft.is_none());
 }
 
+/// The index tables as schema versions 2 to 11 kept them in the state database.
+const LEGACY_INDEX: &str = "
+CREATE TABLE cache_files(path TEXT PRIMARY KEY, name TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL);
+CREATE VIRTUAL TABLE cache_fts USING fts5(path UNINDEXED,title,body,tokenize='unicode61');
+CREATE TABLE cache_links(source_path TEXT NOT NULL,line INTEGER NOT NULL,text TEXT NOT NULL,target_path TEXT NOT NULL);
+CREATE INDEX cache_links_target ON cache_links(target_path);
+CREATE TABLE cache_tags(path TEXT NOT NULL,line INTEGER NOT NULL,tag TEXT NOT NULL);
+CREATE TABLE cache_tasks(path TEXT NOT NULL,line INTEGER NOT NULL,text TEXT NOT NULL,checked INTEGER NOT NULL);
+CREATE TABLE cache_frontmatter(path TEXT PRIMARY KEY,json TEXT NOT NULL);
+CREATE TABLE cache_properties(path TEXT NOT NULL,key TEXT NOT NULL,kind TEXT NOT NULL,json_value TEXT NOT NULL);
+CREATE INDEX cache_properties_lookup ON cache_properties(key,kind,json_value);
+CREATE TABLE cache_headings(path TEXT NOT NULL,text TEXT NOT NULL,line INTEGER NOT NULL,level INTEGER NOT NULL);
+CREATE TABLE cache_blocks(path TEXT NOT NULL,id TEXT NOT NULL,line INTEGER NOT NULL);
+CREATE TABLE cache_graph_links(source_path TEXT NOT NULL,line INTEGER NOT NULL,raw_target TEXT NOT NULL,kind TEXT NOT NULL,target_path TEXT,status TEXT NOT NULL,candidates_json TEXT NOT NULL,heading TEXT,alias TEXT);
+CREATE INDEX cache_graph_source ON cache_graph_links(source_path);
+";
+
+fn legacy_database(directory: &std::path::Path, version: i64, baseline: bool) -> std::path::PathBuf {
+    let path = directory.join("state.sqlite3");
+    let database = Database::open(&path).unwrap();
+    database.persist(StateUpdate { settings: Some(json!({"theme":"light"})), ..Default::default() }).unwrap();
+    let index = database.index_path();
+    drop(database);
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = fs::remove_file(format!("{}{suffix}", index.display()));
+    }
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.execute_batch(LEGACY_INDEX).unwrap();
+    connection.execute_batch("
+INSERT INTO cache_files(rowid,path,name,title,content) VALUES(7,'/notes/kept.md','kept.md','Kept','zebra crossing'),(9,'/notes/other.md','other.md','Other','plain');
+INSERT INTO cache_fts(rowid,path,title,body) VALUES(7,'/notes/kept.md','Kept','zebra crossing'),(9,'/notes/other.md','Other','plain');
+INSERT INTO cache_frontmatter(path,json) VALUES('/notes/kept.md','{}');
+INSERT INTO cache_tags(path,line,tag) VALUES('/notes/kept.md',1,'kept');
+INSERT INTO cache_tasks(path,line,text,checked) VALUES('/notes/kept.md',2,'kept task',0);
+INSERT INTO cache_headings(path,text,line,level) VALUES('/notes/kept.md','Kept',1,1);
+INSERT INTO cache_blocks(path,id,line) VALUES('/notes/kept.md','b1',3);
+INSERT INTO cache_properties(path,key,kind,json_value) VALUES('/notes/kept.md','rank','number','1');
+INSERT INTO cache_links(source_path,line,text,target_path) VALUES('/notes/kept.md',4,'[[other]]','/notes/other.md');
+INSERT INTO cache_graph_links(source_path,line,raw_target,kind,target_path,status,candidates_json) VALUES('/notes/kept.md',4,'other','wiki','/notes/other.md','resolved','[]');
+").unwrap();
+    if baseline {
+        connection.execute("INSERT INTO app_meta(key,value) VALUES('index_baseline','{\"marker\":true}')", []).unwrap();
+    }
+    connection.execute_batch(&format!("PRAGMA user_version={version};")).unwrap();
+    path
+}
+
+fn count(connection: &rusqlite::Connection, sql: &str) -> i64 {
+    connection.query_row(sql, [], |row| row.get(0)).unwrap()
+}
+
 #[test]
-fn schema_nine_gains_path_indexes_used_by_tag_and_property_lookups() {
+fn the_index_moves_to_its_own_database_with_every_row_and_its_lookup_indexes() {
+    for (version, baseline_kept) in [(9, false), (10, false), (11, true)] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = legacy_database(directory.path(), version, true);
+        let database = Database::open(&path).unwrap();
+        assert_eq!(database.bootstrap(None).unwrap().settings["theme"], "light");
+        let index_path = database.index_path();
+        assert_ne!(index_path, path);
+        drop(database);
+
+        // The state database keeps user data and no longer holds the index.
+        let state = rusqlite::Connection::open(&path).unwrap();
+        assert_eq!(count(&state, "PRAGMA user_version"), 12, "from {version}");
+        assert_eq!(count(&state, "SELECT count(*) FROM sqlite_master WHERE name LIKE 'cache_%'"), 0);
+        assert_eq!(count(&state, "SELECT count(*) FROM app_meta WHERE key='index_baseline'"), 0);
+        assert_eq!(count(&state, "SELECT count(*) FROM settings"), 1);
+
+        // Every row arrived, with the note row ids the full-text rows share.
+        let index = rusqlite::Connection::open(&index_path).unwrap();
+        for (table, rows) in [("cache_files", 2), ("cache_frontmatter", 1), ("cache_tags", 1), ("cache_tasks", 1), ("cache_headings", 1), ("cache_blocks", 1), ("cache_properties", 1), ("cache_links", 1), ("cache_graph_links", 1)] {
+            assert_eq!(count(&index, &format!("SELECT count(*) FROM {table}")), rows, "{table} from {version}");
+        }
+        assert_eq!(count(&index, "SELECT rowid FROM cache_files WHERE path='/notes/kept.md'"), 7);
+        assert_eq!(count(&index, "SELECT rowid FROM cache_fts WHERE cache_fts MATCH 'zebra'"), 7);
+        // Only a version that wrote real baselines keeps one.
+        assert_eq!(count(&index, "SELECT count(*) FROM index_meta WHERE key='index_baseline'"), i64::from(baseline_kept), "from {version}");
+        assert_eq!(count(&index, "SELECT count(*) FROM index_meta WHERE key='index_scope'"), 1);
+
+        let plan = |sql: &str| -> String {
+            let mut statement = index.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+            let rows = statement.query_map([], |row| row.get::<_, String>(3)).unwrap();
+            rows.map(Result::unwrap).collect::<Vec<_>>().join("\n")
+        };
+        let tags = plan("SELECT f.path FROM cache_files f WHERE EXISTS(SELECT 1 FROM cache_tags t WHERE t.path=f.path AND t.tag='x')");
+        assert!(tags.contains("cache_tags_path"), "{tags}");
+        let properties = plan("SELECT f.path FROM cache_files f WHERE EXISTS(SELECT 1 FROM cache_properties p WHERE p.path=f.path AND p.key='x')");
+        assert!(properties.contains("cache_properties_path"), "{properties}");
+        for (table, column, name) in [("cache_headings", "path", "cache_headings_path"), ("cache_blocks", "path", "cache_blocks_path"), ("cache_tasks", "path", "cache_tasks_path"), ("cache_links", "source_path", "cache_links_source")] {
+            let plan = plan(&format!("DELETE FROM {table} WHERE {column}='x'"));
+            assert!(plan.contains(name), "{table}: {plan}");
+        }
+        drop((state, index));
+
+        // Reopening keeps the moved index (it still matches the selection).
+        let database = Database::open(&path).unwrap();
+        drop(database);
+        let index = rusqlite::Connection::open(&index_path).unwrap();
+        assert_eq!(count(&index, "SELECT count(*) FROM cache_files"), 2);
+    }
+}
+
+#[test]
+fn an_unusable_or_mismatched_index_file_is_replaced_without_touching_state() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("state.sqlite3");
     let database = Database::open(&path).unwrap();
     database.persist(StateUpdate { settings: Some(json!({"theme":"light"})), ..Default::default() }).unwrap();
+    let index_path = database.index_path();
     drop(database);
-    let connection = rusqlite::Connection::open(&path).unwrap();
-    connection.execute_batch("DROP INDEX cache_tags_path; DROP INDEX cache_properties_path; INSERT INTO cache_tags(path,line,tag) VALUES('/kept.md',1,'kept'); PRAGMA user_version=9;").unwrap();
-    drop(connection);
+    // Garbage in place of the index.
+    for suffix in ["-wal", "-shm"] {
+        let _ = fs::remove_file(format!("{}{suffix}", index_path.display()));
+    }
+    fs::write(&index_path, b"this is not a database").unwrap();
     let database = Database::open(&path).unwrap();
     assert_eq!(database.bootstrap(None).unwrap().settings["theme"], "light");
+    assert!(database.get_tags().unwrap().is_empty());
     drop(database);
-    let connection = rusqlite::Connection::open(&path).unwrap();
-    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 11);
-    assert_eq!(connection.query_row("SELECT count(*) FROM cache_tags WHERE path='/kept.md'", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
-    let plan = |sql: &str| -> String {
-        let mut statement = connection.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
-        let rows = statement.query_map([], |row| row.get::<_, String>(3)).unwrap();
-        rows.map(Result::unwrap).collect::<Vec<_>>().join("\n")
-    };
-    let tags = plan("SELECT f.path FROM cache_files f WHERE EXISTS(SELECT 1 FROM cache_tags t WHERE t.path=f.path AND t.tag='x')");
-    assert!(tags.contains("cache_tags_path"), "{tags}");
-    let properties = plan("SELECT f.path FROM cache_files f WHERE EXISTS(SELECT 1 FROM cache_properties p WHERE p.path=f.path AND p.key='x')");
-    assert!(properties.contains("cache_properties_path"), "{properties}");
-}
-
-#[test]
-fn schema_ten_gains_path_indexes_for_single_note_updates_and_drops_any_baseline() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("state.sqlite3");
-    drop(Database::open(&path).unwrap());
-    let connection = rusqlite::Connection::open(&path).unwrap();
-    connection.execute_batch("DROP INDEX cache_headings_path; DROP INDEX cache_blocks_path; DROP INDEX cache_tasks_path; DROP INDEX cache_links_source; INSERT INTO app_meta(key,value) VALUES('index_baseline','{}'); INSERT INTO cache_tasks(path,line,text,checked) VALUES('/kept.md',1,'kept',0); PRAGMA user_version=10;").unwrap();
-    drop(connection);
-    drop(Database::open(&path).unwrap());
-    let connection = rusqlite::Connection::open(&path).unwrap();
-    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 11);
-    assert_eq!(connection.query_row("SELECT count(*) FROM app_meta WHERE key='index_baseline'", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
-    assert_eq!(connection.query_row("SELECT count(*) FROM cache_tasks", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
-    for (table, column, index) in [("cache_headings", "path", "cache_headings_path"), ("cache_blocks", "path", "cache_blocks_path"), ("cache_tasks", "path", "cache_tasks_path"), ("cache_links", "source_path", "cache_links_source")] {
-        let plan: String = connection.query_row(&format!("EXPLAIN QUERY PLAN DELETE FROM {table} WHERE {column}='x'"), [], |row| row.get(3)).unwrap();
-        assert!(plan.contains(index), "{table}: {plan}");
+    // An index recorded for another workspace selection is emptied on open.
+    let index = rusqlite::Connection::open(&index_path).unwrap();
+    index.execute_batch("INSERT INTO cache_tags(path,line,tag) VALUES('/stale.md',1,'stale'); INSERT OR REPLACE INTO index_meta(key,value) VALUES('index_scope','someone-else:41');").unwrap();
+    drop(index);
+    let database = Database::open(&path).unwrap();
+    assert!(database.get_tags().unwrap().is_empty());
+    assert_eq!(database.bootstrap(None).unwrap().settings["theme"], "light");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(fs::metadata(&index_path).unwrap().permissions().mode() & 0o777, 0o600);
     }
 }

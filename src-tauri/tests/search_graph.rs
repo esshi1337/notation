@@ -289,7 +289,7 @@ fn search_and_graph_revalidate_cache_paths_and_rebuild_preserves_appdata() {
     database.index_workspace().unwrap();
     let outside = temporary.path().join("outside.md");
     fs::write(&outside, "outside secret").unwrap();
-    let connection = rusqlite::Connection::open(&database.path).unwrap();
+    let connection = rusqlite::Connection::open(database.index_path()).unwrap();
     connection.execute("INSERT INTO cache_files(path,name,title,content) VALUES(?1,'outside.md','secret','outside secret')",[outside.to_str().unwrap()]).unwrap();
     connection.execute("INSERT INTO cache_graph_links(source_path,line,raw_target,kind,target_path,status,candidates_json) VALUES(?1,1,'outside','wiki',?2,'resolved','[]')",[root.join("A.md").to_str().unwrap(),outside.to_str().unwrap()]).unwrap();
     assert_eq!(

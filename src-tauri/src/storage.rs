@@ -12,7 +12,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const MAX_CONTENT: usize = 4 * 1024 * 1024;
 const REVISION_LIMIT: usize = 50;
 const RUN_LIMIT: usize = 200;
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
+/// Version of the separate, disposable index database.
+const INDEX_SCHEMA_VERSION: i64 = 1;
 
 pub fn now() -> i64 {
     SystemTime::now()
@@ -28,6 +30,13 @@ const DATABASE_ERROR_PREFIX: &str = "Local database: ";
 #[derive(Clone)]
 pub struct Database {
     connection: Arc<Mutex<Connection>>,
+    /// The workspace index lives in its own file with its own connections,
+    /// so a rebuild never holds up autosave or other state writes. Lock
+    /// order, where both are needed: index writer first, then state.
+    index: Arc<Mutex<Connection>>,
+    /// Read-only view of the index for queries; in WAL mode it reads the
+    /// last committed index while the writer rebuilds.
+    index_reader: Arc<Mutex<Connection>>,
     pub path: PathBuf,
 }
 
@@ -201,38 +210,34 @@ PRAGMA user_version=1;
 "#).map_err(database_error)?;
             tx.commit().map_err(database_error)?;
         }
+        // Versions 2, 4, 5, 10 and 11 created or indexed the workspace index
+        // tables in this database. The index now has its own file and schema
+        // (version 12 moves whatever exists), so those steps only keep their
+        // other changes and their version numbers.
         if version < 2 {
-            let tx = connection.transaction().map_err(database_error)?;
-            tx.execute_batch(r#"
-CREATE TABLE cache_files(path TEXT PRIMARY KEY, name TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL);
-CREATE VIRTUAL TABLE cache_fts USING fts5(path UNINDEXED,title,body,tokenize='unicode61');
-CREATE TABLE cache_links(source_path TEXT NOT NULL,line INTEGER NOT NULL,text TEXT NOT NULL,target_path TEXT NOT NULL);
-CREATE INDEX cache_links_target ON cache_links(target_path);
-CREATE TABLE cache_tags(path TEXT NOT NULL,line INTEGER NOT NULL,tag TEXT NOT NULL);
-CREATE TABLE cache_tasks(path TEXT NOT NULL,line INTEGER NOT NULL,text TEXT NOT NULL,checked INTEGER NOT NULL);
-PRAGMA user_version=2;
-"#).map_err(database_error)?;
-            tx.commit().map_err(database_error)?;
+            connection
+                .execute_batch("PRAGMA user_version=2;")
+                .map_err(database_error)?;
         }
         if version < 3 {
             let tx = connection.transaction().map_err(database_error)?;
             tx.execute_batch("CREATE TABLE sessions(id INTEGER PRIMARY KEY CHECK(id=1),json TEXT NOT NULL); PRAGMA user_version=3;").map_err(database_error)?;
             tx.commit().map_err(database_error)?;
         }
-        if version < 4 {
-            let tx = connection.transaction().map_err(database_error)?;
-            tx.execute_batch("CREATE TABLE cache_frontmatter(path TEXT PRIMARY KEY,json TEXT NOT NULL); CREATE TABLE cache_properties(path TEXT NOT NULL,key TEXT NOT NULL,kind TEXT NOT NULL,json_value TEXT NOT NULL); CREATE INDEX cache_properties_lookup ON cache_properties(key,kind,json_value); CREATE TABLE cache_headings(path TEXT NOT NULL,text TEXT NOT NULL,line INTEGER NOT NULL,level INTEGER NOT NULL); PRAGMA user_version=4;").map_err(database_error)?;
-            tx.commit().map_err(database_error)?;
-        }
         if version < 5 {
-            let tx = connection.transaction().map_err(database_error)?;
-            tx.execute_batch("CREATE TABLE cache_blocks(path TEXT NOT NULL,id TEXT NOT NULL,line INTEGER NOT NULL); CREATE TABLE cache_graph_links(source_path TEXT NOT NULL,line INTEGER NOT NULL,raw_target TEXT NOT NULL,kind TEXT NOT NULL,target_path TEXT,status TEXT NOT NULL,candidates_json TEXT NOT NULL,heading TEXT,alias TEXT); CREATE INDEX cache_graph_source ON cache_graph_links(source_path); INSERT INTO cache_graph_links(source_path,line,raw_target,kind,target_path,status,candidates_json) SELECT source_path,line,target_path,'markdown',target_path,'resolved','[]' FROM cache_links; PRAGMA user_version=5;").map_err(database_error)?;
-            tx.commit().map_err(database_error)?;
+            connection
+                .execute_batch("PRAGMA user_version=5;")
+                .map_err(database_error)?;
         }
         if version < 6 {
             let tx = connection.transaction().map_err(database_error)?;
             tx.execute_batch("CREATE TABLE IF NOT EXISTS named_workspaces(id TEXT PRIMARY KEY,name TEXT NOT NULL,legacy_root TEXT UNIQUE); CREATE TABLE IF NOT EXISTS workspace_members(workspace_id TEXT NOT NULL REFERENCES named_workspaces(id) ON DELETE CASCADE,path TEXT NOT NULL,PRIMARY KEY(workspace_id,path)); CREATE TABLE IF NOT EXISTS workspace_selection(id INTEGER PRIMARY KEY CHECK(id=1),active_id TEXT,revision INTEGER NOT NULL DEFAULT 0); INSERT OR IGNORE INTO named_workspaces(id,name,legacy_root) SELECT 'legacy-1','Workspace',path FROM workspaces WHERE id=1; INSERT OR IGNORE INTO workspace_selection(id,active_id) VALUES(1,(SELECT id FROM named_workspaces LIMIT 1)); PRAGMA user_version=6;").map_err(database_error)?;
-            clear_cache(&tx)?;
+            // Workspaces changed shape: drop any index built before, rather
+            // than move it to the index database below.
+            for table in INDEX_TABLES.iter().chain(["cache_fts"].iter()) {
+                tx.execute(&format!("DROP TABLE IF EXISTS {table}"), [])
+                    .map_err(database_error)?;
+            }
             if let Some(root) = tx
                 .query_row(
                     "SELECT legacy_root FROM named_workspaces WHERE id='legacy-1'",
@@ -287,26 +292,115 @@ ALTER TABLE sticky_notes_v9 RENAME TO sticky_notes;
 PRAGMA user_version=9;").map_err(database_error)?;
             tx.commit().map_err(database_error)?;
         }
-        if version < 10 {
-            let tx = connection.transaction().map_err(database_error)?;
-            // Search and graph queries correlate tags and properties by note
-            // path; without these each result row scanned the whole table.
-            tx.execute_batch("CREATE INDEX IF NOT EXISTS cache_tags_path ON cache_tags(path,tag); CREATE INDEX IF NOT EXISTS cache_properties_path ON cache_properties(path,key); PRAGMA user_version=10;").map_err(database_error)?;
-            tx.commit().map_err(database_error)?;
-        }
         if version < 11 {
             let tx = connection.transaction().map_err(database_error)?;
-            // A single-note index update removes one note's rows from these
-            // tables; without a path index each removal scanned the table.
-            tx.execute_batch("CREATE INDEX IF NOT EXISTS cache_headings_path ON cache_headings(path); CREATE INDEX IF NOT EXISTS cache_blocks_path ON cache_blocks(path); CREATE INDEX IF NOT EXISTS cache_tasks_path ON cache_tasks(path); CREATE INDEX IF NOT EXISTS cache_links_source ON cache_links(source_path); PRAGMA user_version=11;").map_err(database_error)?;
-            // Indexes built before this version carry no baseline marker.
+            // Indexes built before version 11 carry no usable baseline marker.
             tx.execute("DELETE FROM app_meta WHERE key=?1", [INDEX_BASELINE_KEY]).map_err(database_error)?;
+            tx.execute_batch("PRAGMA user_version=11;").map_err(database_error)?;
             tx.commit().map_err(database_error)?;
         }
-        Ok(Self {
+        let index_path = index_path_for(path);
+        if version < 12 {
+            // Move the index out of the state database (once). Copy first,
+            // then drop: an interrupted move is simply repeated.
+            prepare_index_file(&index_path)?;
+            connection
+                .execute("ATTACH DATABASE ?1 AS idx", [index_path.to_string_lossy()])
+                .map_err(database_error)?;
+            let moved = (|| -> Result<(), String> {
+                connection
+                    .execute_batch("PRAGMA idx.journal_mode=WAL;")
+                    .map_err(database_error)?;
+                let tx = connection.transaction().map_err(database_error)?;
+                tx.execute_batch(&INDEX_SCHEMA.replace("CREATE TABLE IF NOT EXISTS ", "CREATE TABLE IF NOT EXISTS idx.").replace("CREATE VIRTUAL TABLE IF NOT EXISTS ", "CREATE VIRTUAL TABLE IF NOT EXISTS idx.").replace("CREATE INDEX IF NOT EXISTS ", "CREATE INDEX IF NOT EXISTS idx."))
+                    .map_err(database_error)?;
+                let present = |table: &str| -> Result<bool, String> {
+                    tx.query_row("SELECT EXISTS(SELECT 1 FROM main.sqlite_master WHERE name=?1)", [table], |row| row.get(0))
+                        .map_err(database_error)
+                };
+                for table in INDEX_TABLES {
+                    tx.execute(&format!("DELETE FROM idx.{table}"), [])
+                        .map_err(database_error)?;
+                    if !present(table)? {
+                        continue;
+                    }
+                    // Keep row ids: a note's full-text row shares the id of
+                    // its `cache_files` row.
+                    tx.execute(&format!("INSERT INTO idx.{table}(rowid,{columns}) SELECT rowid,{columns} FROM main.{table}", columns = index_columns(table)), [])
+                        .map_err(database_error)?;
+                }
+                tx.execute("DELETE FROM idx.cache_fts", []).map_err(database_error)?;
+                if present("cache_fts")? {
+                    tx.execute("INSERT INTO idx.cache_fts(rowid,path,title,body) SELECT rowid,path,title,body FROM main.cache_fts", []).map_err(database_error)?;
+                }
+                tx.execute("DELETE FROM idx.index_meta", []).map_err(database_error)?;
+                tx.execute("INSERT INTO idx.index_meta(key,value) SELECT key,value FROM main.app_meta WHERE key=?1", [INDEX_BASELINE_KEY]).map_err(database_error)?;
+                // The old index was emptied in the same transaction as every
+                // workspace change, so it belongs to the current selection.
+                tx.execute("INSERT INTO idx.index_meta(key,value) SELECT ?1, COALESCE(active_id,'') || ':' || revision FROM main.workspace_selection WHERE id=1", [INDEX_SCOPE_KEY]).map_err(database_error)?;
+                tx.execute(&format!("PRAGMA idx.user_version={INDEX_SCHEMA_VERSION}"), []).map_err(database_error)?;
+                for table in INDEX_TABLES.iter().chain(["cache_fts"].iter()) {
+                    tx.execute(&format!("DROP TABLE IF EXISTS main.{table}"), [])
+                        .map_err(database_error)?;
+                }
+                tx.execute("DELETE FROM main.app_meta WHERE key=?1", [INDEX_BASELINE_KEY]).map_err(database_error)?;
+                tx.execute_batch("PRAGMA main.user_version=12;").map_err(database_error)?;
+                tx.commit().map_err(database_error)
+            })();
+            connection
+                .execute_batch("DETACH DATABASE idx")
+                .map_err(database_error)?;
+            moved?;
+        }
+        let (index, index_reader) = open_index(&index_path)?;
+        let database = Self {
             connection: Arc::new(Mutex::new(connection)),
+            index: Arc::new(Mutex::new(index)),
+            index_reader: Arc::new(Mutex::new(index_reader)),
             path: path.to_path_buf(),
+        };
+        // An index built for another workspace or membership (a crash between
+        // changing the workspace and emptying the index) must not be served.
+        {
+            let index = database.index_lock()?;
+            let scope = database.index_scope()?;
+            let recorded: Option<String> = index
+                .query_row("SELECT value FROM index_meta WHERE key=?1", [INDEX_SCOPE_KEY], |row| row.get(0))
+                .optional()
+                .map_err(database_error)?;
+            if recorded.as_deref() != Some(scope.as_str()) {
+                clear_cache(&index)?;
+            }
+        }
+        Ok(database)
+    }
+
+    /// The index database file that belongs to this state database.
+    pub fn index_path(&self) -> PathBuf {
+        index_path_for(&self.path)
+    }
+    /// Writer connection of the index. Take it before `lock()` when a
+    /// section needs both.
+    pub(crate) fn index_lock(&self) -> Result<MutexGuard<'_, Connection>, String> {
+        self.index.lock().map_err(|_| {
+            "Workspace index is unavailable after an internal error. Restart Notation to rebuild it.".into()
         })
+    }
+    /// Read-only connection of the index, for queries.
+    pub(crate) fn index_read(&self) -> Result<MutexGuard<'_, Connection>, String> {
+        self.index_reader.lock().map_err(|_| {
+            "Workspace index is unavailable after an internal error. Restart Notation to rebuild it.".into()
+        })
+    }
+    /// The workspace selection and membership revision an index is valid for.
+    pub(crate) fn index_scope(&self) -> Result<String, String> {
+        self.lock()?
+            .query_row(
+                "SELECT COALESCE(active_id,'') || ':' || revision FROM workspace_selection WHERE id=1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(database_error)
     }
 
     pub(crate) fn lock(&self) -> Result<MutexGuard<'_, Connection>, String> {
@@ -565,12 +659,155 @@ PRAGMA user_version=9;").map_err(database_error)?;
 
 /// Marks a complete full index that single-note updates may build on.
 pub(crate) const INDEX_BASELINE_KEY: &str = "index_baseline";
+/// Records the workspace selection and membership revision of the index.
+pub(crate) const INDEX_SCOPE_KEY: &str = "index_scope";
+const INDEX_TABLES: [&str; 9] = [
+    "cache_files",
+    "cache_links",
+    "cache_tags",
+    "cache_tasks",
+    "cache_frontmatter",
+    "cache_properties",
+    "cache_headings",
+    "cache_blocks",
+    "cache_graph_links",
+];
+const CLEAR_INDEX_TABLES: &str = "DELETE FROM cache_blocks; DELETE FROM cache_graph_links; DELETE FROM cache_frontmatter; DELETE FROM cache_properties; DELETE FROM cache_headings; DELETE FROM cache_fts; DELETE FROM cache_links; DELETE FROM cache_tags; DELETE FROM cache_tasks; DELETE FROM cache_files;";
+/// The whole index schema. The index is disposable, so there are no
+/// migrations: a file with another version is recreated.
+const INDEX_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS cache_files(path TEXT PRIMARY KEY, name TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL);
+CREATE VIRTUAL TABLE IF NOT EXISTS cache_fts USING fts5(path UNINDEXED,title,body,tokenize='unicode61');
+CREATE TABLE IF NOT EXISTS cache_links(source_path TEXT NOT NULL,line INTEGER NOT NULL,text TEXT NOT NULL,target_path TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS cache_tags(path TEXT NOT NULL,line INTEGER NOT NULL,tag TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS cache_tasks(path TEXT NOT NULL,line INTEGER NOT NULL,text TEXT NOT NULL,checked INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS cache_frontmatter(path TEXT PRIMARY KEY,json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS cache_properties(path TEXT NOT NULL,key TEXT NOT NULL,kind TEXT NOT NULL,json_value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS cache_headings(path TEXT NOT NULL,text TEXT NOT NULL,line INTEGER NOT NULL,level INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS cache_blocks(path TEXT NOT NULL,id TEXT NOT NULL,line INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS cache_graph_links(source_path TEXT NOT NULL,line INTEGER NOT NULL,raw_target TEXT NOT NULL,kind TEXT NOT NULL,target_path TEXT,status TEXT NOT NULL,candidates_json TEXT NOT NULL,heading TEXT,alias TEXT);
+CREATE TABLE IF NOT EXISTS index_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS cache_links_target ON cache_links(target_path);
+CREATE INDEX IF NOT EXISTS cache_links_source ON cache_links(source_path);
+CREATE INDEX IF NOT EXISTS cache_tags_path ON cache_tags(path,tag);
+CREATE INDEX IF NOT EXISTS cache_tasks_path ON cache_tasks(path);
+CREATE INDEX IF NOT EXISTS cache_properties_lookup ON cache_properties(key,kind,json_value);
+CREATE INDEX IF NOT EXISTS cache_properties_path ON cache_properties(path,key);
+CREATE INDEX IF NOT EXISTS cache_headings_path ON cache_headings(path);
+CREATE INDEX IF NOT EXISTS cache_blocks_path ON cache_blocks(path);
+CREATE INDEX IF NOT EXISTS cache_graph_source ON cache_graph_links(source_path);
+";
+fn index_columns(table: &str) -> &'static str {
+    match table {
+        "cache_files" => "path,name,title,content",
+        "cache_links" => "source_path,line,text,target_path",
+        "cache_tags" => "path,line,tag",
+        "cache_tasks" => "path,line,text,checked",
+        "cache_frontmatter" => "path,json",
+        "cache_properties" => "path,key,kind,json_value",
+        "cache_headings" => "path,text,line,level",
+        "cache_blocks" => "path,id,line",
+        _ => "source_path,line,raw_target,kind,target_path,status,candidates_json,heading,alias",
+    }
+}
+fn index_path_for(path: &Path) -> PathBuf {
+    path.with_extension("index.sqlite3")
+}
+/// Create the index file privately, or check that an existing one is a
+/// regular file.
+fn prepare_index_file(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true).mode(0o600);
+        match options.open(path) {
+            Ok(_) => (),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let metadata = fs::symlink_metadata(path).map_err(database_error)?;
+                if !metadata.is_file() || metadata.is_symlink() {
+                    return Err("Workspace index must be a regular file, not a symbolic link.".into());
+                }
+            }
+            Err(error) => return Err(database_error(error)),
+        }
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(database_error)?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+fn open_index_writer(path: &Path) -> Result<Connection, String> {
+    let connection = Connection::open(path).map_err(database_error)?;
+    connection
+        .busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(database_error)?;
+    connection
+        .execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA journal_size_limit=4194304;")
+        .map_err(database_error)?;
+    let version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(database_error)?;
+    let tables: i64 = connection
+        .query_row("SELECT count(*) FROM sqlite_master", [], |row| row.get(0))
+        .map_err(database_error)?;
+    if version != INDEX_SCHEMA_VERSION && tables > 0 {
+        return Err("outdated index".into());
+    }
+    connection
+        .execute_batch(INDEX_SCHEMA)
+        .map_err(database_error)?;
+    connection
+        .execute_batch(&format!("PRAGMA user_version={INDEX_SCHEMA_VERSION};"))
+        .map_err(database_error)?;
+    // Fail here, not in a later query, if the file is not a usable index.
+    connection
+        .query_row("SELECT count(*) FROM cache_files", [], |row| row.get::<_, i64>(0))
+        .map_err(database_error)?;
+    Ok(connection)
+}
+/// Open the index writer and reader. The index only caches what the notes
+/// on disk say, so a file that cannot be used is replaced by an empty one.
+fn open_index(path: &Path) -> Result<(Connection, Connection), String> {
+    prepare_index_file(path)?;
+    let writer = match open_index_writer(path) {
+        Ok(writer) => writer,
+        Err(_) => {
+            for suffix in ["", "-wal", "-shm"] {
+                let mut file = path.as_os_str().to_owned();
+                file.push(suffix);
+                match fs::remove_file(&file) {
+                    Ok(()) => (),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                    Err(error) => return Err(database_error(error)),
+                }
+            }
+            prepare_index_file(path)?;
+            open_index_writer(path)?
+        }
+    };
+    let reader = Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(database_error)?;
+    reader
+        .busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(database_error)?;
+    reader
+        .execute_batch("PRAGMA query_only=ON;")
+        .map_err(database_error)?;
+    Ok((writer, reader))
+}
+/// Empty the index (on its writer connection), including its markers.
 pub(crate) fn clear_cache(connection: &Connection) -> Result<(), String> {
     // An emptied index is no baseline for single-note updates.
     connection
-        .execute("DELETE FROM app_meta WHERE key=?1", [INDEX_BASELINE_KEY])
+        .execute("DELETE FROM index_meta", [])
         .map_err(database_error)?;
-    connection.execute_batch("DELETE FROM cache_blocks; DELETE FROM cache_graph_links; DELETE FROM cache_frontmatter; DELETE FROM cache_properties; DELETE FROM cache_headings; DELETE FROM cache_fts; DELETE FROM cache_links; DELETE FROM cache_tags; DELETE FROM cache_tasks; DELETE FROM cache_files;").map_err(database_error)
+    connection
+        .execute_batch(CLEAR_INDEX_TABLES)
+        .map_err(database_error)
 }
 fn script_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedScript> {
     Ok(SavedScript {
