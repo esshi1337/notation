@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { settled } from './commands';
 
 async function openManyTabs(page: Page) {
   await page.addInitScript(() => {
@@ -28,6 +29,8 @@ async function expectContainedHeader(page: Page) {
 test('new document stays next to a short row of tabs', async ({ page }) => {
   await page.goto('/');
   for (let count = 1; count <= 3; count++) {
+    // A new tab grows in; measure once it has its full width.
+    await settled(page.locator('.document-tab').last());
     const tab = await page.locator('.document-tab').last().boundingBox();
     const button = await page.getByRole('button', { name: 'New document', exact: true }).boundingBox();
     expect(button!.x - (tab!.x + tab!.width)).toBeCloseTo(4, 0);
@@ -124,4 +127,74 @@ test('menus remain fully visible beside an overflowing tab strip', async ({ page
   }
   await expectContainedHeader(page);
   await page.screenshot({ path: 'test-results/tab-strip-compact.png' });
+});
+
+test('overflowing tabs fade at the side that continues and the active indicator follows the selection', async ({ page }) => {
+  await page.setViewportSize({ width: 1060, height: 650 });
+  await openManyTabs(page);
+  const tabs = page.getByRole('tablist', { name: 'Documents' });
+  await expect(tabs).toHaveAttribute('data-fade', 'end');
+  expect(await tabs.evaluate(element => getComputedStyle(element).maskImage)).toContain('linear-gradient');
+  await tabs.hover();
+  await page.mouse.wheel(0, 300);
+  await expect(tabs).toHaveAttribute('data-fade', 'both');
+  await page.mouse.wheel(0, 10000);
+  await expect(tabs).toHaveAttribute('data-fade', 'start');
+  await page.mouse.wheel(0, -10000);
+  await expect(tabs).toHaveAttribute('data-fade', 'end');
+
+  // One sliding background replaces the per-tab active background.
+  const matches = () => tabs.evaluate(element => {
+    const active = element.querySelector('.document-tab.active')!.getBoundingClientRect();
+    const indicator = element.querySelector('.tab-indicator')!.getBoundingClientRect();
+    return Math.abs(active.left - indicator.left) < 1 && Math.abs(active.width - indicator.width) < 1;
+  });
+  await expect.poll(matches).toBe(true);
+  await expect(tabs.locator('.document-tab.active')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(tabs.locator('.tab-indicator')).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  // The sliding state lasts about 220 ms, so record it instead of sampling it.
+  await tabs.locator('.tab-indicator').evaluate((element) => {
+    const state = window as unknown as { slid: boolean };
+    state.slid = false;
+    new MutationObserver(() => { if (element.classList.contains('sliding')) state.slid = true; }).observe(element, { attributes: true, attributeFilter: ['class'] });
+  });
+  await tabs.getByRole('tab').nth(3).click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { slid: boolean }).slid)).toBe(true);
+  await expect.poll(matches).toBe(true);
+  await expect(tabs.locator('.tab-indicator')).not.toHaveClass(/sliding/);
+
+  // A short row has nothing to fade.
+  await page.setViewportSize({ width: 1266, height: 650 });
+  for (let count = await tabs.getByRole('tab').count(); count > 3; count--) {
+    await tabs.locator('.document-tab.active .tab-close').click();
+    await expect(tabs.getByRole('tab')).toHaveCount(count - 1);
+  }
+  await expect(tabs).toHaveAttribute('data-fade', 'none');
+  expect(await tabs.evaluate(element => getComputedStyle(element).maskImage)).toBe('none');
+  await expect.poll(matches).toBe(true);
+});
+
+test('tabs with the same name show what tells them apart without changing their accessible names', async ({ page }) => {
+  await page.addInitScript(() => {
+    const tab = (id: string, name: string, path: string | null) => ({ id, name, path, content: '# ' + id, savedContent: '# ' + id });
+    localStorage.setItem('notation.session', JSON.stringify({ tabs: [
+      tab('a', 'untitled.md', null), tab('b', 'untitled.md', null), tab('c', 'untitled.md', null),
+      tab('d', 'notes.md', '/home/demo/work/alpha/notes.md'), tab('e', 'notes.md', '/home/demo/work/beta/notes.md'),
+      tab('f', 'readme.md', '/srv/x/docs/readme.md'), tab('g', 'readme.md', '/srv/y/docs/readme.md'), tab('h', 'readme.md', null),
+      tab('i', 'unique.md', null),
+    ], activeTabId: 'a', updatedAt: Date.now() }));
+  });
+  await page.setViewportSize({ width: 1900, height: 650 });
+  await page.goto('/');
+  const tabs = page.getByRole('tablist', { name: 'Documents' });
+  await expect(tabs.getByRole('tab')).toHaveCount(9);
+  const labels = await tabs.locator('.document-tab').evaluateAll(elements => elements.map(element => [element.querySelector('.tab-label')!.textContent, element.querySelector('.tab-context')?.textContent ?? '']));
+  expect(labels).toEqual([
+    ['untitled.md', ''], ['untitled.md', '2'], ['untitled.md', '3'],
+    ['notes.md', 'alpha'], ['notes.md', 'beta'],
+    ['readme.md', 'x/docs'], ['readme.md', 'y/docs'], ['readme.md', 'unsaved'],
+    ['unique.md', ''],
+  ]);
+  await expect(tabs.getByRole('tab', { name: 'untitled.md', exact: true })).toHaveCount(3);
+  await expect(tabs.getByRole('tab', { name: 'notes.md', exact: true })).toHaveCount(2);
 });

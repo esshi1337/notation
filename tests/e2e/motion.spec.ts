@@ -296,3 +296,43 @@ test('sidebar panels slide from the rail side, leave the layout at once and get 
   await page.locator('.cm-content').first().click();
   await expect(page.locator('.cm-content').first()).toBeFocused();
 });
+
+test('a new tab grows in, a closed tab shrinks out inert, and focus still lands on the next tab', async ({ page }) => {
+  await page.goto('/');
+  await page.evaluate(() => {
+    const original = Element.prototype.animate;
+    const state = window as unknown as { tabAnimations: { duration: number; properties: string[] }[] };
+    state.tabAnimations = [];
+    Element.prototype.animate = function (keyframes, options) {
+      const animation = original.call(this, keyframes, options);
+      const duration = Number((options as KeyframeAnimationOptions).duration);
+      if (duration > 0 && this instanceof HTMLElement && this.classList.contains('document-tab')) {
+        const first = (keyframes as Keyframe[])[0];
+        state.tabAnimations.push({ duration, properties: Object.keys(first).sort() });
+        // An exit starts fully opaque; slow it so the leaving state can be observed.
+        if (Number(first.opacity) === 1) animation.playbackRate = 0.1;
+      }
+      return animation;
+    };
+  });
+  const animations = () => page.evaluate(() => (window as unknown as { tabAnimations: { duration: number; properties: string[] }[] }).tabAnimations);
+  const tabs = page.getByRole('tablist', { name: 'Documents', exact: true });
+  await page.getByRole('button', { name: 'New document', exact: true }).click();
+  await expect(tabs.getByRole('tab')).toHaveCount(2);
+  await expect.poll(async () => (await animations()).length).toBe(1);
+  const [enter] = await animations();
+  expect(enter.duration).toBe(180);
+  // Width and opacity of the one tab only; nothing else is animated.
+  expect(enter.properties).toEqual(['marginInlineEnd', 'maxWidth', 'minWidth', 'opacity', 'overflow']);
+  await tabs.locator('.document-tab').last().evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)));
+
+  const close = tabs.locator('.document-tab.active .tab-close');
+  await close.focus();
+  await page.keyboard.press('Enter');
+  await expect(tabs.getByRole('tab', { selected: true })).toBeFocused();
+  const leaving = tabs.locator('.document-tab[inert]');
+  await expect(leaving).toHaveCount(1);
+  await expect(tabs.getByRole('tab')).toHaveCount(1);
+  expect((await animations())[1].duration).toBeCloseTo(126, 3);
+  await expect(leaving).toHaveCount(0);
+});

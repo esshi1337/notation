@@ -13,7 +13,11 @@ export type Metadata = {
 };
 type Patch = { settings?: Record<string, unknown>; draft?: RecoveryDraft | null; scriptDraft?: ScriptDraft | null; session?: DocumentSession | null };
 export type PendingRecovery = { draft?: RecoveryDraft | null; scriptDraft?: ScriptDraft | null; session?: DocumentSession | null; failedAt: number };
-export type PersistenceStatus = { state: 'idle' | 'saving' | 'saved' | 'error'; error: string; recovery?: PendingRecovery | null };
+// `recovery` doubles as this session's write-ahead copy of in-flight state.
+// `recoveryOffered` is true only for a copy inherited from an earlier run:
+// that is the one worth offering to restore. The session's own copy is the
+// work already on screen.
+export type PersistenceStatus = { state: 'idle' | 'saving' | 'saved' | 'error'; error: string; recovery?: PendingRecovery | null; recoveryOffered?: boolean };
 export const nativeStore = isTauri();
 function validSession(value: DocumentSession | null | undefined): value is DocumentSession {
   return !!value && typeof value.activeTabId === 'string' && Number.isFinite(value.updatedAt) && Array.isArray(value.tabs) && value.tabs.length > 0
@@ -58,13 +62,14 @@ function oversizedSession(session: Patch['session']) {
 function oversizedScriptDraft(scriptDraft: Patch['scriptDraft']) {
   return new TextEncoder().encode(scriptDraft?.code ?? '').byteLength > 128 * 1024;
 }
-let status: PersistenceStatus = { state: 'idle', error: '', recovery };
+const offered = () => !!recovery && !recoveryOwned;
+let status: PersistenceStatus = { state: 'idle', error: '', recovery, recoveryOffered: offered() };
 const listeners = new Set<(value: PersistenceStatus) => void>();
 
 function report(state: PersistenceStatus['state'], error = '') {
   if (scriptDraftTooLarge) { state = 'error'; error = scriptDraftSizeError + (error ? ' ' + error : ''); }
   if (sessionTooLarge) { state = 'error'; error = sessionSizeError + (error ? ' ' + error : ''); }
-  status = { state, error, recovery };
+  status = { state, error, recovery, recoveryOffered: offered() };
   for (const listener of listeners) listener(status);
 }
 export function observePersistence(listener: (value: PersistenceStatus) => void) {
