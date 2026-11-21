@@ -18,6 +18,7 @@
 
 <script lang="ts">
   import type { CellSession } from './cells';
+  import { insertSqlTable as insertSqlTableInto, sqlFenceLanguage, sqlRunKeymap } from './sql-editor';
   import { onMount, untrack } from 'svelte';
   import { type CodeLanguage, intelligenceLanguage } from './code-languages';
   import type { Extension, StateEffect, TransactionSpec } from '@codemirror/state';
@@ -119,6 +120,12 @@
     return true;
   }
 
+  /** Insert a SQL result as a Markdown table below its block, as one undoable edit. */
+  export function insertSqlTable(request: { connection: string; sql: string; occurrence: number; markdown: string; snapshot?: string }) {
+    if (!view || hemingway) return false;
+    if (request.snapshot !== undefined && request.snapshot !== sourceText(view.state)) return false;
+    return insertSqlTableInto(view, request);
+  }
   export function toggle(request: TaskToggle) {
     if (!view || hemingway) return false;
     const raw = sourceText(view.state);
@@ -226,7 +233,7 @@
   function syntax(reduced = formattingReduced) {
     if (hemingway || (codeLanguage === 'markdown' && reduced)) return [];
     return codeLanguage === 'markdown'
-      ? [markdown({ extensions: [mathMarkdown] }), markdownFolding, syntaxHighlighting(highlighting), highlightActiveLine(), wikiCompletion(context => standalone || !wikiCandidates ? Promise.resolve([]) : wikiCandidates(context))]
+      ? [markdown({ extensions: [mathMarkdown], codeLanguages: sqlFenceLanguage }), markdownFolding, syntaxHighlighting(highlighting), highlightActiveLine(), wikiCompletion(context => standalone || !wikiCandidates ? Promise.resolve([]) : wikiCandidates(context))]
       : [codeSyntax, syntaxHighlighting(highlighting), highlightActiveLine(), bracketMatching(), closeBrackets(), indentOnInput(), keymap.of(closeBracketsKeymap)];
   }
   function presentationExtensions(reduced = formattingReduced) {
@@ -266,7 +273,7 @@
         wrapping.of(wrap ? EditorView.lineWrapping : []),
         livePreviewFocus,
         presentation.of(presentationExtensions()),
-        commands.of(hemingway || standalone || codeLanguage !== 'markdown' ? [] : [slashCommands, wikiNavigation({ openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells })]),
+        commands.of(hemingway || standalone || codeLanguage !== 'markdown' ? [] : [slashCommands, wikiNavigation({ openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells }), sqlRunKeymap(() => sourcePath)]),
         EditorView.contentAttributes.of({
           'aria-label': 'Document source', 'aria-multiline': 'true', spellcheck: 'false',
         }),
@@ -396,7 +403,7 @@
   $effect(() => {
     const raw = standalone || codeLanguage !== 'markdown', locked = hemingway;
     if (!currentState()) return;
-    dispatch({ effects: commands.reconfigure(locked || raw ? [] : [slashCommands, wikiNavigation({ openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells })]) });
+    dispatch({ effects: commands.reconfigure(locked || raw ? [] : [slashCommands, wikiNavigation({ openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells }), sqlRunKeymap(() => sourcePath)]) });
   });
 
   $effect(() => {

@@ -15,6 +15,7 @@ import { motionMs } from './motion';
 import { renderMarkdown as renderEmbeddedMarkdown } from './render-markdown';
 import { renderQuery } from './render-query';
 import { renderCell } from './render-cell';
+import { renderSqlBlock } from './render-sql';
 import type { CellSession } from './cells';
 import { renderAdvancedInto } from './advanced-diagrams';
 import { prepareMedia, renderMedia } from './media';
@@ -32,6 +33,12 @@ export async function renderContent(target: HTMLElement, result: ReturnType<type
   openPath?: (path: string) => void; embedTrail?: string[];
   prepareHtml?: (html: string, sourcePath?: string) => string;
   cells?: CellSession;
+  /** Frontmatter properties of the document, for SQL block parameters. */
+  variables?: Record<string, unknown>;
+  /** Insert a Markdown table after a SQL block; absent where the source cannot be edited. */
+  insertSqlTable?: (request: { connection: string; sql: string; occurrence: number; markdown: string }) => boolean;
+  /** The block sits under a fence that is being edited in Live Preview. */
+  sqlCompact?: boolean;
   documentSource?: string; citationScope?: string; citationGroups?: string[]; includeBibliography?: boolean;
   /** Math syntax of this content; defaults to its `math:` property, then the Settings default. */
   mathMode?: MathMode;
@@ -115,6 +122,21 @@ export async function renderContent(target: HTMLElement, result: ReturnType<type
   }
   for (const link of target.querySelectorAll<HTMLAnchorElement>('a:not([data-wiki-index]):not([data-footnote-ref]):not([data-footnote-back])')) { link.target = '_blank'; link.rel = 'noopener noreferrer'; }
   for(const [index,cell] of (result.cells??[]).entries()){const element=target.querySelector<HTMLElement>(`[data-cell-index="${index}"]`);if(element)cleanups.set(element,renderCell(element,cell.id,cell.runnable?context.cells:undefined,context.current));}
+  // SQL blocks show their query and, if it was run in this session, the
+  // result. Hydrating one never runs it. Exports keep the plain code block.
+  if (!context.prepareHtml && result.sqls?.length) {
+    const occurrences = new Map<string, number>();
+    const variables = context.variables ?? parseFrontmatter(source)?.values ?? {};
+    for (const [index, block] of (result.sqls ?? []).entries()) {
+      const identity = block.connection + '\u0000' + block.sql, occurrence = occurrences.get(identity) ?? 0;
+      occurrences.set(identity, occurrence + 1);
+      const element = target.querySelector<HTMLElement>(`[data-sql-index="${index}"]`);
+      if (element) cleanups.set(element, renderSqlBlock(element, block, {
+        scope: context.sourcePath ?? '', variables, current: context.current, measure: context.measure, compact: context.sqlCompact,
+        insert: context.insertSqlTable ? (markdown) => context.insertSqlTable!({ ...block, occurrence, markdown }) : undefined,
+      }));
+    }
+  }
   for (const [index, source] of (result.queries ?? []).entries()) {
     const element = target.querySelector<HTMLElement>(`[data-query-index="${index}"]`);
     if (element) await renderQuery(element, source, context.current, context.openPath);
@@ -141,7 +163,7 @@ export async function renderContent(target: HTMLElement, result: ReturnType<type
         if (!current()) return;
         if (trail.includes(loaded.key)) throw new Error('Circular embed: ' + embed.label);
         await renderContent(body, renderEmbeddedMarkdown(loaded.content,true,0,loaded.variables), {
-          ...context, current, cells: undefined, sourcePath: loaded.path, embedTrail: [...trail,loaded.key], mathMode: resolveMathMode(loaded.fullContent ?? loaded.content),
+          ...context, current, cells: undefined, insertSqlTable: undefined, sqlCompact: undefined, variables: loaded.variables, sourcePath: loaded.path, embedTrail: [...trail,loaded.key], mathMode: resolveMathMode(loaded.fullContent ?? loaded.content),
           toggle: () => false, edit: () => context.openPath?.(loaded.path), editProperties: () => context.openPath?.(loaded.path),
         });
         for (const input of body.querySelectorAll<HTMLInputElement>('input.task-checkbox')) input.disabled = true;

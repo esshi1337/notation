@@ -40,11 +40,14 @@ export function connectionSummary(connection: SqlProfile): string {
 
 // The last list the backend returned, so editor highlighting and SQL blocks
 // can tell a connection's kind without asking again.
-let known = new Map<string, SqlConnection>();
+let known = new Map<string, SqlConnection>(), loaded = false;
 const listeners = new Set<() => void>();
 export function knownConnection(name: string): SqlConnection | undefined { return known.get(name); }
 export function subscribeConnections(listener: () => void): () => void { listeners.add(listener); return () => { listeners.delete(listener); }; }
+/** Whether the connection list has been read in this session, so an unknown name can be reported. */
+export function connectionsLoaded(): boolean { return loaded; }
 function remember(list: SqlConnectionList) {
+  loaded = true;
   known = new Map(list.connections.map((connection) => [connection.name, connection]));
   for (const listener of [...listeners]) listener();
 }

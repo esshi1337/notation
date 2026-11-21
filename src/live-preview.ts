@@ -25,6 +25,8 @@ import { scanCitations, orderedCitationGroups } from './citations';
 import type { CitationSpan } from './citations';
 import { citationScope, hydrateCitations } from './render-citations';
 import { inlineVariables } from './variables';
+import { sqlConnection } from './sql-format';
+import { insertSqlTableAt } from './sql-editor';
 import type { VariableSpan } from './variables';
 import { formattingStatus } from './reduced-formatting';
 
@@ -79,7 +81,7 @@ class FootnoteWidget extends WidgetType {
 
 class DocumentWidget extends WidgetType {
   constructor(readonly raw: string, readonly from: number, readonly theme: DiagramTheme, readonly navigation: LiveNavigation, readonly kind: string) { super(); }
-  eq(other: DocumentWidget) { return this.raw === other.raw && this.from === other.from && this.theme === other.theme && this.navigation.sourcePath === other.navigation.sourcePath && (!(this.kind === 'footnote' || /\[[^\]\r\n]*@/u.test(this.raw)) || this.navigation.documentSource === other.navigation.documentSource) && this.navigation.variableSource === other.navigation.variableSource && this.navigation.mathMode === other.navigation.mathMode; }
+  eq(other: DocumentWidget) { return this.kind === other.kind && this.raw === other.raw && this.from === other.from && this.theme === other.theme && this.navigation.sourcePath === other.navigation.sourcePath && (!(this.kind === 'footnote' || /\[[^\]\r\n]*@/u.test(this.raw)) || this.navigation.documentSource === other.navigation.documentSource) && this.navigation.variableSource === other.navigation.variableSource && this.navigation.mathMode === other.navigation.mathMode; }
   toDOM(view: EditorView) {
     const dom = document.createElement('div'); dom.className = 'markdown-body cm-live-document cm-live-' + this.kind;
     const token = { alive: true }; lifecycle.set(dom,token);
@@ -88,6 +90,7 @@ class DocumentWidget extends WidgetType {
       theme: this.theme, folds: new Map(), current: () => token.alive && dom.isConnected,
       toggle: task => this.kind === 'footnote' ? toggleTask(view,{task}) : false, edit: () => revealDocumentSource(view,this.from), ...this.navigation,
       measure: () => view.requestMeasure(),
+      insertSqlTable: this.kind === 'sql' || this.kind === 'sql-result' ? request => insertSqlTableAt(view,this.from,request) : undefined, sqlCompact: this.kind === 'sql-result',
     }).then(() => { if (token.alive && dom.isConnected) view.requestMeasure(); }); });
     dom.addEventListener('dblclick', event => { if (!(event.target as HTMLElement).closest('button,a,input')) revealSource(view,this.from,event); });
     return dom;
@@ -467,6 +470,13 @@ function decorationsFor(state: EditorState, theme: DiagramTheme, standalone: boo
       if (name === 'FencedCode') {
         const info = node.node.getChild('CodeInfo');
         const language=info?state.sliceDoc(info.from,info.to).trim():'';
+        if (info && sqlConnection(language)) {
+          // The rendered block replaces the fence; while the fence is being
+          // edited it stays as source and the block's result sits below it.
+          if (!widgetHidden(from,to)) decorations.push(Decoration.replace({widget: new DocumentWidget(state.sliceDoc(from,to),from,theme,navigation,'sql'),block:true}).range(from,to));
+          else decorations.push(Decoration.widget({widget: new DocumentWidget(state.sliceDoc(from,to),from,theme,navigation,'sql-result'),block:true,side:1}).range(to));
+          return false;
+        }
         if (info && (language.toLowerCase() === 'query' || /^(?:dot|graphviz|d2|plantuml|puml)$/iu.test(language) || /^(?:js|javascript)\s+cell:/u.test(language)) && !widgetHidden(from,to)) {
           decorations.push(Decoration.replace({widget: new DocumentWidget(state.sliceDoc(from,to),from,theme,navigation,language==='query'?'query':/cell:/u.test(language)?'cell':'advanced'),block:true}).range(from,to)); return false;
         }

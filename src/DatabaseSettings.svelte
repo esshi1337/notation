@@ -6,7 +6,7 @@
   import SelectControl from './SelectControl.svelte';
   import NumberControl from './NumberControl.svelte';
   import type { IconTheme } from './icons';
-  import { DESKTOP_ONLY, connectionSummary, defaultPorts, deleteConnection, kindLabels, listConnections, newProfile, saveConnection, sqlFailure, testConnection } from './sql-connections';
+  import { DESKTOP_ONLY, connectionSummary, defaultPorts, deleteConnection, kindLabels, listConnections, newProfile, saveConnection, sqlFailure, testConnection, unlockConnection } from './sql-connections';
   import type { PasswordStorage, SqlConnection, SqlConnectionList, SqlKind, SqlProfile, TlsMode } from './sql-connections';
 
   let { theme }: { theme: IconTheme } = $props();
@@ -30,6 +30,9 @@
   let saving = $state(false), testing = $state(false), formError = $state(''), testMessage = $state('');
   let confirming = $state<string | null>(null), deleting = $state(false), listMessage = $state('');
   let nameInput = $state<HTMLInputElement>();
+  // Entering an ask-every-session password. It is asked for here, in
+  // Settings, never inside a note: a note could imitate such a prompt.
+  let unlocking = $state<string | null>(null), sessionPassword = $state(''), unlockBusy = $state(false);
 
   let keychain = $derived(list?.keychainAvailable ?? false);
   let editing = $derived(original ? list?.connections.find((connection) => connection.name === original) : undefined);
@@ -109,6 +112,15 @@
     } catch (cause) { listMessage = sqlFailure(cause).message; }
     finally { deleting = false; confirming = null; }
   }
+  async function unlock(event: Event, name: string) {
+    event.preventDefault();
+    if (unlockBusy || !sessionPassword) return;
+    const value = sessionPassword;
+    sessionPassword = ''; unlockBusy = true; listMessage = '';
+    try { await unlockConnection(name, value); unlocking = null; listMessage = `Password for ${name} is kept until you quit.`; await refresh(); }
+    catch (cause) { listMessage = sqlFailure(cause).message; }
+    finally { unlockBusy = false; }
+  }
   async function choose(field: 'path' | 'caFile') {
     if (!form) return;
     try {
@@ -141,6 +153,14 @@
             <strong>{connection.name}</strong><span class="database-kind">{kindLabels[connection.kind]}</span>
             <p title={connectionSummary(connection)}>{connectionSummary(connection)}</p>
             <p class="database-password-state">{connection.kind === 'sqlite' ? 'opened read-only' : passwordLabels[connection.passwordState]} · {connection.rowLimit} rows · {connection.timeoutSeconds} s</p>
+            {#if unlocking === connection.name}
+              <form class="database-unlock" aria-label={'Enter the session password: ' + connection.name} autocomplete="off" onsubmit={(event) => void unlock(event, connection.name)}>
+                <!-- svelte-ignore a11y_autofocus (The field appears because its button was pressed.) -->
+                <input type="password" aria-label={'Password for ' + connection.name} placeholder="Password for this session" bind:value={sessionPassword} autocomplete="new-password" spellcheck="false" autofocus />
+                <button type="submit" disabled={unlockBusy || !sessionPassword}>{unlockBusy ? 'Checking…' : 'Keep until I quit'}</button>
+                <button type="button" disabled={unlockBusy} onclick={() => { unlocking = null; sessionPassword = ''; }}>Cancel</button>
+              </form>
+            {/if}
           </div>
           {#if confirming === connection.name}
             <div class="database-row-actions" role="group" aria-label={'Delete ' + connection.name + '?'}>
@@ -150,6 +170,7 @@
             </div>
           {:else}
             <div class="database-row-actions">
+              {#if connection.passwordStorage === 'session' && unlocking !== connection.name}<button type="button" aria-label={'Enter password: ' + connection.name} onclick={() => { unlocking = connection.name; sessionPassword = ''; listMessage = ''; }}>{connection.passwordState === 'session' ? 'Replace password' : 'Enter password'}</button>{/if}
               <button type="button" aria-label={'Edit connection: ' + connection.name} onclick={() => edit(connection)}>Edit</button>
               <button type="button" aria-label={'Delete connection: ' + connection.name} onclick={() => { confirming = connection.name; listMessage = ''; }}>Delete</button>
             </div>
@@ -175,7 +196,7 @@
             <div class="settings-field"><label class="settings-field-label" for={instanceId + '-port'}>Port</label><input id={instanceId + '-port'} type="text" inputmode="numeric" value={form.port || ''} placeholder={String(defaultPorts[form.kind])} oninput={(event) => { if (form) form.port = Number((event.currentTarget as HTMLInputElement).value.replace(/\D/gu, '').slice(0, 5)) || 0; }} /></div>
             <div class="settings-field"><label class="settings-field-label" for={instanceId + '-database'}>Database</label><input id={instanceId + '-database'} bind:value={form.database} spellcheck="false" autocapitalize="off" /></div>
             <div class="settings-field"><label class="settings-field-label" for={instanceId + '-user'}>User</label><input id={instanceId + '-user'} bind:value={form.user} spellcheck="false" autocapitalize="off" autocomplete="off" /></div>
-            <SelectControl label="Password" options={storageOptions} value={form.passwordStorage} onchange={setStorage} {theme} />
+            <SelectControl label="Password storage" options={storageOptions} value={form.passwordStorage} onchange={setStorage} {theme} />
             {#if form.passwordStorage !== 'none'}
               <div class="settings-field"><label class="settings-field-label" for={instanceId + '-password'}>{passwordKept ? 'Replace password' : 'Password'}</label><input id={instanceId + '-password'} type="password" bind:value={password} placeholder={passwordPlaceholder} autocomplete="new-password" spellcheck="false" /></div>
             {/if}
