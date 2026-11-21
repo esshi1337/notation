@@ -243,3 +243,26 @@ fn an_incomplete_or_foreign_baseline_is_never_built_on() {
     let huge = "x".repeat(4 * 1024 * 1024 + 1);
     assert!(database.index_saved_file(&text(&note), &huge).unwrap().is_none());
 }
+
+#[test]
+fn a_full_rebuild_does_not_leave_an_index_sized_write_ahead_log() {
+    let temporary = tempfile::tempdir().unwrap();
+    let (database, root) = setup(temporary.path());
+    // About 4 MiB of notes: the rebuild writes well over the log size limit.
+    let filler = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(350);
+    for index in 0..200 {
+        fs::write(root.join(format!("big{index}.md")), format!("# Big {index}\n[[big{}]] #tag{index}\n{filler}\n", (index + 1) % 200)).unwrap();
+    }
+    let wal = database.path.with_extension("sqlite3-wal");
+    for _ in 0..2 {
+        assert_eq!(database.index_workspace().unwrap().indexed, 200);
+        let size = fs::metadata(&wal).map(|metadata| metadata.len()).unwrap_or(0);
+        assert!(size <= 4 * 1024 * 1024, "write-ahead log is {size} bytes after a rebuild");
+    }
+    let connection = rusqlite::Connection::open(&database.path).unwrap();
+    // The limit is per connection; the application sets it when it opens.
+    drop(connection);
+    assert!(fs::metadata(&database.path).unwrap().len() > 4 * 1024 * 1024);
+    // The index is intact after the checkpoint.
+    assert_eq!(database.search_workspace("Lorem", Some(5)).unwrap().len(), 5);
+}

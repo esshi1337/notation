@@ -179,7 +179,9 @@ impl Database {
         }
         connection
             .execute_batch(
-                "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;",
+                // The size limit makes a checkpoint shrink the write-ahead log
+                // file instead of leaving it at its high-water mark.
+                "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA journal_size_limit=4194304;",
             )
             .map_err(database_error)?;
         if version < 1 {

@@ -231,6 +231,10 @@ impl Database {
             .map_err(|error| error.to_string())?;
         }
         tx.commit().map_err(|error| error.to_string())?;
+        // A rebuild rewrites the whole index through the write-ahead log.
+        // Fold it back into the database now; otherwise a log as large as the
+        // index stays on disk. Failure only postpones the cleanup.
+        let _ = connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
         Ok(report)
     }
     /// Update the index for one saved note without rescanning the workspace.
