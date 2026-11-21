@@ -196,6 +196,12 @@ test('Ctrl+wheel zooms around the cursor and the buttons zoom around the board c
   // A plain wheel pans and leaves the zoom alone.
   await page.mouse.wheel(30, 50);
   await expect(zoom).toHaveText('146%');
+  // Holding Ctrl without the wheel event carrying it (some drivers and remote desktops do this) still only pans.
+  await page.keyboard.down('Control');
+  await board.evaluate((element) => element.dispatchEvent(new WheelEvent('wheel', { deltaY: -50, deltaX: -30, bubbles: true, cancelable: true })));
+  await page.keyboard.up('Control');
+  await expect(zoom).toHaveText('146%');
+  await page.mouse.wheel(30, 50);
   after = (await card(view, 'b').boundingBox())!;
   expect(after.x).toBeCloseTo(before.x - 30, 0);
   expect(after.y).toBeCloseTo(before.y - 50, 0);

@@ -183,7 +183,9 @@
   function zoomButton(factor: number) { setView(zoomAtPoint(view, { x: host.clientWidth / 2, y: host.clientHeight / 2 }, factor), motionMs('base')); }
   function wheel(event: WheelEvent) {
     if (event.target instanceof Element && event.target.closest('.nowheel')) return;
-    event.preventDefault();
+    // This handler owns the wheel: Svelte Flow's own zoom (its Ctrl "zoom activation key")
+    // must not also act on the event, or one notch would zoom twice.
+    event.preventDefault(); event.stopPropagation();
     if (pan) return;
     // Pinch and Ctrl/Cmd+wheel zoom around the cursor; a plain wheel or two-finger scroll pans.
     if (event.ctrlKey || event.metaKey) zoomAt(wheelZoomFactor(event, { in: 1.1, out: .9 }), event.clientX, event.clientY);
@@ -571,10 +573,10 @@
     const outside = (event: PointerEvent) => { if (addOpen && !addMenuHost.contains(event.target as globalThis.Node)) addOpen = false; if (menu && !menuHost?.contains(event.target as globalThis.Node)) menu = null; };
     const blur = () => { spaceHeld = false; if (pan) { if (host.hasPointerCapture(pan.pointerId)) host.releasePointerCapture(pan.pointerId); pan = null; } flushNudge(); };
     const pinch = pinchZoom(host, zoomAt);
-    host.addEventListener('wheel', wheel, { passive: false });
+    host.addEventListener('wheel', wheel, { passive: false, capture: true });
     document.addEventListener('pointerdown', outside, true);
     window.addEventListener('keydown', windowKey); window.addEventListener('keyup', windowKey); window.addEventListener('blur', blur);
-    return () => { pinch.destroy(); host.removeEventListener('wheel', wheel); document.removeEventListener('pointerdown', outside, true); window.removeEventListener('keydown', windowKey); window.removeEventListener('keyup', windowKey); window.removeEventListener('blur', blur); flushNudge(); resetNoteSearch(); };
+    return () => { pinch.destroy(); host.removeEventListener('wheel', wheel, { capture: true }); document.removeEventListener('pointerdown', outside, true); window.removeEventListener('keydown', windowKey); window.removeEventListener('keyup', windowKey); window.removeEventListener('blur', blur); flushNudge(); resetNoteSearch(); };
   });
   $effect(() => { if (addOpen) queueMicrotask(() => addMenuHost.querySelector<HTMLElement>('[role=menuitem]')?.focus()); });
   let selectionSize = $derived(nodes.reduce((count, node) => count + (node.selected ? 1 : 0), 0));
