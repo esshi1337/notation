@@ -212,3 +212,44 @@ test('file navigator dialogs share the Settings surface and the frontmatter butt
     await expect(button).not.toHaveCSS('border-top-color', 'rgba(0, 0, 0, 0)');
   }
 });
+
+test('every dialog shares the heading and close-button style, and search does not claim "No matches" before searching', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/');
+  await source(page).fill(sample);
+  await openSettings(page);
+  const radius = await page.getByRole('dialog', { name: 'Settings', exact: true }).evaluate((element) => getComputedStyle(element).borderTopLeftRadius);
+  await page.keyboard.press('Escape');
+
+  await runCommand(page, 'Rename document');
+  const rename = page.getByRole('dialog', { name: 'Rename document', exact: true });
+  await settled(rename);
+  await expect(rename.locator('strong')).toHaveCSS('font-size', '16px');
+  await expect(rename).toHaveCSS('border-top-left-radius', radius);
+  expect((await rename.getByRole('textbox', { name: 'Document name' }).boundingBox())!.height).toBeGreaterThanOrEqual(32);
+  await page.keyboard.press('Escape');
+
+  await runCommand(page, 'Change document language');
+  const language = page.getByRole('dialog', { name: 'Document language', exact: true });
+  await settled(language);
+  await expect(language.locator('strong')).toHaveCSS('font-size', '16px');
+  await expect(language).toHaveCSS('border-top-left-radius', radius);
+  const close = language.getByRole('button', { name: 'Close document language', exact: true });
+  expect(await close.evaluate((element) => { const box = element.getBoundingClientRect(); return [Math.round(box.width), Math.round(box.height), getComputedStyle(element).borderTopStyle]; })).toEqual([28, 28, 'solid']);
+  await expect(close).not.toHaveCSS('border-top-color', 'rgba(0, 0, 0, 0)');
+  await page.keyboard.press('Escape');
+
+  await runCommand(page, 'Search workspace files');
+  const search = page.getByRole('dialog', { name: 'Search workspace files', exact: true });
+  await expect(search.locator('.navigator-results')).toHaveText('Enter text and press Search.');
+  const field = search.getByRole('textbox', { name: 'Search text', exact: true });
+  await field.fill('zzz-not-present-anywhere');
+  await field.press('Enter');
+  await expect(search.locator('.navigator-results')).toHaveText('No matches');
+  await field.fill('zzz');
+  await expect(search.locator('.navigator-results')).toHaveText('Enter text and press Search.');
+  await page.keyboard.press('Escape');
+
+  await runCommand(page, 'Find and replace');
+  await expect(page.locator('.cm-panel.cm-search input[type="checkbox"]').first()).toHaveCSS('border-top-left-radius', '2px');
+});
