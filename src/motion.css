@@ -62,3 +62,10 @@ dialog.command-palette[open] { animation: palette-in var(--motion-base) var(--ea
 dialog[open]::backdrop { animation: backdrop-in var(--motion-slow) var(--ease-out); }
 dialog.command-palette[open]::backdrop { animation-duration: var(--motion-base); }
 .modal-scrim-exit { position: fixed; inset: 0; z-index: 2000; background: #0000007a; pointer-events: none; }
+
+/* Collapsibles: opened content settles in, closing is immediate. Height is
+   not animated, so the layout below moves once. Preview callouts do the same
+   from their toggle handler; the chevron eases. */
+@keyframes reveal-in { from { opacity: 0; transform: translateY(-4px); } }
+:is(.utility-panel, .scripts-panel, .explorer-panel, .settings-dialog) details[open] > :not(summary) { animation: reveal-in var(--motion-base) var(--ease-out); }
+.callout-chevron { transition: transform var(--motion-fast) var(--ease-out); }

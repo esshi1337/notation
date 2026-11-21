@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { openSettings } from './commands';
+import { openSettings, settled } from './commands';
 
 const durations = (page: Page, selector: string) => page.locator(selector).first().evaluate((element) => getComputedStyle(element).transitionDuration.split(',').map((value) => value.trim()));
 const token = (page: Page, name: string) => page.evaluate((property) => getComputedStyle(document.documentElement).getPropertyValue(property).trim(), name);
@@ -335,4 +335,57 @@ test('a new tab grows in, a closed tab shrinks out inert, and focus still lands 
   await expect(tabs.getByRole('tab')).toHaveCount(1);
   expect((await animations())[1].duration).toBeCloseTo(126, 3);
   await expect(leaving).toHaveCount(0);
+});
+
+test('notices are toasts that never move the editor, and the save state fades only when it changes', async ({ page }) => {
+  await page.goto('/');
+  const workspace = page.locator('.content-area > .workspace');
+  const box = await workspace.boundingBox();
+  await page.evaluate(() => {
+    const original = Element.prototype.animate;
+    const state = window as unknown as { saveFades: number };
+    state.saveFades = 0;
+    Element.prototype.animate = function (keyframes, options) {
+      if (this instanceof HTMLElement && this.classList.contains('save-state')) state.saveFades++;
+      return original.call(this, keyframes, options);
+    };
+  });
+  const fades = () => page.evaluate(() => (window as unknown as { saveFades: number }).saveFades);
+  const source = page.getByRole('textbox', { name: 'Document source' });
+  await source.fill('first edit');
+  await expect(page.locator('.save-state')).toHaveAttribute('data-state', 'dirty');
+  expect(await fades()).toBe(1);
+  await source.pressSequentially(' and more typing');
+  expect(await fades()).toBe(1);
+
+  // Pending recovery shows the banner as a toast over the workspace.
+  await page.evaluate(() => localStorage.setItem('notation.pending-recovery', JSON.stringify({ failedAt: Date.now(), scriptDraft: { name: 'Recovered', code: 'return 1;', cwd: null, updatedAt: Date.now() } })));
+  await page.reload();
+  const banner = page.locator('.toast-stack > .recovery-banner');
+  await expect(banner).toContainText('Work available to restore');
+  await settled(banner);
+  expect(await workspace.boundingBox()).toEqual(box);
+  const placed = await banner.evaluate((element) => {
+    const toast = element.getBoundingClientRect(), header = document.querySelector('.workspace-bar')!.getBoundingClientRect();
+    return { below: toast.top >= header.bottom, inside: toast.left >= 0 && toast.right <= innerWidth, stack: getComputedStyle(element.parentElement!).position };
+  });
+  expect(placed).toEqual({ below: true, inside: true, stack: 'absolute' });
+  // Slow the exit to observe the leaving toast, then dismiss with the keyboard.
+  await page.evaluate(() => {
+    const original = Element.prototype.animate;
+    Element.prototype.animate = function (keyframes, options) {
+      const animation = original.call(this, keyframes, options);
+      // Skip Svelte's zero-length pinning animation; slow only the real exit.
+      if (Number((options as KeyframeAnimationOptions).duration) > 0 && this instanceof HTMLElement && this.classList.contains('recovery-banner') && Number((keyframes as Keyframe[])[0].opacity) === 1) animation.playbackRate = 0.1;
+      return animation;
+    };
+  });
+  const keep = banner.getByRole('button', { name: 'Keep current work', exact: true });
+  await keep.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.recovery-banner[inert]')).toHaveCount(1);
+  expect(await workspace.boundingBox()).toEqual(box);
+  await expect(page.locator('.recovery-banner')).toHaveCount(0);
+  expect(await workspace.boundingBox()).toEqual(box);
+  expect(await page.locator('.toast-stack').evaluate((element) => getComputedStyle(element).pointerEvents)).toBe('none');
 });

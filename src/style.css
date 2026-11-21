@@ -664,6 +664,18 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .script-runs summary { cursor: pointer; }
 .script-runs button { display: block; width: 100%; font-size: 12px; text-align: left; padding: 5px 3px; }
 .recovery-banner { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; padding: 7px 16px; background: var(--bar); border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+/* App-level notices float over the workspace as toasts, so showing or
+   dismissing one never moves the editor. The stack ignores the pointer
+   except on the notices themselves. */
+.app { position: relative; }
+.toast-stack { position: absolute; z-index: 40; top: calc(var(--chrome-height) + 10px); left: 0; right: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 0 auto; padding: 0 12px; pointer-events: none; }
+.toast-stack > * { width: min(640px, 100%); border: 1px solid var(--border); border-radius: var(--radius-menu); background: var(--menu); box-shadow: 0 12px 40px #0006; pointer-events: auto; }
+.toast-stack > .app-error { padding: 10px 12px 10px 16px; font-size: 13px; }
+.toast-stack > .recovery-banner { padding: 12px 14px 12px 16px; }
+.toast-stack button { flex: 0 0 auto; border: 1px solid var(--border); }
+.source-pane { position: relative; }
+.source-pane > .disk-conflict-banner { position: absolute; z-index: 5; top: 10px; right: 14px; width: min(460px, calc(100% - 28px)); border: 1px solid var(--border); border-radius: var(--radius-menu); background: var(--menu); box-shadow: 0 12px 40px #0006; }
+.source-pane > .disk-conflict-banner button { border: 1px solid var(--border); }
 .recovery-copy { display: flex; flex: 1 1 360px; flex-direction: column; gap: 2px; min-width: 0; line-height: 1.55; }
 .recovery-copy strong { color: var(--text); }
 .recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; }
