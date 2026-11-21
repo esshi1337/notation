@@ -156,8 +156,8 @@
    underneath an open header menu or modal dialog would draw its thumb across
    that surface. Hide those thumbs while the surface is open; scrollers inside
    the dialog keep theirs. main.ts sets data-scrollbars. */
-:root[data-scrollbars='overlay'] .app:has(> .workspace-bar .compact-menu) > .content-area,
-:root[data-scrollbars='overlay'] .app:has(> .workspace-bar .compact-menu) > .content-area *,
+:root[data-scrollbars='overlay'] .app:has(> .workspace-bar :is(.compact-menu, .workspace-list)) > .content-area,
+:root[data-scrollbars='overlay'] .app:has(> .workspace-bar :is(.compact-menu, .workspace-list)) > .content-area *,
 :root[data-scrollbars='overlay']:has(dialog[open]) .app > :not(dialog),
 :root[data-scrollbars='overlay']:has(dialog[open]) .app > :not(dialog) * {
   scrollbar-color: transparent transparent;
@@ -818,8 +818,18 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .cm-live-footnote .footnotes { margin-top: .5em; padding-top: .5em; }
 
 .workspace-control:hover { border-radius: var(--radius-control); background: var(--hover); }
-.workspace-switcher { flex: 1; width: 100%; min-width: 0; max-width: none; height: var(--control-size); padding: 0 0 0 8px; border: 0; background-color: transparent; background-image: none; color: var(--text); font: inherit; font-size: 13px; font-weight: 600; line-height: 20px; text-overflow: ellipsis; }
+.workspace-switcher-host { position: relative; display: flex; flex: 1; min-width: 0; }
+.workspace-switcher { display: flex; align-items: center; flex: 1; width: 100%; min-width: 0; height: var(--control-size); padding: 0 0 0 8px; border: 0; background: transparent; color: var(--text); font-size: 13px; font-weight: 600; line-height: 20px; text-align: left; }
+.workspace-switcher:hover, .workspace-switcher:active:not(:disabled) { background: transparent; }
 .workspace-switcher:focus-visible { outline: 1px solid var(--muted); outline-offset: -2px; }
+.workspace-switcher[aria-disabled='true'] { cursor: wait; opacity: .6; }
+.workspace-switcher-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The workspace list matches the header menus. */
+.workspace-list { position: absolute; z-index: 50; top: calc(100% + 7px); left: 0; width: max-content; min-width: 200px; max-width: min(320px, calc(100vw - 12px)); max-height: min(420px, calc(100dvh - 60px)); overflow: auto; overscroll-behavior: contain; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-menu); background: var(--menu); box-shadow: 0 12px 40px #0006; }
+.workspace-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: var(--menu-row-height); padding: 5px 10px; border-radius: var(--radius-control); color: var(--text); font-size: 13px; line-height: 20px; cursor: pointer; user-select: none; }
+.workspace-option.active { background: var(--hover); color: var(--heading); }
+.workspace-option[aria-selected='true'] { color: var(--heading); font-weight: 600; }
+.workspace-option-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Keep navigation and its open tool together on the chosen side. The editor
    stays mounted when the side changes, preserving its history and selection. */
