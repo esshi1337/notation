@@ -85,16 +85,25 @@ export function scrimExit(_node: HTMLElement) {
   };
 }
 
-/** Svelte action: fade the element's content in whenever `key` changes, for
-    surfaces that swap what they show in place (the sidebar tool panel). */
-export function fadeOnChange(node: HTMLElement, key: unknown) {
-  let current = key;
+/** Svelte action: fade in whenever the key changes, for surfaces that swap
+    what they show in place. A bare value fades the first child (the sidebar
+    tool panel keeps its own background steady); `{ key, self: true }` fades
+    the element itself (the status-bar save state). */
+export function fadeOnChange(node: HTMLElement, value: unknown) {
+  const read = (input: unknown) => input !== null && typeof input === 'object' && 'key' in input
+    ? input as { key: unknown; self?: boolean } : { key: input, self: false };
+  let current = read(value).key;
   return {
     update(next: unknown) {
-      if (next === current) return;
-      current = next;
+      const { key, self } = read(next);
+      if (key === current) return;
+      current = key;
       const duration = motionMs('fast');
-      if (duration) node.firstElementChild?.animate([{ opacity: 0 }, { opacity: 1 }], { duration, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+      if (!duration) return;
+      const easing = 'cubic-bezier(.2, .8, .2, 1)';
+      (self ? node : node.firstElementChild)?.animate([{ opacity: 0 }, { opacity: 1 }], { duration, easing });
+      // An icon that arrives with the new state (the saved check mark) pops.
+      if (self) node.querySelector('.identity-icon')?.animate([{ transform: 'scale(.4)' }, { transform: 'none' }], { duration: motionMs('base'), easing });
     },
   };
 }

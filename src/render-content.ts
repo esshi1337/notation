@@ -9,6 +9,7 @@ import { taskName } from './markdown-features';
 import type { TaskSpan } from './markdown-features';
 import type { renderMarkdown } from './render-markdown';
 import { calloutIcon } from './render-markdown';
+import { motionMs } from './motion';
 import { renderMarkdown as renderEmbeddedMarkdown } from './render-markdown';
 import { renderQuery } from './render-query';
 import { renderCell } from './render-cell';
@@ -78,6 +79,9 @@ export async function renderContent(target: HTMLElement, result: ReturnType<type
       event.stopPropagation();
       context.folds.set(callout.key, toggle.getAttribute('aria-expanded') === 'true');
       update(); context.measure?.();
+      // Opened content settles in; the editor's own widgets are never animated.
+      const duration = context.measure ? 0 : motionMs('base');
+      if (duration && !body.hidden) body.animate([{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }], { duration, easing: 'cubic-bezier(.2, .8, .2, 1)' });
     });
     region.querySelector<HTMLButtonElement>('[data-callout-edit]')?.addEventListener('click', (event) => {
       event.stopPropagation(); if (context.current()) context.edit(callout.from);
