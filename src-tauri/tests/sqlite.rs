@@ -32,7 +32,7 @@ fn schema_seven_stickies_migrate_to_eight_without_touching_titles_or_maximum_pla
     assert_eq!(state.draft.unwrap()["content"], "ordinary");
     drop(db);
     let connection = rusqlite::Connection::open(&path).unwrap();
-    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 13);
+    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 14);
     // SQLite also rejects invalid color/markup if a future caller misses validation.
     assert!(connection.execute("UPDATE sticky_notes SET color='red' WHERE id=?1", [id]).is_err());
     assert!(connection.execute("UPDATE sticky_notes SET html=?2 WHERE id=?1", rusqlite::params![id, "x".repeat(131073)]).is_err());
@@ -901,7 +901,7 @@ fn the_index_moves_to_its_own_database_with_every_row_and_its_lookup_indexes() {
 
         // The state database keeps user data and no longer holds the index.
         let state = rusqlite::Connection::open(&path).unwrap();
-        assert_eq!(count(&state, "PRAGMA user_version"), 13, "from {version}");
+        assert_eq!(count(&state, "PRAGMA user_version"), 14, "from {version}");
         assert_eq!(count(&state, "SELECT count(*) FROM sqlite_master WHERE name LIKE 'cache_%'"), 0);
         assert_eq!(count(&state, "SELECT count(*) FROM app_meta WHERE key='index_baseline'"), 0);
         assert_eq!(count(&state, "SELECT count(*) FROM settings"), 1);
@@ -1061,7 +1061,7 @@ fn schema_twelve_session_blob_is_split_into_tab_rows_without_changing_the_sessio
     let database = Database::open(&path).unwrap();
     assert_eq!(database.bootstrap(None).unwrap().session.as_ref(), Some(&session));
     let connection = rusqlite::Connection::open(&path).unwrap();
-    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 13);
+    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 14);
     assert_eq!(connection.query_row("SELECT count(*) FROM session_tabs", [], |row| row.get::<_, i64>(0)).unwrap(), 2);
     let envelope: String = connection.query_row("SELECT json FROM sessions WHERE id=1", [], |row| row.get(0)).unwrap();
     assert!(!envelope.contains("first"), "tab text no longer lives in the session row: {envelope}");

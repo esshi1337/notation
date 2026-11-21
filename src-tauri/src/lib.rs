@@ -16,6 +16,7 @@ pub mod mcp;
 pub mod search_graph;
 #[cfg(unix)]
 pub mod single_instance;
+pub mod sql;
 pub mod storage;
 pub mod sticky;
 pub mod wiki;
@@ -28,7 +29,7 @@ mod desktop {
     use super::instance;
     use super::{
         assets, automation, documents, engines, explorer, frontmatter, git, language_server, launch,
-        mcp, search_graph, storage, sticky, wiki, workspace,
+        mcp, search_graph, sql, storage, sticky, wiki, workspace,
     };
     use serde_json::Value;
     use tauri::{Emitter, Manager, State};
@@ -52,6 +53,59 @@ mod desktop {
         tauri::async_runtime::spawn_blocking(move || operation(database))
             .await
             .map_err(|error| format!("Local database task failed: {error}"))?
+    }
+
+    /// SQL block connections and running queries. Passwords enter through
+    /// `sql_save_connection`, `sql_test_connection` and
+    /// `sql_unlock_connection`; no command returns one.
+    struct SqlState(std::sync::Arc<sql::Service>);
+    async fn sql_work<T: Send + 'static>(
+        state: &SqlState,
+        operation: impl FnOnce(&sql::Service) -> Result<T, sql::SqlError> + Send + 'static,
+    ) -> Result<T, sql::SqlError> {
+        let service = state.0.clone();
+        tauri::async_runtime::spawn_blocking(move || operation(&service))
+            .await
+            .map_err(|error| sql::SqlError::new("internal", format!("Database task failed: {error}")))?
+    }
+    #[tauri::command]
+    async fn sql_list_connections(state: State<'_, SqlState>) -> Result<sql::ConnectionList, sql::SqlError> {
+        sql_work(&state, |service| service.list()).await
+    }
+    #[tauri::command]
+    async fn sql_save_connection(
+        profile: sql::Profile,
+        password: Option<String>,
+        original: Option<String>,
+        state: State<'_, SqlState>,
+    ) -> Result<sql::ConnectionView, sql::SqlError> {
+        sql_work(&state, move |service| service.save(profile, password, original)).await
+    }
+    #[tauri::command]
+    async fn sql_delete_connection(name: String, state: State<'_, SqlState>) -> Result<(), sql::SqlError> {
+        sql_work(&state, move |service| service.delete(&name)).await
+    }
+    #[tauri::command]
+    async fn sql_test_connection(
+        profile: sql::Profile,
+        password: Option<String>,
+        original: Option<String>,
+        state: State<'_, SqlState>,
+    ) -> Result<sql::TestResult, sql::SqlError> {
+        sql_work(&state, move |service| service.test(profile, password, original)).await
+    }
+    #[tauri::command]
+    async fn sql_unlock_connection(name: String, password: String, state: State<'_, SqlState>) -> Result<(), sql::SqlError> {
+        sql_work(&state, move |service| service.unlock(&name, password)).await
+    }
+    /// Runs only when the UI asks: nothing in the backend starts a query.
+    #[tauri::command]
+    async fn sql_run(request: sql::RunRequest, state: State<'_, SqlState>) -> Result<sql::QueryResult, sql::SqlError> {
+        sql_work(&state, move |service| service.run(request)).await
+    }
+    #[tauri::command]
+    fn sql_cancel(id: String, state: State<'_, SqlState>) -> bool {
+        state.0.cancel(&id)
     }
 
     #[tauri::command]
@@ -1220,6 +1274,7 @@ mod desktop {
                     let path = path.join("agent.sock");
                     mcp::serve(&path, backend.clone()).map(|_| path)
                 });
+                app.manage(SqlState(std::sync::Arc::new(sql::Service::new(database.clone()))));
                 app.manage(AgentState { backend, endpoint });
                 app.manage(DatabaseState(database));
                 present_fallback(app.handle().clone());
@@ -1297,7 +1352,9 @@ mod desktop {
                 wiki_candidates,
                 create_wiki_note,
                 list_sticky_notes, create_sticky_note, open_sticky_note, delete_sticky_note,
-                read_sticky_note, update_sticky_note, close_sticky_note, new_sticky_note, drag_sticky_note
+                read_sticky_note, update_sticky_note, close_sticky_note, new_sticky_note, drag_sticky_note,
+                sql_list_connections, sql_save_connection, sql_delete_connection, sql_test_connection,
+                sql_unlock_connection, sql_run, sql_cancel
                 ];
                 move |invoke: tauri::ipc::Invoke| {
                     // Custom app commands have no generated ACL. Keep sticky webviews
