@@ -6,6 +6,7 @@
   import type { EmbedDocument } from './render-content';
   import type { TaskToggle } from './markdown-features';
   import { reducedFormatting } from './reduced-formatting';
+  import { buildAnchors, lineForOffset, offsetForLine, sourceHeadingLines } from './scroll-anchor';
 
   let { documentId, content, standalone, theme, folds, onToggleTask, onEditSource, onOpenWiki, onEditProperties, sourcePath, loadEmbed, onOpenPath, cells }: { documentId: number; content: string; standalone: boolean; theme: 'dark' | 'light'; folds: Map<string, boolean>; onToggleTask: (request: TaskToggle) => boolean; onEditSource: (from: number) => void; onOpenWiki?: (target: string, sourcePath?: string) => void; onEditProperties?: () => void; sourcePath?: string; loadEmbed?: (target: string, sourcePath?: string) => Promise<EmbedDocument>; onOpenPath?: (path: string) => void; cells?: CellSession } = $props();
   let container: HTMLDivElement;
@@ -13,6 +14,32 @@
   let timer: ReturnType<typeof setTimeout>;
   let queue: Promise<void> = Promise.resolve();
   let rendering = $state(false);
+  let scroller: HTMLDivElement;
+  let pendingLine: number | null = null;
+
+  // Source-line anchors for the rendered document: its top-level headings,
+  // as offsets within the scrolled content.
+  function anchors() {
+    const headings = [...container.querySelectorAll<HTMLElement>(':scope > h1, :scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > h6')];
+    const origin = scroller.getBoundingClientRect().top - scroller.scrollTop;
+    return buildAnchors(content.split('\n').length, scroller.scrollHeight, standalone ? [] : sourceHeadingLines(content), headings.map((heading) => heading.getBoundingClientRect().top - origin));
+  }
+  /** One-based source line at the top of the viewport; null while hidden or rendering. */
+  export function topLine(): number | null {
+    if (!scroller?.clientHeight || !container || rendering) return null;
+    return lineForOffset(anchors(), scroller.scrollTop);
+  }
+  /** Put a source line at the top of the viewport, once the render settles. */
+  export function scrollToLine(line: number) {
+    pendingLine = line;
+    if (!rendering) applyPendingLine();
+  }
+  function applyPendingLine() {
+    if (pendingLine === null || !scroller?.clientHeight || !container) return;
+    const line = pendingLine;
+    pendingLine = null;
+    scroller.scrollTop = offsetForLine(anchors(), line);
+  }
 
   async function renderPreview(text: string, raw: boolean, palette: 'dark' | 'light', ticket: number) {
     if (!container || ticket !== generation) return;
@@ -32,6 +59,7 @@
       source.textContent = text;
       container.append(notice, source);
       rendering = false;
+      applyPendingLine();
       return;
     }
     const result = raw ? {
@@ -43,7 +71,7 @@
       theme: palette, folds, current: () => ticket === generation,
       toggle: (task) => onToggleTask({ task, snapshot: text }), edit: onEditSource, openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, cells, openPath: onOpenPath, embedTrail: sourcePath ? [sourcePath + "#"] : [],
     });
-    if (ticket === generation) rendering = false;
+    if (ticket === generation) { rendering = false; applyPendingLine(); }
   }
 
   $effect(() => {
@@ -62,6 +90,8 @@
         if (ticket !== generation || !container) return;
         container.textContent = `Preview error: ${error instanceof Error ? error.message : String(error)}`;
         rendering = false;
+        // Never apply an anchor from before the failure to a later render.
+        pendingLine = null;
       });
     }, 180);
   });
@@ -70,6 +100,6 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable preview needs keyboard access.) -->
-<div class="preview-scroll" role="region" aria-label="Document preview" aria-busy={rendering} tabindex="0">
+<div class="preview-scroll" role="region" aria-label="Document preview" aria-busy={rendering} tabindex="0" bind:this={scroller}>
   <div class="markdown-body" bind:this={container}></div>
 </div>
