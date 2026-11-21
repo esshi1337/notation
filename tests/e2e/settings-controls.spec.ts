@@ -173,3 +173,70 @@ test('Agents explains unavailable desktop connection without implying edits are 
   await expect(settings.getByRole('textbox', { name: 'MCP command' })).toHaveCount(0);
   await expect(settings.getByRole('button', { name: 'Copy MCP command' })).toHaveCount(0);
 });
+
+// macOS WebKit does not focus a button on click. Reproduce that by delivering
+// the press and click events without the engine's own focus step.
+async function clickWithoutNativeFocus(page: Page, selector: string) {
+  await page.evaluate((target) => {
+    const element = document.querySelector<HTMLElement>(target)!;
+    const box = element.getBoundingClientRect();
+    const point = { bubbles: true, cancelable: true, composed: true, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2, button: 0 };
+    element.dispatchEvent(new PointerEvent('pointerdown', point));
+    element.dispatchEvent(new MouseEvent('mousedown', { ...point, detail: 1 }));
+    element.dispatchEvent(new PointerEvent('pointerup', point));
+    element.dispatchEvent(new MouseEvent('mouseup', { ...point, detail: 1 }));
+    element.dispatchEvent(new MouseEvent('click', { ...point, detail: 1 }));
+  }, selector);
+}
+
+test('focus follows a click even where the engine does not focus buttons, and Escape stays inside an open dropdown', async ({ page }) => {
+  await page.goto('/'); await openSettings(page);
+  const settings = dialog(page);
+  const appearance = settings.getByRole('tab', { name: 'Appearance', exact: true });
+  const editor = settings.getByRole('tab', { name: 'Editor', exact: true });
+  await expect(appearance).toBeFocused();
+
+  // Selecting a section moves focus with it, so the first tab is not left focused.
+  await clickWithoutNativeFocus(page, '.settings-sections [data-section="Editor"]');
+  await expect(editor).toHaveAttribute('aria-selected', 'true');
+  await expect(editor).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(settings.getByRole('tab', { name: 'Shortcuts', exact: true })).toBeFocused();
+  await page.keyboard.press('ArrowUp');
+  await expect(editor).toBeFocused();
+  // Keyboard focus and selection look different: an inner ring versus a filled row.
+  await expect(editor).toHaveCSS('outline-offset', '-3px');
+  await expect(editor).toHaveCSS('outline-width', '2px');
+  expect(await editor.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
+
+  // A dropdown opened by such a click takes focus, so its own Escape handling works.
+  await clickWithoutNativeFocus(page, '.select-trigger[aria-label="Editor font"]');
+  const font = settings.getByRole('combobox', { name: 'Editor font', exact: true });
+  await expect(font).toHaveAttribute('aria-expanded', 'true');
+  await expect(font).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(font).toHaveAttribute('aria-expanded', 'false');
+  await expect(settings).toBeVisible();
+
+  // Even with focus elsewhere in the dialog, Escape closes the dropdown first.
+  await font.click();
+  await expect(font).toHaveAttribute('aria-expanded', 'true');
+  await editor.evaluate((element) => element.focus());
+  await page.keyboard.press('Escape');
+  await expect(font).toHaveAttribute('aria-expanded', 'false');
+  await expect(settings).toBeVisible();
+  await expect(font).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(settings).toHaveCount(0);
+});
+
+test('the shortcut list keeps its reset buttons clear of the scrollbar', async ({ page }) => {
+  await page.goto('/'); await openSettings(page);
+  const settings = dialog(page);
+  await settings.getByRole('tab', { name: 'Shortcuts', exact: true }).click();
+  const clearance = await settings.locator('.shortcut-list').evaluate((list) => {
+    const box = list.getBoundingClientRect(), reset = list.querySelector('.shortcut-row button')!.getBoundingClientRect();
+    return box.right - reset.right;
+  });
+  expect(clearance).toBeGreaterThanOrEqual(12);
+});

@@ -173,6 +173,14 @@
     const next = (index + (['ArrowDown', 'ArrowRight'].includes(event.key) ? 1 : sections.length - 1)) % sections.length;
     section = sections[next]; queueMicrotask(() => dialog.querySelector<HTMLElement>('[data-section="' + section + '"]')?.focus());
   }
+  // Escape with a dropdown open closes the dropdown, not Settings, whichever
+  // element has focus (the dropdown button handles the key itself when focused).
+  function cancel(event: Event) {
+    event.preventDefault();
+    const openSelect = dialog.querySelector<HTMLElement>('.select-trigger.select-open');
+    if (openSelect) { openSelect.focus({ preventScroll: true }); openSelect.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); return; }
+    close();
+  }
   function trapFocus(event: KeyboardEvent) {
     if (event.key !== 'Tab') return;
     const controls = Array.from(dialog.querySelectorAll<HTMLElement>('button, input, select, textarea, summary, a[href], [tabindex]')).filter((element) => !element.hasAttribute('disabled') && element.tabIndex >= 0 && element.getClientRects().length);
@@ -189,7 +197,7 @@
   });
 </script>
 
-<dialog class="settings-dialog settings-workbench" use:scrimExit aria-label="Settings" bind:this={dialog} onkeydown={trapFocus} oncancel={(event) => { event.preventDefault(); close(); }}>
+<dialog class="settings-dialog settings-workbench" use:scrimExit aria-label="Settings" bind:this={dialog} onkeydown={trapFocus} oncancel={cancel}>
   <div class="settings-heading"><strong>Settings</strong><button type="button" class="settings-close" aria-label="Close settings" onclick={close}><Icon name="close" size={14} {theme} /></button></div>
   <div class="settings-body">
     <div class="settings-sections" role="tablist" aria-label="Settings sections" aria-orientation="vertical">{#each sections as item, index}<button type="button" role="tab" data-section={item} aria-selected={section === item} tabindex={section === item ? 0 : -1} onclick={() => section = item} onkeydown={(event) => sectionKey(event, index)}>{item}</button>{/each}</div>
