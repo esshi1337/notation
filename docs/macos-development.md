@@ -55,6 +55,17 @@ server termination separately before relying on them. Later validate
 and any distributable validation are separate future work; do not represent
 either host output as universal.
 
+## Type-checking macOS code without a Mac
+
+`scripts/check-macos-target.sh` runs `cargo check` on the crate and its tests
+for `aarch64-apple-darwin` from Linux. It needs only the Rust target
+(`rustup target add aarch64-apple-darwin`), no Apple SDK: checking never links,
+so the script supplies stand-in C tools for build scripts. It catches type and
+borrow errors in `cfg(target_os = "macos")` code, which no Linux build
+compiles. It proves nothing about behaviour: linking, AppKit calls, the menu,
+window and Finder integration still have to be tried on a Mac. Run it for any
+change to macOS-only Rust code while the workflow below is disabled.
+
 ## Continuous integration
 
 `.github/workflows/macos.yml` is currently **disabled by the repository owner**.
