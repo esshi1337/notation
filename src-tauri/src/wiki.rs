@@ -193,8 +193,31 @@ fn suggestions(root: &Path, folder: &Path, mut candidates: Vec<Candidate>) -> Ve
     candidates
 }
 impl Database {
-    pub(crate) fn indexed_notes(&self) -> Result<Vec<Candidate>, String> {
+    /// Every indexed note with its aliases, headings and block ids. Loading
+    /// this parses each note's frontmatter, so it is kept until the index
+    /// changes: `data_version` on the read connection moves whenever another
+    /// connection commits to the index database.
+    pub(crate) fn indexed_notes(&self) -> Result<std::sync::Arc<Vec<Candidate>>, String> {
         let connection = self.index_read()?;
+        let version: i64 = connection
+            .query_row("PRAGMA data_version", [], |row| row.get(0))
+            .map_err(|error| error.to_string())?;
+        let mut cached = self
+            .notes
+            .lock()
+            .map_err(|_| "Workspace index is unavailable after an internal error.".to_string())?;
+        if let Some((loaded, notes)) = cached.as_ref() {
+            if *loaded == version {
+                return Ok(notes.clone());
+            }
+        }
+        let notes = std::sync::Arc::new(load_notes(&connection)?);
+        *cached = Some((version, notes.clone()));
+        Ok(notes)
+    }
+}
+fn load_notes(connection: &rusqlite::Connection) -> Result<Vec<Candidate>, String> {
+    {
         let mut statement=connection.prepare("SELECT f.path,f.name,f.title,m.json FROM cache_files f LEFT JOIN cache_frontmatter m ON m.path=f.path ORDER BY f.path").map_err(|error|error.to_string())?;
         let rows = statement
             .query_map([], |row| {
@@ -269,6 +292,8 @@ impl Database {
         }
         Ok(result)
     }
+}
+impl Database {
     pub fn resolve_wiki_link(&self, raw: &str, source: Option<&str>) -> Result<Resolution, String> {
         let target = parse_target(raw)?;
         let scope = self.active_workspace()?;
@@ -285,8 +310,9 @@ impl Database {
                 source.ok_or("Save the current note before resolving a heading-only wiki link.")?;
             let path = explorer::resolve(&root, source)?;
             notes
-                .into_iter()
+                .iter()
                 .filter(|candidate| Path::new(&candidate.path) == path)
+                .cloned()
                 .collect::<Vec<_>>()
         } else {
             let raw = Path::new(&target.note);
@@ -324,13 +350,15 @@ impl Database {
                     }
                 }
                 notes
-                    .into_iter()
+                    .iter()
                     .filter(|candidate| paths.iter().any(|path| Path::new(&candidate.path) == path))
+                    .cloned()
                     .collect()
             } else {
                 let all = notes
-                    .into_iter()
+                    .iter()
                     .filter(|candidate| matches_note(candidate, &target.note))
+                    .cloned()
                     .collect::<Vec<_>>();
                 let local = all
                     .iter()
@@ -408,7 +436,7 @@ impl Database {
         let note = unescape(note).to_lowercase();
         let mut candidates = self
             .indexed_notes()?
-            .into_iter()
+            .iter()
             .filter(|candidate| {
                 candidate.name.to_lowercase().contains(&note)
                     || candidate
@@ -422,6 +450,7 @@ impl Database {
                         .iter()
                         .any(|alias| alias.to_lowercase().contains(&note))
             })
+            .cloned()
             .collect::<Vec<_>>();
         if let Some(heading) = heading {
             for candidate in &mut candidates {
