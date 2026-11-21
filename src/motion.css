@@ -26,7 +26,7 @@
 }
 /* Keyboard-driven lists select at once and release with the short fade, so
    holding an arrow key never leaves the highlight lagging behind. */
-:where([role='option'][aria-selected='true'], .select-option.select-active, .slash-option[aria-selected='true']) { transition: none; }
+:where([role='option'][aria-selected='true'], .select-option.select-active, .slash-option[aria-selected='true'], .workspace-option.active) { transition: none; }
 button:active:not(:disabled) { background-color: var(--active); }
 .identity-icon { transition: transform var(--motion-fast) var(--ease-out); }
 :is(.sidebar-button, .new-tab-button, .tab-close, .settings-close, .workspace-panel-trigger):active:not(:disabled) > .identity-icon { transform: scale(.9); }

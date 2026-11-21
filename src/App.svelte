@@ -49,6 +49,7 @@
   import { migrateSettings, preferencesStyle, readUIPreferences, UI_SETTINGS_VERSION } from './preferences';
   import { smoothScrolling } from './smooth-scroll';
   import { fadeOnChange, pop } from './motion';
+  import WorkspaceSwitcher from './WorkspaceSwitcher.svelte';
   import { isMac } from './platform';
   import { COMMANDS, commandForEvent, formatShortcut, readShortcutOverrides, shortcutFor } from './shortcuts';
   import type { CommandId } from './shortcuts';
@@ -951,7 +952,7 @@
   <header class="workspace-bar" data-tauri-drag-region={desktop && mac ? 'deep' : undefined}>
     <CompactMenu label="App menu" text="N" items={appMenuItems} execute={(id) => void runCommand(id)} bind:open={appMenuOpen} {theme} />
     <div class="workspace-control">
-      {#if catalog.workspaces.length}<select class="workspace-switcher" aria-label="Active workspace" value={catalog.activeId ?? ''} disabled={workspaceBusy || busy} onchange={event => void chooseWorkspace(event.currentTarget.value)}>{#each catalog.workspaces as workspace}<option value={workspace.id}>{workspace.name}</option>{/each}</select>{:else}<span class="workspace-personal">Personal</span>{/if}
+      {#if catalog.workspaces.length}<WorkspaceSwitcher workspaces={catalog.workspaces} value={catalog.activeId ?? ''} disabled={workspaceBusy || busy} onchange={(id) => void chooseWorkspace(id)} {theme} />{:else}<span class="workspace-personal">Personal</span>{/if}
       <button class="workspace-panel-trigger" aria-label="Open workspace panel" title="Workspace panel" onclick={openWorkspacePanel}><Icon name="chevron" size={14} {theme} /></button>
     </div>
     <Tabs documents={visibleDocuments} {activeId} select={selectTab} close={(id) => void closeTab(id)} create={() => void runCommand('file.new')} rename={(id) => { selectTab(id); renameId = id; }} {theme} />
