@@ -1,8 +1,9 @@
-NewCMMath-Regular.otf — New Computer Modern Math, Regular
+NewCMMath-Book.otf — New Computer Modern Math, Book
 
-Unmodified copy of files/fonts/NewCMMath-Regular.otf from typst-assets v0.15.1
-(https://github.com/typst/typst-assets), the default math font of Typst 0.15.
-SHA-256: d66ac1cc91c55c24d3636ae2df1238076debdff51841f9893fc5419cc2df3df7
+Unmodified copy of files/fonts/NewCMMath-Book.otf from typst-assets v0.15.1
+(https://github.com/typst/typst-assets). Typst 0.15 sets math in the Book
+weight by default, so equations in the app match exported PDFs.
+SHA-256: 2ea09ebc9167b1e1a66f31390dc917f2d4004ecfca72d51b28010e4ad6becd95
 
 New Computer Modern is by Antonis Tsolomitis and is based on Latin Modern
 (GUST e-foundry) and Computer Modern (Donald E. Knuth). It is distributed

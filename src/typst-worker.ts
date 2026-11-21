@@ -11,7 +11,7 @@ import * as compilerModule from '@myriaddreamin/typst-ts-web-compiler';
 import * as rendererModule from '@myriaddreamin/typst-ts-renderer';
 import compilerWasm from '@myriaddreamin/typst-ts-web-compiler/pkg/typst_ts_web_compiler_bg.wasm?url';
 import rendererWasm from '@myriaddreamin/typst-ts-renderer/pkg/typst_ts_renderer_bg.wasm?url';
-import mathFont from './assets/typst/NewCMMath-Regular.otf?url';
+import mathFont from './assets/typst/NewCMMath-Book.otf?url';
 import { TYPST_METRICS_LABEL, typstDiagnostic, typstMathDocument } from './math-syntax';
 import { noFiles, noPackages, refuseSourceEvaluation } from './typst-sandbox';
 

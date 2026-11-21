@@ -369,3 +369,174 @@ fn unchanged_media_is_confirmed_without_reading_and_changes_are_reloaded() {
     age(&root.join("fake.png"), 60);
     assert!(read_if_changed(&db, "fake.png", None, Some("1:2:3:4")).is_err());
 }
+/// Converter input as the frontend sends it for a note that mixes Typst and
+/// LaTeX math: Typst equations are marker spans, LaTeX is `\(…\)`.
+fn math_request(id: &str, output: &std::path::Path, format: &str, extra: &str) -> ExportRequest {
+    let picture = "<svg xmlns='http://www.w3.org/2000/svg' width='80' height='40' viewBox='0 0 20 10'><path d='M1 1h18v8H1z' fill='#000000'/></svg>";
+    let marker = |source: &str, display: bool| {
+        format!(
+            "<span class=\"notation-typst-math\" data-typst=\"{}\" data-display=\"{}\" data-width=\"20\" data-height=\"10\" data-svg=\"{picture}\"></span>",
+            source.replace('&', "&amp;").replace('"', "&quot;"),
+            u8::from(display)
+        )
+    };
+    let content = format!(
+        "<h1>Mixed math</h1><p>Typst {} and LaTeX \\(\\frac{{a}}{{b}}\\) inline.</p><p>{}</p><p>Text {} end.</p>{extra}",
+        marker("sum_(i=1)^n x_i", false),
+        marker("integral_0^oo e^(-x^2) dif x = sqrt(pi)/2", true),
+        marker("\"speed\" = d/t", false),
+    );
+    let extra_marker = extra
+        .replace("{unreadable}", &marker("x + #text(fill: gradient.linear(red, blue))[y]", false))
+        .replace("{empty}", &marker("#line(length: 1em)", false));
+    let content = content.replace(extra, &extra_marker);
+    serde_json::from_value(json!({"id":id,"content":content,"inputFormat":"html","format":format,"outputPath":output,"title":"Mixed math"})).unwrap()
+}
+fn office_xml(bytes: Vec<u8>) -> (String, Vec<String>) {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let names = archive
+        .file_names()
+        .map(|name| name.unwrap().into_owned())
+        .collect::<Vec<_>>();
+    let mut content = String::new();
+    for name in names.iter().filter(|name| name.ends_with(".xml")) {
+        let mut text = String::new();
+        archive
+            .by_name(name)
+            .unwrap()
+            .read_to_string(&mut text)
+            .unwrap();
+        content.push_str(&text);
+    }
+    (content, names)
+}
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "bundled engines run only inside the Linux sandbox")]
+fn typst_equations_are_typeset_by_the_pdf_engine_and_become_office_equations() {
+    let runtime = runtime();
+    let temporary = tempfile::tempdir().unwrap();
+    let pdf = temporary.path().join("math.pdf");
+    let result = runtime
+        .export(math_request("math-pdf", &pdf, "pdf", ""), None)
+        .unwrap_or_else(|error| panic!("pdf: {error}"));
+    assert_eq!(result.warning, None);
+    let bytes = fs::read(&pdf).unwrap();
+    assert!(bytes.starts_with(b"%PDF-"));
+    // Equations are text set in a font, not pictures: the document has no
+    // image at all, and the marker never reaches the output.
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(!text.contains("/Subtype /Image") && !text.contains("/Subtype/Image"));
+    assert!(!text.contains("notation-typst-math"));
+
+    for format in ["docx", "pptx"] {
+        let output = temporary.path().join(format!("math.{format}"));
+        let result = runtime
+            .export(math_request(format, &output, format, ""), None)
+            .unwrap_or_else(|error| panic!("{format}: {error}"));
+        assert_eq!(result.warning, None, "{format}");
+        let (content, names) = office_xml(fs::read(&output).unwrap());
+        // Three Typst equations and one LaTeX equation, all native. Slides
+        // wrap each equation in an `a14:m` element.
+        let native = if format == "docx" { "<m:oMath>" } else { "<a14:m>" };
+        assert!(content.matches(native).count() >= 4, "{format}");
+        assert!(content.contains("<m:nary>") || content.contains("∑"), "{format}");
+        assert!(content.contains("speed"), "{format}");
+        assert!(!content.contains("notation-typst-math"), "{format}");
+        assert!(
+            !names.iter().any(|name| name.contains("media/") && name.ends_with(".png")),
+            "{format}: no equation was rasterized"
+        );
+    }
+}
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "bundled engines run only inside the Linux sandbox")]
+fn an_equation_office_cannot_represent_is_embedded_as_an_image_and_reported() {
+    let runtime = runtime();
+    let temporary = tempfile::tempdir().unwrap();
+    let output = temporary.path().join("fallback.docx");
+    // Valid Typst that Pandoc's Typst reader rejects (a gradient fill) or
+    // reads as nothing (a drawn line). Their neighbours must still become
+    // equations.
+    let extra = "<p>Odd {unreadable} one and {empty} another.</p>";
+    let result = runtime
+        .export(math_request("fallback", &output, "docx", extra), None)
+        .unwrap_or_else(|error| panic!("docx: {error}"));
+    let warning = result.warning.expect("the fallback is reported");
+    assert!(warning.contains("2 Typst equation(s) could not be converted"), "{warning}");
+    assert!(warning.contains("2 embedded as images, 0 as source text"), "{warning}");
+    let (content, names) = office_xml(fs::read(&output).unwrap());
+    assert!(content.matches("<m:oMath>").count() >= 4);
+    assert_eq!(
+        names
+            .iter()
+            .filter(|name| name.contains("media/") && name.ends_with(".png"))
+            .count(),
+        2
+    );
+    // Slides cannot hold a picture inside a sentence, so they get the source.
+    let slides = temporary.path().join("fallback.pptx");
+    let result = runtime
+        .export(math_request("fallback-pptx", &slides, "pptx", extra), None)
+        .unwrap_or_else(|error| panic!("pptx: {error}"));
+    let warning = result.warning.expect("the fallback is reported");
+    assert!(warning.contains("0 embedded as images, 2 as source text"), "{warning}");
+    let (content, _) = office_xml(fs::read(&slides).unwrap());
+    assert!(content.contains("gradient.linear(red, blue)"));
+    assert!(content.matches("<a14:m>").count() >= 4);
+    // The same note as PDF needs no fallback: Typst reads its own syntax.
+    let pdf = temporary.path().join("fallback.pdf");
+    let result = runtime
+        .export(math_request("fallback-pdf", &pdf, "pdf", extra), None)
+        .unwrap_or_else(|error| panic!("pdf: {error}"));
+    assert_eq!(result.warning, None);
+}
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "bundled engines run only inside the Linux sandbox")]
+fn equation_sources_that_would_escape_the_equation_are_rejected() {
+    let runtime = runtime();
+    let temporary = tempfile::tempdir().unwrap();
+    for format in ["pdf", "docx"] {
+        let output = temporary.path().join(format!("escape.{format}"));
+        let mut request = math_request("escape", &output, format, "");
+        request.content = request
+            .content
+            .replace("sum_(i=1)^n x_i", "x$ #read(&quot;input&quot;) $y");
+        let error = runtime.export(request, None).unwrap_err();
+        assert!(error.contains("unescaped $"), "{format}: {error}");
+        assert!(!output.exists());
+    }
+}
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "bundled engines run only inside the Linux sandbox")]
+fn typst_code_in_an_exported_equation_stays_inside_the_engine_sandbox() {
+    // An equation is the first user-written Typst the PDF engine runs. It can
+    // compute, but it cannot read the user's files or fetch a package.
+    let runtime = runtime();
+    let temporary = tempfile::tempdir().unwrap();
+    let secret = temporary.path().join("secret.txt");
+    fs::write(&secret, "private").unwrap();
+    for (source, expected) in [
+        (format!("#read(&quot;{}&quot;)", secret.display()), "typst failed"),
+        ("#read(&quot;/etc/hostname&quot;)".to_string(), "typst failed"),
+        (
+            "#{ import &quot;@preview/cetz:0.3.4&quot;: canvas }".to_string(),
+            "typst failed",
+        ),
+    ] {
+        let output = temporary.path().join("confined.pdf");
+        let mut request = math_request("confined", &output, "pdf", "");
+        request.content = request.content.replace("sum_(i=1)^n x_i", &source);
+        let error = runtime.export(request, None).unwrap_err();
+        assert!(error.contains(expected), "{source}: {error}");
+        assert!(!error.contains("private"), "{error}");
+        assert!(!output.exists());
+    }
+    // Computation is fine.
+    let output = temporary.path().join("computed.pdf");
+    let mut request = math_request("computed", &output, "pdf", "");
+    request.content = request
+        .content
+        .replace("sum_(i=1)^n x_i", "#calc.pow(2, 10) + #range(4).sum()");
+    runtime.export(request, None).unwrap();
+    assert!(fs::read(&output).unwrap().starts_with(b"%PDF-"));
+}

@@ -36,7 +36,7 @@
         if (!path || !alive || abort.signal.aborted) return;
         if (!path.toLowerCase().endsWith('.' + selected)) throw new Error('Choose a .' + selected + ' filename for this export.');
         progress = 'Converting to ' + selected.toUpperCase() + '…';
-        const prepared = prepareConverterHtml(result.html); conversionId = crypto.randomUUID();
+        const prepared = prepareConverterHtml(result.html, { images: selected !== 'pdf' }); conversionId = crypto.randomUUID();
         const saved = await invoke<{ warning?: string }>('export_document', { request: { id: conversionId, content: prepared.content, inputFormat: 'html', format: selected, outputPath: path, sourcePath: source.path, assets: prepared.assets, title: source.name } });
         if (!alive || abort.signal.aborted) return;
         if (saved.warning) warnings = [...warnings, saved.warning];
