@@ -552,7 +552,13 @@ PRAGMA user_version=9;").map_err(database_error)?;
     }
 }
 
+/// Marks a complete full index that single-note updates may build on.
+pub(crate) const INDEX_BASELINE_KEY: &str = "index_baseline";
 pub(crate) fn clear_cache(connection: &Connection) -> Result<(), String> {
+    // An emptied index is no baseline for single-note updates.
+    connection
+        .execute("DELETE FROM app_meta WHERE key=?1", [INDEX_BASELINE_KEY])
+        .map_err(database_error)?;
     connection.execute_batch("DELETE FROM cache_blocks; DELETE FROM cache_graph_links; DELETE FROM cache_frontmatter; DELETE FROM cache_properties; DELETE FROM cache_headings; DELETE FROM cache_fts; DELETE FROM cache_links; DELETE FROM cache_tags; DELETE FROM cache_tasks; DELETE FROM cache_files;").map_err(database_error)
 }
 fn script_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedScript> {
@@ -948,7 +954,12 @@ pub(crate) fn refresh_after_write(database: &Database, document: &mut crate::doc
         {
             return Ok(());
         }
-        let report = database.index_workspace()?;
+        // Most saves only change the saved note's own index rows; rebuild the
+        // whole index only when that cannot be shown.
+        let report = match database.index_saved_file(&document.path, &document.content)? {
+            Some(report) => report,
+            None => database.index_workspace()?,
+        };
         if !report.errors.is_empty() {
             return Err(report.errors.join("\n"));
         }
