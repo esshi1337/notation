@@ -136,6 +136,25 @@ impl StickyManager {
             .lock()
             .map_err(|_| "Sticky window manager unavailable.".into())
     }
+    /// Release a reservation only if the admission lock is free right now.
+    ///
+    /// The UI thread calls this when a sticky window is destroyed. Sticky
+    /// commands hold the admission lock across database calls, so waiting for
+    /// it there would freeze every window behind a busy database. `false`
+    /// means the lock was busy and the caller must release from a thread that
+    /// may wait.
+    pub fn try_release(&self, id: &str) -> bool {
+        match self.0.try_lock() {
+            Ok(mut admission) => {
+                admission.release(id);
+                true
+            }
+            Err(std::sync::TryLockError::WouldBlock) => false,
+            // A poisoned manager admits nothing further; there is no
+            // reservation left to keep consistent.
+            Err(std::sync::TryLockError::Poisoned(_)) => true,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
