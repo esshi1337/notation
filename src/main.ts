@@ -1,6 +1,11 @@
 import { mount } from 'svelte';
 import './style.css';
+import './motion.css';
 import { isTauri } from '@tauri-apps/api/core';
+import { trackInputModality } from './motion';
+
+// Sticky windows and the main window share the pointer/keyboard focus-ring rule.
+trackInputModality();
 
 const target = document.getElementById('app')!;
 target.textContent = 'Loading Notation…';

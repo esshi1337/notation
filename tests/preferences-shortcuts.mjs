@@ -197,6 +197,11 @@ try {
     assert.equal(restored.smoothScrolling, true);
     assert.equal(restored.languageIntelligenceEnabled, true);
   });
+  check('reduce motion is opt-in, accepts only an explicit true and survives serialization', () => {
+    for (const reduceMotion of [undefined, null, 'true', 1, false, {}]) assert.equal(preferences.readUIPreferences({ reduceMotion }).reduceMotion, false, String(reduceMotion));
+    assert.equal(preferences.DEFAULT_UI_PREFERENCES.reduceMotion, false);
+    assert.equal(preferences.readUIPreferences(JSON.parse(JSON.stringify({ reduceMotion: true, density: 'comfortable' }))).reduceMotion, true);
+  });
   check('scripts are opt-in and accept only an explicit true', () => {
     for (const scriptsEnabled of [undefined, null, 'true', 1, 'yes', false, {}]) assert.equal(preferences.readUIPreferences({scriptsEnabled}).scriptsEnabled, false, String(scriptsEnabled));
     assert.equal(preferences.DEFAULT_UI_PREFERENCES.scriptsEnabled, false);

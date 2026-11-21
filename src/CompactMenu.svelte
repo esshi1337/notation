@@ -9,7 +9,15 @@
   let { label, text, items, execute, open = $bindable(false), radio = false, theme }: { label: string; text: string; items: CommandItem[]; execute: (id: CommandId) => void; open?: boolean; radio?: boolean; theme: IconTheme } = $props();
   let host: HTMLDivElement, trigger: HTMLButtonElement;
   let branded = $derived(label === 'App menu');
-  $effect(() => { const showing = open; if (showing) queueMicrotask(() => host?.querySelector<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)')?.focus()); });
+  // A pointer-opened menu takes focus on its container, so no item looks
+  // keyboard-focused until an arrow key moves into the list.
+  let pointerOpened = false;
+  $effect(() => {
+    const showing = open;
+    if (!showing) { pointerOpened = false; return; }
+    const viaPointer = pointerOpened;
+    queueMicrotask(() => host?.querySelector<HTMLElement>(viaPointer ? '.compact-menu' : '[role^="menuitem"]:not(:disabled)')?.focus());
+  });
   function choose(item: CommandItem) { if (item.disabled) return; open = false; trigger.focus(); execute(item.id); }
   function keyboard(event: KeyboardEvent) {
     const controls = Array.from(host.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)'));
@@ -27,7 +35,7 @@
   onDestroy(() => document.removeEventListener('pointerdown', outside, true));
 </script>
 <div class="compact-menu-host" bind:this={host}>
-  <button class="compact-menu-trigger" class:brand-trigger={branded} bind:this={trigger} aria-label={label} aria-haspopup="menu" aria-expanded={open} onclick={() => open = !open}>
+  <button class="compact-menu-trigger" class:brand-trigger={branded} bind:this={trigger} aria-label={label} aria-haspopup="menu" aria-expanded={open} onclick={(event) => { pointerOpened = !open && event.detail > 0; open = !open; }}>
     {#if branded}<Icon name="mark" size={18} {theme} />{:else}<span class="compact-menu-label">{text}</span><Icon name="chevron" size={14} {theme} />{/if}
   </button>
   {#if open}<div class="compact-menu" class:app-menu={branded} role="menu" aria-label={label} tabindex="-1" onkeydown={keyboard}>

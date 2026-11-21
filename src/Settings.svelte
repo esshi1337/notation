@@ -121,6 +121,7 @@
     prefs.sidebarRailWidth = DEFAULT_UI_PREFERENCES.sidebarRailWidth;
     prefs.sidebarPosition = DEFAULT_UI_PREFERENCES.sidebarPosition;
     prefs.showStatusBar = DEFAULT_UI_PREFERENCES.showStatusBar;
+    prefs.reduceMotion = DEFAULT_UI_PREFERENCES.reduceMotion;
     prefs.focusMode = DEFAULT_UI_PREFERENCES.focusMode;
   }
   function resetEditor() {
@@ -198,6 +199,7 @@
           <div class="settings-toggle-group">
             <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.showStatusBar} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Show status bar</label>
             <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.focusMode} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Focus mode</label>
+            <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.reduceMotion} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Reduce motion</label>
           </div>
         </div>
         <ThemeEditor bind:prefs base={`${builtInTheme}/${builtInTheme === 'dark' ? prefs.darkPreset : prefs.lightPreset}`} {onpreview} disable={disableTheme} {themeImportReset} />

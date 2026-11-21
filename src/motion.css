@@ -1,0 +1,41 @@
+/* Motion system. Every animated surface reads these tokens, so durations and
+   curves stay coherent and one switch turns motion off. Exits use a shorter
+   duration than enters; anything larger than a button animates only opacity
+   and transform. WKWebView on macOS 13 (Safari 16) is the floor, so nothing
+   here depends on @starting-style, view transitions or interpolate-size. */
+:root {
+  --motion-fast: 120ms;  /* hover, press, toggles, focus rings */
+  --motion-base: 180ms;  /* menus, popovers, tabs */
+  --motion-slow: 240ms;  /* dialogs, panels, banners */
+  --ease-out: cubic-bezier(.2, .8, .2, 1);
+  --ease-in-out: cubic-bezier(.4, 0, .2, 1);
+  --ease-in: cubic-bezier(.4, 0, 1, 1);
+  --control-transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out), text-decoration-color var(--motion-fast) var(--ease-out);
+}
+/* The system preference, Performance mode and Settings → Appearance → Reduce
+   motion all zero the same tokens. motion.ts reads them for scripted motion. */
+@media (prefers-reduced-motion: reduce) {
+  :root { --motion-fast: 0ms; --motion-base: 0ms; --motion-slow: 0ms; }
+}
+:root[data-motion='reduce'] { --motion-fast: 0ms; --motion-base: 0ms; --motion-slow: 0ms; }
+
+/* Hover, press and selected states ease instead of switching in one frame.
+   :where() keeps this at zero specificity so a component can still opt out. */
+:where(button, [role='tab'], [role='option'], [role^='menuitem'], input, select, textarea, summary, a, .select-trigger, .select-option, .slash-option, .document-tab, .workspace-control, .wiki-link, .settings-checkbox-mark, .cm-live-math) {
+  transition: var(--control-transition);
+}
+button:active:not(:disabled) { background-color: var(--active); }
+.identity-icon { transition: transform var(--motion-fast) var(--ease-out); }
+:is(.sidebar-button, .new-tab-button, .tab-close, .settings-close, .workspace-panel-trigger):active:not(:disabled) > .identity-icon { transform: scale(.9); }
+
+/* Focus rings grow in on keyboard focus and leave at once: the animation only
+   runs while :focus-visible matches, and it interpolates to whatever ring the
+   control already declares. The editor surface itself never animates. */
+@keyframes focus-ring-in { from { outline-color: transparent; outline-offset: 0; } }
+:where(button, input, select, textarea, summary, a, [role], [tabindex]):focus-visible:not(.cm-content) { animation: focus-ring-in var(--motion-fast) var(--ease-out); }
+/* WebKit matches :focus-visible when a script moves focus after a click, so a
+   mouse-opened menu or dialog showed a ring. main.ts records the last input
+   device; after pointer input, non-text controls keep focus without a ring.
+   Text fields always show theirs, and any key press brings rings back. */
+:root[data-input='pointer'] :is(button, summary, a, [role='tab'], [role='option'], [role^='menuitem'], [tabindex]):focus-visible:not(input, textarea, select, [contenteditable='true']) { outline-color: transparent; }
+.compact-menu:focus-visible { outline: none; }
