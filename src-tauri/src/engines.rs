@@ -64,6 +64,9 @@ impl Drop for Slot {
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     pub available: bool,
+    /// False where native engines cannot run at all (no Linux sandbox), as
+    /// opposed to an incomplete or damaged installation.
+    pub platform_supported: bool,
     pub engines: HashMap<String, bool>,
     pub resource_dir: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -198,7 +201,10 @@ impl Runtime {
         );
         let available =
             engines.values().all(|available| *available) && engine_process::sandbox_available();
-        let error = if !engine_process::sandbox_available() {
+        let platform_supported = cfg!(target_os = "linux");
+        let error = if !platform_supported {
+            Some(engine_process::UNSUPPORTED_PLATFORM.into())
+        } else if !engine_process::sandbox_available() {
             Some("Native engines require Linux with the Landlock filesystem sandbox enabled (ABI 3 or newer).".into())
         } else if !engines.values().all(|available| *available) {
             Some("Bundled engines are incomplete. Rebuild the application with scripts/bundle-engines.py.".into())
@@ -207,6 +213,7 @@ impl Runtime {
         };
         Status {
             available,
+            platform_supported,
             engines,
             resource_dir: self.directory.to_string_lossy().into(),
             error,

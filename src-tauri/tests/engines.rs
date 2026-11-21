@@ -293,3 +293,21 @@ fn runtime_resource_discovery_supports_product_and_executable_appdir_names() {
         development
     );
 }
+
+#[test]
+fn status_tells_an_unsupported_platform_from_a_damaged_install() {
+    let empty = tempfile::tempdir().unwrap();
+    let status = Runtime::new(empty.path().to_path_buf(), PathBuf::from(env!("CARGO_BIN_EXE_notation"))).status();
+    assert!(!status.available);
+    assert_eq!(status.platform_supported, cfg!(target_os = "linux"));
+    let error = status.error.clone().expect("an explanation");
+    if cfg!(target_os = "linux") {
+        // Engines can run here, so missing files are an installation problem.
+        assert!(error.contains("incomplete") || error.contains("Landlock"), "{error}");
+    } else {
+        assert!(error.contains("Not available on"), "{error}");
+        assert!(!error.to_lowercase().contains("reinstall") && !error.contains("Rebuild"), "{error}");
+    }
+    let json = serde_json::to_value(&status).unwrap();
+    assert_eq!(json["platformSupported"], cfg!(target_os = "linux"));
+}

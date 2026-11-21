@@ -96,9 +96,46 @@ pub(crate) fn open_regular(path: &Path) -> Result<fs::File, String> {
     }
     Ok(file)
 }
+/// macOS keeps `/var`, `/tmp` and `/etc` as system-owned symbolic links into
+/// `/private`. Paths under them (the default temporary directory, for one)
+/// would be refused by the symlink checks below, so they are first rewritten
+/// to the directories they name. No other symbolic link is ever followed.
+const SYSTEM_ALIASES: &[(&str, &str)] = if cfg!(target_os = "macos") {
+    &[
+        ("/var", "/private/var"),
+        ("/tmp", "/private/tmp"),
+        ("/etc", "/private/etc"),
+    ]
+} else {
+    &[]
+};
+/// The aliases that really are links to their expected targets on this host.
+static VERIFIED_ALIASES: std::sync::LazyLock<Vec<(&str, &str)>> = std::sync::LazyLock::new(|| {
+    SYSTEM_ALIASES
+        .iter()
+        .copied()
+        .filter(|(alias, target)| {
+            fs::symlink_metadata(alias).is_ok_and(|metadata| metadata.is_symlink())
+                && fs::canonicalize(alias).is_ok_and(|resolved| resolved == Path::new(target))
+        })
+        .collect()
+});
+/// Replace a leading alias component with its target; whole components only.
+pub(crate) fn rewrite_aliases(path: &Path, aliases: &[(&str, &str)]) -> PathBuf {
+    for (alias, target) in aliases {
+        if let Ok(rest) = path.strip_prefix(alias) {
+            return Path::new(target).join(rest);
+        }
+    }
+    path.to_path_buf()
+}
+pub(crate) fn system_path(path: &Path) -> PathBuf {
+    rewrite_aliases(path, &VERIFIED_ALIASES)
+}
 pub fn resolve(root: &Path, path: &str) -> Result<PathBuf, String> {
+    let root = &system_path(root);
     let requested = if Path::new(path).is_absolute() {
-        PathBuf::from(path)
+        system_path(Path::new(path))
     } else {
         root.join(path)
     };
@@ -137,8 +174,9 @@ pub fn resolve(root: &Path, path: &str) -> Result<PathBuf, String> {
 /// Validate a deleted Git path against its nearest existing ancestor, while
 /// rejecting symlink traversal in every ancestor that still exists.
 pub fn resolve_allow_missing(root: &Path, path: &str) -> Result<PathBuf, String> {
+    let root = &system_path(root);
     let requested = if Path::new(path).is_absolute() {
-        PathBuf::from(path)
+        system_path(Path::new(path))
     } else {
         root.join(path)
     };
@@ -333,4 +371,47 @@ pub(crate) fn read_scoped_file(
         content: String::from_utf8(bytes).map_err(|_| "File is not valid UTF-8 text.")?,
         warning: None,
     })
+}
+
+#[cfg(test)]
+mod alias_tests {
+    use super::*;
+
+    #[test]
+    fn system_aliases_rewrite_whole_leading_components_only() {
+        let mac = [("/var", "/private/var"), ("/tmp", "/private/tmp")];
+        let rewrite = |path: &str| rewrite_aliases(Path::new(path), &mac);
+        assert_eq!(rewrite("/var/folders/x/note.md"), Path::new("/private/var/folders/x/note.md"));
+        assert_eq!(rewrite("/var"), Path::new("/private/var"));
+        assert_eq!(rewrite("/tmp/a b/ü.md"), Path::new("/private/tmp/a b/ü.md"));
+        for unchanged in ["/variable/x", "/private/var/x", "/Users/var/x", "/home/tmp", "relative/var", "/"] {
+            assert_eq!(rewrite(unchanged), Path::new(unchanged), "{unchanged}");
+        }
+        // Without a table (every platform but macOS) nothing is rewritten.
+        assert_eq!(rewrite_aliases(Path::new("/var/x"), &[]), Path::new("/var/x"));
+        if !cfg!(target_os = "macos") {
+            assert_eq!(system_path(Path::new("/var/x")), Path::new("/var/x"));
+            assert_eq!(system_path(Path::new("/tmp/x")), Path::new("/tmp/x"));
+        }
+    }
+
+    // The default macOS temporary directory is under the /var alias.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn files_under_the_var_alias_resolve_to_their_private_path() {
+        let directory = tempfile::tempdir_in("/var/tmp").unwrap();
+        let note = directory.path().join("note.md");
+        fs::write(&note, "# Note\n").unwrap();
+        assert!(note.starts_with("/var/tmp"));
+        let resolved = resolve(directory.path(), note.to_str().unwrap()).unwrap();
+        assert!(resolved.starts_with("/private/var/tmp"), "{resolved:?}");
+        assert_eq!(resolved, note.canonicalize().unwrap());
+        let reference = crate::workspace_catalog::normalize_reference(note.to_str().unwrap()).unwrap();
+        assert!(reference.starts_with("/private/var/tmp"), "{reference:?}");
+        // A user-made symbolic link is still refused.
+        let link = directory.path().join("link.md");
+        std::os::unix::fs::symlink(&note, &link).unwrap();
+        assert!(resolve(directory.path(), link.to_str().unwrap()).is_err());
+        assert!(crate::workspace_catalog::normalize_reference(link.to_str().unwrap()).is_err());
+    }
 }

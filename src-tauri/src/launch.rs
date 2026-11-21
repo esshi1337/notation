@@ -150,6 +150,24 @@ where
     }
 }
 
+/// Documents the system asks a running app to open (Finder double-click, Open
+/// With, a drop on the Dock icon). Only local `file:` URLs are documents;
+/// anything else is ignored.
+pub fn from_file_urls<'a>(
+    urls: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<LaunchRequest>, String> {
+    let paths = urls
+        .into_iter()
+        .filter_map(|value| url::Url::parse(value).ok())
+        .filter(|url| url.scheme() == "file")
+        .filter_map(|url| url.to_file_path().ok())
+        .map(PathBuf::into_os_string);
+    parse_arguments(
+        std::iter::once(OsString::from("--")).chain(paths),
+        Path::new("/"),
+    )
+}
+
 pub fn from_env() -> Result<Option<LaunchRequest>, String> {
     // AppImage's AppRun changes cwd to its bundled usr directory. The runtime
     // preserves the caller's directory as OWD; ordinary binaries use real cwd.

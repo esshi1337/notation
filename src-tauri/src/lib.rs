@@ -13,6 +13,8 @@ pub mod language_server;
 pub mod launch;
 pub mod mcp;
 pub mod search_graph;
+#[cfg(unix)]
+pub mod single_instance;
 pub mod storage;
 pub mod sticky;
 pub mod wiki;
@@ -450,7 +452,9 @@ mod desktop {
         if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
             return Err("Only explicit HTTP(S) external links can be opened.".into());
         }
-        let mut child = std::process::Command::new("xdg-open")
+        // macOS has no xdg-open; its `open` hands the URL to the default browser.
+        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        let mut child = std::process::Command::new(opener)
             .arg(parsed.as_str())
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -900,6 +904,71 @@ mod desktop {
             .map_err(|error| format!("The existing window did not accept activation: {error}"))?
     }
 
+    /// Queue documents for the main window and tell it when it is listening.
+    fn deliver_launch(
+        handle: &tauri::AppHandle,
+        queue: &launch::LaunchQueue,
+        request: launch::LaunchRequest,
+    ) -> Result<(), String> {
+        let outcome = queue.enqueue(request.clone())?;
+        if outcome == launch::EnqueueOutcome::DuplicateCompleted {
+            return Ok(());
+        }
+        if queue.ready()? {
+            // Pending duplicates are deliberately re-emitted to
+            // heal missed events. Failure rejects this handshake
+            // as retryable; completed IDs are never re-opened.
+            handle
+                .emit_to("main", "notation:launch-request", request)
+                .map_err(|error| format!("Could not deliver launch request: {error}"))?;
+        }
+        Ok(())
+    }
+    /// Finder double-clicks, Open With and Dock drops arrive as file URLs
+    /// while the app runs (or right after it starts), never as arguments.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    fn open_file_urls(handle: &tauri::AppHandle, queue: &launch::LaunchQueue, urls: &[tauri::Url]) {
+        let delivered = launch::from_file_urls(urls.iter().map(|url| url.as_str()))
+            .and_then(|request| match request {
+                Some(request) => deliver_launch(handle, queue, request),
+                None => Ok(()),
+            });
+        if let Err(error) = delivered {
+            eprintln!("Notation could not open the requested documents: {error}");
+        }
+        if let Some(main) = handle.get_webview_window("main") {
+            let _ = main.unminimize();
+            let _ = main.set_focus();
+        }
+    }
+    /// One editor per profile on macOS. LaunchServices already reuses the
+    /// running app for ordinary launches; this covers `open -n` and direct
+    /// command-line starts, which would otherwise run a second process on the
+    /// same database. The second process passes its documents to the running
+    /// app through LaunchServices and exits.
+    #[cfg(target_os = "macos")]
+    fn claim_profile(
+        app: &tauri::App,
+        initial_request: Option<&launch::LaunchRequest>,
+    ) -> Result<Option<super::single_instance::ProfileLock>, String> {
+        let directory = app
+            .path()
+            .app_data_dir()
+            .map_err(|error| format!("Could not locate local data directory: {error}"))?;
+        if let Some(lock) = super::single_instance::acquire(&directory)? {
+            return Ok(Some(lock));
+        }
+        let mut handoff = std::process::Command::new("open");
+        handoff.arg("-b").arg(&app.config().identifier);
+        if let Some(request) = initial_request {
+            handoff.args(request.paths());
+        }
+        match handoff.status() {
+            Ok(status) if status.success() => Ok(None),
+            _ => Err("Notation is already running with this profile. Switch to it, or quit it first.".into()),
+        }
+    }
+
     pub fn run(initial_request: Option<launch::LaunchRequest>) {
         let launches = launch::LaunchQueue::default();
         if let Some(request) = initial_request.clone() {
@@ -1068,21 +1137,7 @@ mod desktop {
                 instance::acquire_with_launch(
                     &path,
                     move || activate_main(activation_handle.clone()),
-                    move |request| {
-                        let outcome = launch_queue.enqueue(request.clone())?;
-                        if outcome == launch::EnqueueOutcome::DuplicateCompleted {
-                            return Ok(());
-                        }
-                        if launch_queue.ready()? {
-                            // Pending duplicates are deliberately re-emitted to
-                            // heal missed events. Failure rejects this handshake
-                            // as retryable; completed IDs are never re-opened.
-                            launch_handle
-                                .emit_to("main", "notation:launch-request", request)
-                                .map_err(|error| format!("Could not deliver launch request: {error}"))?;
-                        }
-                        Ok(())
-                    },
+                    move |request| deliver_launch(&launch_handle, &launch_queue, request),
                     initial_request.clone(),
                 )
             }) {
@@ -1095,7 +1150,23 @@ mod desktop {
                 std::process::exit(1);
             }
         }
-        app.run(|handle, event| {
+        // Held until the process ends; a second launch hands over and exits.
+        #[cfg(target_os = "macos")]
+        let _profile = match claim_profile(&app, initial_request.as_ref()) {
+            Ok(Some(lock)) => lock,
+            Ok(None) => return,
+            Err(error) => {
+                eprintln!("Notation could not start: {error}");
+                std::process::exit(1);
+            }
+        };
+        #[cfg(target_os = "macos")]
+        let opened_queue = launches.clone();
+        app.run(move |handle, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = &event {
+                open_file_urls(handle, &opened_queue, urls);
+            }
             if matches!(event, tauri::RunEvent::Exit) {
                 handle.state::<language_server::Service>().stop_all();
             }

@@ -218,3 +218,47 @@ fn oversized_launch_files_are_rejected_before_a_full_read() {
         notation_lib::storage::MAX_CONTENT as u64 + 1
     );
 }
+
+#[test]
+fn system_file_urls_become_one_launch_with_canonical_paths() {
+    let temporary = tempfile::tempdir().unwrap();
+    let directory = temporary.path().canonicalize().unwrap();
+    let first = directory.join("First note.md");
+    let second = directory.join("ünï/second.mmd");
+    std::fs::create_dir_all(second.parent().unwrap()).unwrap();
+    std::fs::write(&first, "# First").unwrap();
+    std::fs::write(&second, "flowchart LR").unwrap();
+    let url = |path: &std::path::Path| url::Url::from_file_path(path).unwrap().to_string();
+    let urls = [
+        url(&first),
+        "https://example.com/not-a-document.md".to_string(),
+        "notation://open?file=x".to_string(),
+        "not a url".to_string(),
+        // Finder may deliver a path with relative segments or a missing file.
+        url(&directory.join("ünï/../ünï/second.mmd")),
+        url(&directory.join("missing.md")),
+    ];
+    assert!(urls[0].contains("First%20note.md"), "{}", urls[0]);
+    let request = notation_lib::launch::from_file_urls(urls.iter().map(String::as_str))
+        .unwrap()
+        .expect("documents");
+    assert_eq!(
+        request.paths(),
+        [
+            first.to_str().unwrap().to_string(),
+            second.to_str().unwrap().to_string(),
+            directory.join("missing.md").to_str().unwrap().to_string(),
+        ]
+    );
+    // Nothing openable is not a launch, and it is not an error either.
+    assert_eq!(notation_lib::launch::from_file_urls(["https://example.com/a.md", "mailto:x@example.com"]).unwrap(), None);
+    assert_eq!(notation_lib::launch::from_file_urls(std::iter::empty()).unwrap(), None);
+    // A file whose name starts with a dash is a document, not an option.
+    let dashed = directory.join("-draft.md");
+    std::fs::write(&dashed, "").unwrap();
+    let request = notation_lib::launch::from_file_urls([url(&dashed).as_str()]).unwrap().unwrap();
+    assert_eq!(request.paths(), [dashed.to_str().unwrap().to_string()]);
+    // The per-launch document limit still applies.
+    let many = (0..MAX_LAUNCH_FILES + 1).map(|index| url(&directory.join(format!("{index}.md")))).collect::<Vec<_>>();
+    assert!(notation_lib::launch::from_file_urls(many.iter().map(String::as_str)).is_err());
+}
