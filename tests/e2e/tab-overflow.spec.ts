@@ -152,8 +152,14 @@ test('overflowing tabs fade at the side that continues and the active indicator 
   await expect.poll(matches).toBe(true);
   await expect(tabs.locator('.document-tab.active')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   await expect(tabs.locator('.tab-indicator')).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  // The sliding state lasts about 220 ms, so record it instead of sampling it.
+  await tabs.locator('.tab-indicator').evaluate((element) => {
+    const state = window as unknown as { slid: boolean };
+    state.slid = false;
+    new MutationObserver(() => { if (element.classList.contains('sliding')) state.slid = true; }).observe(element, { attributes: true, attributeFilter: ['class'] });
+  });
   await tabs.getByRole('tab').nth(3).click();
-  await expect(tabs.locator('.tab-indicator')).toHaveClass(/sliding/);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { slid: boolean }).slid)).toBe(true);
   await expect.poll(matches).toBe(true);
   await expect(tabs.locator('.tab-indicator')).not.toHaveClass(/sliding/);
 
