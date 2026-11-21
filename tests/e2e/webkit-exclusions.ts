@@ -14,7 +14,7 @@ export const webkitExclusions: Array<{ title: string; reason: string }> = [
   // skips buttons unless Full Keyboard Access is on. These tests assert the
   // Chromium/Linux behaviour.
   { title: 'searches command labels, runs a command by keyboard, and restores focus on Escape', reason: 'Expects the clicked Commands button to hold focus; macOS WebKit does not focus buttons on click.' },
-  { title: 'custom dropdown supports keyboard commit, escape, outside click and narrow containment', reason: 'The clicked dropdown button is not focused in macOS WebKit, so Escape reaches the Settings dialog and closes it. Needs a fix and a check on a real Mac.' },
+  { title: 'custom dropdown supports keyboard commit, escape, outside click and narrow containment', reason: 'After clicking the dropdown and pressing Escape the Settings dialog is gone. Probably the clicked button is not focused in macOS WebKit, so Escape reaches the dialog; not confirmed on a real Mac.' },
   { title: 'Settings traps focus, closes with Escape, restores focus, and persists preferences', reason: 'Counts Tab stops; macOS WebKit skips buttons on Tab by default.' },
   { title: 'black sticky paper and bars are true black and the editor has no focus frame while buttons keep keyboard focus', reason: 'Expects Tab to focus a toolbar button; macOS WebKit skips buttons on Tab by default.' },
 
