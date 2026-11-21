@@ -30,6 +30,8 @@ export const webkitExclusions: Array<{ title: string; reason: string }> = [
   // also applies its own default scrolling.
   { title: 'smooth-scrolling.spec.ts', reason: 'The wheel animator is disabled on macOS; WebKit scrolls natively on synthetic wheel events.' },
   { title: 'small wheel steps animate in the real split editor, preview, and Live Preview', reason: 'The wheel animator is disabled on macOS; WebKit scrolls natively on synthetic wheel events.' },
+  { title: 'editor controls use optional smooth scrolling without moving the pinned specimen', reason: 'Toggles the smooth-scrolling preference, which is off and disabled on macOS (covered there by mac-input.spec.ts).' },
+  { title: 'smooth scrolling can be disabled and the choice survives a reload', reason: 'Toggles the smooth-scrolling preference, which is off and disabled on macOS (covered there by mac-input.spec.ts).' },
 ];
 
 const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');

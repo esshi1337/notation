@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { openSettings, runCommand } from './commands';
+import { mac, openSettings, runCommand } from './commands';
 
 const source = (page: import('@playwright/test').Page) => page.getByRole('textbox', { name: 'Document source' }).filter({ visible: true });
 async function editorSettings(page: import('@playwright/test').Page) {
@@ -31,7 +31,9 @@ test('performance mode suspends expensive views and restores settings and undo',
   await editorSettings(page);
   await page.getByRole('checkbox', { name: 'Performance mode', exact: true }).uncheck();
   await expect(page.getByRole('checkbox', { name: 'Language intelligence', exact: true })).toBeChecked();
-  await expect(page.getByRole('checkbox', { name: 'Smooth scrolling', exact: true })).toBeChecked();
+  // Smooth scrolling returns to its default, which is off on macOS.
+  const smooth = page.getByRole('checkbox', { name: 'Smooth scrolling', exact: true });
+  if (mac) await expect(smooth).not.toBeChecked(); else await expect(smooth).toBeChecked();
   await expect(page.getByRole('combobox', { name: 'Layout', exact: true })).toHaveText('Split');
   await page.getByRole('button', { name: 'Close settings', exact: true }).click();
   await expect(page.locator('.preview-pane')).toBeVisible();
