@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { setSetting } from './commands';
 
 const documents = (page: Page) => page.getByRole('tablist', { name: 'Documents', exact: true });
 
@@ -15,6 +16,7 @@ async function openDesktop(page: Page, platform: 'MacIntel' | 'Linux x86_64') {
     let next = 1;
     Object.assign(window, {
       menuShortcuts: [],
+      presented: [],
       isTauri: true,
       emitTauri(event: string, payload: unknown) {
         const handlers = listeners.get(event) ?? [];
@@ -29,6 +31,7 @@ async function openDesktop(page: Page, platform: 'MacIntel' | 'Linux x86_64') {
         async invoke(cmd: string, args: Record<string, unknown> = {}) {
           if (cmd === 'bootstrap_state') return { settings: {}, draft: null, scriptDraft: null, scripts: [], recents: [], workspace: null, workspaceCatalog: { activeId: null, workspaces: [] }, session: null };
           if (cmd === 'plugin:event|listen') { const event = String(args.event); listeners.set(event, [...(listeners.get(event) ?? []), Number(args.handler)]); return Number(args.handler); }
+          if (cmd === 'present_main_window') { (window as unknown as { presented: unknown[] }).presented.push({ background: args.background, theme: args.theme }); return null; }
           if (cmd === 'set_menu_shortcuts') { (window as unknown as { menuShortcuts: unknown[] }).menuShortcuts.push(args.shortcuts); return null; }
           if (cmd === 'launch_ready') return [];
           return null;
@@ -133,4 +136,37 @@ test('other platforms send no menu shortcuts', async ({ page }) => {
   await openDesktop(page, 'Linux x86_64');
   await page.waitForTimeout(300);
   expect(await sentShortcuts(page)).toEqual([]);
+});
+
+const presented = (page: Page) => page.evaluate(() => (window as unknown as { presented: Array<{ background: string; theme: string }> }).presented);
+
+for (const platform of ['MacIntel', 'Linux x86_64'] as const) {
+  test(`the hidden desktop window is presented with the theme's background on ${platform}`, async ({ page }) => {
+    await openDesktop(page, platform);
+    await expect.poll(async () => (await presented(page)).length).toBeGreaterThan(0);
+    const first = (await presented(page))[0];
+    // What the page actually paints, as #rrggbb, and the matching appearance.
+    const painted = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    const hex = '#' + painted.match(/\d+/gu)!.slice(0, 3).map((value) => Number(value).toString(16).padStart(2, '0')).join('');
+    expect(first).toEqual({ background: hex, theme: 'dark' });
+    expect(first.background).toMatch(/^#[0-9a-f]{6}$/u);
+
+    // Switching to the light theme hands over the new background and appearance.
+    const before = (await presented(page)).length;
+    await emit(page, 'app.settings');
+    await expect(page.getByRole('dialog', { name: 'Settings', exact: true })).toBeVisible();
+    await setSetting(page, 'Theme', 'light');
+    await expect.poll(async () => (await presented(page)).length).toBeGreaterThan(before);
+    const light = (await presented(page)).at(-1)!;
+    const lightPainted = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    const lightHex = '#' + lightPainted.match(/\d+/gu)!.slice(0, 3).map((value) => Number(value).toString(16).padStart(2, '0')).join('');
+    expect(light).toEqual({ background: lightHex, theme: 'light' });
+    expect(light.background).not.toBe(first.background);
+  });
+}
+
+test('a browser tab never asks to present a window', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('textbox', { name: 'Document source' })).toBeVisible();
+  expect(await page.evaluate(() => 'presented' in window)).toBe(false);
 });

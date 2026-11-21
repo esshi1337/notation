@@ -48,6 +48,7 @@
   import RenameDocument from './RenameDocument.svelte';
   import { migrateSettings, preferencesStyle, readUIPreferences, UI_SETTINGS_VERSION } from './preferences';
   import { smoothScrolling } from './smooth-scroll';
+  import { presentWindow } from './window-chrome';
   import { fadeOnChange, pop, publishMotionPreference } from './motion';
   import WorkspaceSwitcher from './WorkspaceSwitcher.svelte';
   import { isMac } from './platform';
@@ -228,6 +229,9 @@
     document.documentElement.dataset.darkPreset = customTheme && theme === 'dark' ? customTheme.base.split('/')[1] : ui.darkPreset;
     document.documentElement.dataset.lightPreset = customTheme && theme === 'light' ? customTheme.base.split('/')[1] : ui.lightPreset;
     document.documentElement.dataset.density = ui.density;
+    // Shows the (initially hidden) desktop window once this theme is applied,
+    // and keeps the native window background in step with later theme changes.
+    void customTheme; presentWindow(theme);
     publishMotionPreference(ui.reduceMotion || ui.performanceMode);
   });
   $effect(() => {
