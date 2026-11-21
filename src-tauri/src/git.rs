@@ -145,6 +145,9 @@ fn run(cwd: &Path, args: &[&str]) -> Result<Output, String> {
     let stdout = capture(child.stdout.take().unwrap(), OUTPUT_LIMIT + 1);
     let stderr = capture(child.stderr.take().unwrap(), 65536);
     let deadline = Instant::now() + Duration::from_secs(5);
+    // Git usually finishes within a few milliseconds. Poll quickly at first
+    // and back off, instead of rounding every call up to a fixed 5 ms.
+    let mut pause = Duration::from_micros(100);
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Ok(status),
@@ -157,7 +160,10 @@ fn run(cwd: &Path, args: &[&str]) -> Result<Output, String> {
                 let _ = child.wait();
                 break Err("Git query exceeded its 5 second time limit.".to_string());
             }
-            Ok(None) => thread::sleep(Duration::from_millis(5)),
+            Ok(None) => {
+                thread::sleep(pause);
+                pause = (pause * 2).min(Duration::from_millis(5));
+            }
             Err(error) => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -236,22 +242,45 @@ pub fn status(database: &Database) -> Status {
 pub fn status_for_document(database: &Database, document_path: Option<&str>) -> Status {
     let result = (|| -> Result<Status, String> {
         let (workspace, root) = repository(database, document_path)?;
-        let branch = run(&workspace, &["symbolic-ref", "--quiet", "--short", "HEAD"])?;
+        // The three queries are independent; run them side by side.
+        let (branch, output, references) = thread::scope(|scope| {
+            let branch = scope
+                .spawn(|| run(&workspace, &["symbolic-ref", "--quiet", "--short", "HEAD"]));
+            let references = scope.spawn(|| {
+                checked(
+                    &workspace,
+                    &[
+                        "for-each-ref",
+                        "--format=%(refname:short)%00%(objectname)",
+                        "refs/heads",
+                    ],
+                )
+            });
+            let output = checked(
+                &workspace,
+                &[
+                    "status",
+                    "--porcelain=v1",
+                    "-z",
+                    "--untracked-files=normal",
+                    "--",
+                    ".",
+                ],
+            );
+            let join = |handle: thread::ScopedJoinHandle<'_, Result<Output, String>>| {
+                handle
+                    .join()
+                    .unwrap_or_else(|_| Err("Git query failed unexpectedly.".into()))
+            };
+            (join(branch), output, join(references))
+        });
+        // Report failures in the order the queries used to run.
+        let branch = branch?;
         let branch = branch
             .ok
             .then(|| String::from_utf8_lossy(&branch.stdout).trim().to_string());
         let detached = branch.is_none();
-        let output = checked(
-            &workspace,
-            &[
-                "status",
-                "--porcelain=v1",
-                "-z",
-                "--untracked-files=normal",
-                "--",
-                ".",
-            ],
-        )?;
+        let output = output?;
         if output.truncated {
             return Err("Git status exceeds its 512 KiB output limit.".into());
         }
@@ -281,14 +310,7 @@ pub fn status_for_document(database: &Database, document_path: Option<&str>) -> 
                 original_path,
             });
         }
-        let output = checked(
-            &workspace,
-            &[
-                "for-each-ref",
-                "--format=%(refname:short)%00%(objectname)",
-                "refs/heads",
-            ],
-        )?;
+        let output = references?;
         if output.truncated {
             return Err("Git branch list exceeds its 512 KiB output limit.".into());
         }
