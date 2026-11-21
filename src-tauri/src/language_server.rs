@@ -33,6 +33,7 @@ const MAX_ANCESTORS: usize = 64;
 const MAX_STDERR_BYTES: usize = 8 * 1024;
 const INCOMPLETE_FRAME_TIMEOUT: Duration = Duration::from_secs(30);
 const TERMINATE_GRACE: Duration = Duration::from_millis(400);
+const MONITOR_IDLE_WAIT: Duration = Duration::from_millis(100);
 const STOP_TIMEOUT: Duration = Duration::from_secs(2);
 const START_SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
 const LANGUAGE_PACK_MANIFEST_VERSION: u64 = 1;
@@ -227,6 +228,8 @@ struct Shared {
     reaped: Mutex<bool>,
     reaped_changed: Condvar,
     stop_started: Mutex<Option<Instant>>,
+    /// Wakes the monitor from its idle wait when a stop begins.
+    stop_signal: Condvar,
     error: Mutex<Option<String>>,
     stderr: Mutex<VecDeque<u8>>,
     events: EventSink,
@@ -807,6 +810,7 @@ fn spawn_server(
         reaped: Mutex::new(false),
         reaped_changed: Condvar::new(),
         stop_started: Mutex::new(None),
+        stop_signal: Condvar::new(),
         error: Mutex::new(None),
         stderr: Mutex::new(VecDeque::with_capacity(MAX_STDERR_BYTES)),
         events,
@@ -854,12 +858,15 @@ fn writer_loop(shared: Arc<Shared>, receiver: Receiver<String>, mut stdin: Child
 }
 
 fn spawn_reader(shared: Arc<Shared>, mut stdout: ChildStdout) -> JoinHandle<()> {
+    let mut buffered = FrameBuffer::new();
     thread::spawn(move || loop {
         #[cfg(unix)]
-        let frame =
-            read_frame_with(&mut |buffer, timeout| polled_read(&mut stdout, buffer, timeout));
+        let frame = read_frame_with(&mut |buffer, timeout| {
+            buffered.read(buffer, |target| polled_read(&mut stdout, target, timeout))
+        });
         #[cfg(not(unix))]
-        let frame = read_frame_with(&mut |buffer, _| stdout.read(buffer));
+        let frame =
+            read_frame_with(&mut |buffer, _| buffered.read(buffer, |target| stdout.read(target)));
         match frame {
             Ok(Some(message)) => {
                 if !shared.running.load(Ordering::Acquire)
@@ -980,7 +987,19 @@ fn spawn_monitor(shared: Arc<Shared>) -> JoinHandle<()> {
             if should_kill {
                 request_kill(&shared);
             }
-            thread::sleep(Duration::from_millis(10));
+            // While a stop is in progress, keep the 10 ms cadence that times
+            // the grace period. Otherwise nothing changes until the server
+            // exits or a stop begins: wait longer, and wake at once when one
+            // does, instead of 100 wakeups a second for the server's lifetime.
+            if shared.stopping.load(Ordering::Acquire) {
+                thread::sleep(Duration::from_millis(10));
+            } else {
+                let started = lock(&shared.stop_started);
+                let _ = shared
+                    .stop_signal
+                    .wait_timeout_while(started, MONITOR_IDLE_WAIT, |started| started.is_none())
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+            }
         }
     })
 }
@@ -997,6 +1016,7 @@ fn stop_process(server: &Arc<Server>) -> Result<(), String> {
         } else if !shared.stopping.swap(true, Ordering::AcqRel) {
             shared.running.store(false, Ordering::Release);
             *lock(&shared.stop_started) = Some(Instant::now());
+            shared.stop_signal.notify_all();
             signal_group(shared.pid, Signal::Terminate);
         }
     }
@@ -1092,6 +1112,48 @@ fn request_kill(shared: &Shared) {
     }
     signal_group(shared.pid, Signal::Kill);
     let _ = child.kill();
+}
+
+/// Read-ahead for the server's output. Frame headers are parsed a byte at a
+/// time; without this each byte was its own `poll` and `read` system call.
+pub(crate) struct FrameBuffer {
+    bytes: Box<[u8; FRAME_BUFFER_BYTES]>,
+    start: usize,
+    end: usize,
+}
+const FRAME_BUFFER_BYTES: usize = 8192;
+impl FrameBuffer {
+    pub(crate) fn new() -> Self {
+        Self {
+            bytes: Box::new([0; FRAME_BUFFER_BYTES]),
+            start: 0,
+            end: 0,
+        }
+    }
+    /// Fill `target` from buffered bytes, reading from `source` only when
+    /// none are left. Large requests bypass the buffer. Returns 0 at end of
+    /// input, like `Read::read`.
+    pub(crate) fn read(
+        &mut self,
+        target: &mut [u8],
+        mut source: impl FnMut(&mut [u8]) -> io::Result<usize>,
+    ) -> io::Result<usize> {
+        if self.start == self.end {
+            if target.len() >= FRAME_BUFFER_BYTES {
+                return source(target);
+            }
+            let count = source(&mut self.bytes[..])?;
+            if count == 0 {
+                return Ok(0);
+            }
+            self.start = 0;
+            self.end = count;
+        }
+        let count = target.len().min(self.end - self.start);
+        target[..count].copy_from_slice(&self.bytes[self.start..self.start + count]);
+        self.start += count;
+        Ok(count)
+    }
 }
 
 fn read_frame_with<F>(read: &mut F) -> Result<Option<String>, String>
@@ -1336,5 +1398,78 @@ mod json_validation_tests {
         // Deep nesting is refused by both, without overflowing the stack.
         let deep = "[".repeat(200_000) + &"]".repeat(200_000);
         assert!(valid_json(&deep).is_err());
+    }
+}
+
+#[cfg(test)]
+mod frame_buffer_tests {
+    use super::*;
+
+    fn frame(body: &str) -> Vec<u8> {
+        format!("Content-Length: {}\r\n\r\n{body}", body.len()).into_bytes()
+    }
+
+    #[test]
+    fn buffered_frames_cost_a_handful_of_reads_and_parse_identically() {
+        let bodies = (0..200)
+            .map(|index| format!(r#"{{"jsonrpc":"2.0","id":{index},"result":"é{index}"}}"#))
+            .chain([format!(r#"{{"big":"{}"}}"#, "x".repeat(40_000))])
+            .collect::<Vec<_>>();
+        let stream = bodies.iter().flat_map(|body| frame(body)).collect::<Vec<_>>();
+        // Deliver the stream in chunks of a given size, with and without the buffer.
+        let parse = |chunk: usize, buffered: bool| {
+            let mut offset = 0;
+            let mut reads = 0;
+            let mut source = |target: &mut [u8]| -> io::Result<usize> {
+                reads += 1;
+                let count = target.len().min(chunk).min(stream.len() - offset);
+                target[..count].copy_from_slice(&stream[offset..offset + count]);
+                offset += count;
+                Ok(count)
+            };
+            let mut buffer = FrameBuffer::new();
+            let mut frames = Vec::new();
+            loop {
+                let frame = if buffered {
+                    read_frame_with(&mut |target, _| buffer.read(target, &mut source))
+                } else {
+                    read_frame_with(&mut |target, _| source(target))
+                };
+                match frame.unwrap() {
+                    Some(message) => frames.push(message),
+                    None => break,
+                }
+            }
+            (frames, reads)
+        };
+        let (direct, direct_reads) = parse(usize::MAX, false);
+        assert_eq!(direct, bodies);
+        // One read per header byte before: thousands for 201 frames.
+        assert!(direct_reads > 4000, "{direct_reads}");
+        for chunk in [usize::MAX, 8192, 4096, 100, 7, 1] {
+            let (frames, reads) = parse(chunk, true);
+            assert_eq!(frames, bodies, "chunk {chunk}");
+            if chunk >= 4096 {
+                assert!(reads < 40, "{reads} reads with chunk {chunk}");
+            }
+        }
+        // End of input in the middle of a header or body is still an error.
+        let truncated = &stream[..stream.len() - 10];
+        let mut offset = 0;
+        let mut buffer = FrameBuffer::new();
+        let mut source = |target: &mut [u8]| -> io::Result<usize> {
+            let count = target.len().min(truncated.len() - offset);
+            target[..count].copy_from_slice(&truncated[offset..offset + count]);
+            offset += count;
+            Ok(count)
+        };
+        let mut outcome = Ok(None);
+        for _ in 0..=bodies.len() {
+            outcome = read_frame_with(&mut |target, _| buffer.read(target, &mut source));
+            if !matches!(outcome, Ok(Some(_))) {
+                break;
+            }
+        }
+        assert!(outcome.is_err_and(|error| error.contains("middle of a frame body")));
     }
 }
