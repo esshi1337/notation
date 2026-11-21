@@ -22,9 +22,15 @@
     void tick().then(() => { field?.focus(); field?.select(); });
   });
   function editorKey(event: KeyboardEvent) {
+    // Every app shortcut (Save, close tab, switch tab, quit) starts with Ctrl or Cmd going
+    // down, so writing the draft at that moment means none of them can leave it behind.
+    if (event.key === 'Control' || event.key === 'Meta') { board.saveDraft(id, draft); return; }
     // Escape and Ctrl/Cmd+Enter leave the editor; leaving always commits.
     if (event.key === 'Escape' || event.key === 'Enter' && (event.ctrlKey || event.metaKey || group)) { event.preventDefault(); event.stopPropagation(); board.commitEdit(id, draft); }
   }
+  // Clicking away commits and closes the editor. Switching to another window only
+  // writes the draft, so the editor is still open on the way back.
+  function editorBlur() { if (document.hasFocus()) board.commitEdit(id, draft); else board.saveDraft(id, draft); }
   const interactive = (target: EventTarget | null) => target instanceof Element && !!target.closest('a,button,input,textarea,select,summary,[contenteditable=true]');
   // Svelte Flow starts a card drag from mousedown/touchstart on its wrapper;
   // links and controls inside a card keep their own press.
@@ -42,18 +48,18 @@
   }
 </script>
 
-<NodeResizer minWidth={MIN_WIDTH} minHeight={MIN_HEIGHT} maxWidth={MAX_SIZE} maxHeight={MAX_SIZE} isVisible={selected && !editing} lineClass="canvas-resize-line" handleClass="canvas-resize-handle" onResizeStart={() => board.resizeStart(id)} onResizeEnd={(_event, params) => board.resizeEnd(id, params)} />
+<NodeResizer minWidth={MIN_WIDTH} minHeight={MIN_HEIGHT} maxWidth={MAX_SIZE} maxHeight={MAX_SIZE} isVisible={selected && !editing && board.selectionSize === 1} lineClass="canvas-resize-line" handleClass="canvas-resize-handle" onResizeStart={() => board.resizeStart(id)} onResizeEnd={(_event, params) => board.resizeEnd(id, params)} />
 <!-- svelte-ignore a11y_no_static_element_interactions (The Svelte Flow wrapper is the focusable, labelled card; this is its surface.) -->
 <div class="canvas-node" class:canvas-group={group} class:selected class:editing class:colored={!!color} style={color ? '--canvas-color:' + color : undefined} use:appear onmousedown={press} ontouchstart={press} ondblclick={doubleClick}>
   {#if editing && group}
-    <div class="canvas-node-heading"><input class="canvas-inline-label nodrag nopan" aria-label="Group label" bind:this={field} bind:value={draft} onkeydown={editorKey} onblur={() => board.commitEdit(id, draft)} /></div>
+    <div class="canvas-node-heading"><input class="canvas-inline-label nodrag nopan" aria-label="Group label" bind:this={field} bind:value={draft} onkeydown={editorKey} onblur={editorBlur} /></div>
   {:else if heading}
     <div class="canvas-node-heading"><span class="canvas-node-title">{heading}</span></div>
   {/if}
   <button type="button" class="canvas-node-more nodrag" aria-label={'Edit card: ' + title} title="Card details" onclick={() => board.details(id)}>⋯</button>
   {#if node.type === 'text'}
     {#if editing}
-      <textarea class="canvas-inline-editor nodrag nopan nowheel" aria-label={'Card text: ' + title} spellcheck="true" bind:this={field} bind:value={draft} onkeydown={editorKey} onblur={() => board.commitEdit(id, draft)}></textarea>
+      <textarea class="canvas-inline-editor nodrag nopan nowheel" aria-label={'Card text: ' + title} spellcheck="true" bind:this={field} bind:value={draft} onkeydown={editorKey} onblur={editorBlur}></textarea>
     {:else}
       <CanvasCard markdown={node.text || ''} sourcePath={board.path} render={board.render} />
     {/if}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { parseCanvas, mutateCanvas, mutateCanvasDocument, removeCanvasNode, canvasAnchor, canvasNodeTitle, newCanvas } from '../src/canvas.ts';
-import { zoomAtPoint, toDocument, fitBounds, boundsOf, autoSides, edgeSides, nearestSide, placeBySide, groupMembers, alignmentGuides, applyGeometry, copyFragment, pasteFragment, removeElements, canvasColor, MIN_ZOOM, MAX_ZOOM } from '../src/canvas-flow.ts';
+import { zoomAtPoint, toDocument, fitBounds, boundsOf, autoSides, edgeSides, placeBySide, groupMembers, alignmentGuides, applyGeometry, copyFragment, pasteFragment, removeElements, canvasColor, MIN_ZOOM, MAX_ZOOM } from '../src/canvas-flow.ts';
 import { resolveVariable, substituteVariables, insertTemplate, readTemplateLibrary, validateTemplateLibrary } from '../src/templates.ts';
 let passed = 0;
 function test(name, run) { run(); passed++; console.log('✓ ' + name); }
@@ -88,7 +88,6 @@ test('connections without pinned sides face each other; pinned sides are kept', 
   assert.deepEqual(edgeSides({ fromSide: 'top', toSide: 'top' }, home, card(400, 0)), { fromSide: 'top', toSide: 'top' });
   assert.deepEqual(edgeSides({ fromSide: 'bottom' }, home, card(400, 0)), { fromSide: 'bottom', toSide: 'left' });
   assert.deepEqual(edgeSides({}, home, card(-400, 0)), { fromSide: 'left', toSide: 'right' });
-  assert.equal(nearestSide(home, { x: 100, y: 5 }), 'top'); assert.equal(nearestSide(home, { x: 195, y: 60 }), 'right');
   assert.deepEqual(placeBySide({ x: 500, y: 300 }, 'top', 280, 180), { x: 360, y: 300 });
   assert.deepEqual(placeBySide({ x: 500, y: 300 }, 'left', 280, 180), { x: 500, y: 210 });
 });

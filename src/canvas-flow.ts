@@ -66,12 +66,6 @@ export function edgeSides(edge: Pick<CanvasEdge, 'fromSide' | 'toSide'>, from: R
   return { fromSide: edge.fromSide ?? auto.fromSide, toSide: edge.toSide ?? auto.toSide };
 }
 
-/** The side of `rect` nearest to a point, for a connection dropped on a card body. */
-export function nearestSide(rect: Rect, point: { x: number; y: number }): Side {
-  const distances: [Side, number][] = [['left', Math.abs(point.x - rect.x)], ['right', Math.abs(point.x - rect.x - rect.width)], ['top', Math.abs(point.y - rect.y)], ['bottom', Math.abs(point.y - rect.y - rect.height)]];
-  return distances.sort((a, b) => a[1] - b[1])[0][0];
-}
-
 export const oppositeSide = (side: Side): Side => side === 'left' ? 'right' : side === 'right' ? 'left' : side === 'top' ? 'bottom' : 'top';
 
 /** Top-left corner for a new card whose `side` midpoint sits at `point`. */

@@ -261,13 +261,23 @@ test('double-click edits a card in place; Escape and clicking away both commit a
 
   await card(view, 'b').dblclick();
   editor = view.getByRole('textbox', { name: 'Card text: b', exact: true });
-  await editor.fill('second');
+  await editor.fill('sec');
+  // A shortcut (Save, close tab) starts with Ctrl/Cmd going down: the draft is written then, and editing continues.
+  await page.keyboard.down('ControlOrMeta');
+  await page.keyboard.up('ControlOrMeta');
+  // The card's name follows its text, so find the open editor by its role in the card.
+  editor = view.locator('.canvas-inline-editor');
+  await expect(editor).toBeFocused();
+  expect(await page.locator('.editor-tab-host:not([hidden]) .cm-content').evaluate((element) => JSON.parse((element as unknown as { cmTile: { root: { view: { state: { doc: { toString(): string } } } } } }).cmTile.root.view.state.doc.toString()).nodes[1].text)).toBe('sec');
+  await page.keyboard.type('ond');
   const frame = (await boardOf(view).boundingBox())!;
   await page.mouse.click(frame.x + 12, frame.y + frame.height - 12);
   await expect(editor).toHaveCount(0);
   data = await canvasData(page);
   expect(data.nodes[1].text).toBe('second');
 
+  await undo(page, view);
+  expect((await canvasData(page)).nodes[1].text).toBe('sec');
   await undo(page, view);
   data = await canvasData(page);
   expect(data.nodes.map((node) => node.text)).toEqual(['# Beta\n\nbod', 'b']);
@@ -386,7 +396,7 @@ test('dragging between side handles connects cards; dropping on a card or on emp
   expect(data.edges).toHaveLength(1);
   expect(data.edges[0]).toMatchObject({ fromNode: 'a', fromSide: 'right', toNode: 'b', toSide: 'left' });
 
-  // Dropped on a card body: it enters through the side nearest the drop.
+  // Dropped on a card body: it enters through the side that faces the source card.
   from = await center(handle('a', 'bottom'));
   const body = (await card(view, 'c').boundingBox())!;
   await page.mouse.move(from.x, from.y);

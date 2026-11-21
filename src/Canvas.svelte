@@ -19,7 +19,7 @@
   import { canvasNodeTitle, mutateCanvasDocument, parseCanvas } from './canvas';
   import type { CanvasDocument, CanvasEdge, CanvasNode } from './canvas';
   import { BOARD, type CanvasBoard, type RenderCard } from './canvas-board';
-  import { GRID, MAX_SIZE, MAX_ZOOM, MIN_HEIGHT, MIN_WIDTH, MIN_ZOOM, alignmentGuides, applyGeometry, boundsOf, canvasColor, coordinate, copyFragment, edgeSides, fitBounds, groupMembers, nearestSide, oppositeSide, pasteFragment, placeBySide, removeElements, toDocument, zoomAtPoint } from './canvas-flow';
+  import { GRID, MAX_SIZE, MAX_ZOOM, MIN_HEIGHT, MIN_WIDTH, MIN_ZOOM, alignmentGuides, applyGeometry, boundsOf, canvasColor, coordinate, copyFragment, edgeSides, fitBounds, groupMembers, oppositeSide, pasteFragment, placeBySide, removeElements, toDocument, zoomAtPoint } from './canvas-flow';
   import type { Geometry, Guides, Rect, Side } from './canvas-flow';
 
   type Snapshot = { text: string; documentId: number };
@@ -268,6 +268,7 @@
     return node;
   }
   function insert(node: CanvasNode, options: { edit?: boolean; edge?: CanvasEdge } = {}) {
+    if (snap) { node.x = coordinate(Math.round(node.x / GRID) * GRID); node.y = coordinate(Math.round(node.y / GRID) * GRID); }
     if (!commit((value) => { value.nodes.push(node); if (options.edge) value.edges.push(options.edge); })) return false;
     freshIds.add(node.id); pendingSelect = [node.id]; pendingReveal = node.id;
     if (options.edit) pendingEdit = node.id;
@@ -338,13 +339,17 @@
     else if (node.type === 'file') linkNote(node);
     else openDetails(node);
   }
-  function commitEdit(id: string, text: string) {
-    if (editing !== id) return;
-    editing = '';
-    const node = canvas.nodes.find((item) => item.id === id);
+  /** Write the in-place editor's text to the document if it differs; the editor stays open. */
+  function saveDraft(id: string, text: string) {
+    const node = editing === id ? canvas.nodes.find((item) => item.id === id) : undefined;
     if (!node) return;
     if (node.type === 'group') { if ((node.label ?? '') !== text) commit((value) => { const item = value.nodes.find((entry) => entry.id === id)!; if (text) item.label = text; else delete item.label; }); }
     else if (node.type === 'text' && (node.text ?? '') !== text) commit((value) => { value.nodes.find((entry) => entry.id === id)!.text = text; });
+  }
+  function commitEdit(id: string, text: string) {
+    if (editing !== id) return;
+    saveDraft(id, text);
+    editing = '';
     host?.querySelector<HTMLElement>('.svelte-flow__node[data-id="' + CSS.escape(id) + '"]')?.focus({ preventScroll: true });
   }
   function commitEdgeLabel(id: string, label: string) {
@@ -364,10 +369,11 @@
   setContext<CanvasBoard>(BOARD, {
     get editing() { return editing; },
     get editingEdge() { return editingEdge; },
+    get selectionSize() { return selectionSize; },
     get path() { return path ?? undefined; },
     get render() { return renderCard; },
     fresh: (id) => freshIds.delete(id),
-    edit: startEdit, commitEdit, commitEdgeLabel,
+    edit: startEdit, saveDraft, commitEdit, commitEdgeLabel,
     details: (id) => { const node = canvas.nodes.find((item) => item.id === id); if (node) openDetails(node); },
     openFile, linkNote, openLink,
     resizeStart: (id) => { flushNudge(); resize = { id, snapshot: current() }; },
@@ -496,7 +502,7 @@
     // The document owns the connection list, so Svelte Flow must not add its own copy.
     return undefined as unknown as FlowEdge;
   }
-  /** A connection dropped on a card body joins that card; dropped on empty space it makes a new one. */
+  /** A connection dropped on a card body enters by the side facing its source; dropped on empty space it makes a new card. */
   function connectEnd(event: MouseEvent | TouchEvent, state: { isValid: boolean | null; fromNode: { id: string } | null; fromHandle: { id?: string | null } | null }) {
     if (state.isValid || !state.fromNode) return;
     const from = canvas.nodes.find((node) => node.id === state.fromNode!.id), touch = 'changedTouches' in event ? event.changedTouches[0] : event;
@@ -505,7 +511,7 @@
     const target = document.elementFromPoint(touch.clientX, touch.clientY)?.closest('.svelte-flow__node')?.getAttribute('data-id');
     if (target === from.id) return;
     const to = target ? canvas.nodes.find((node) => node.id === target) : null;
-    if (to) { commit((value) => value.edges.push(newEdge(from.id, fromSide, to.id, to.type === 'group' ? edgeSides({ fromSide }, from, to).toSide : nearestSide(to, at)))); return; }
+    if (to) { commit((value) => value.edges.push(newEdge(from.id, fromSide, to.id, edgeSides({ fromSide }, from, to).toSide))); return; }
     if (target || !(event.target instanceof Element) || !host.contains(event.target)) return;
     // Too short a pull is a slip on the handle, not a request for a card.
     const origin = { x: from.x + (fromSide === 'left' ? 0 : fromSide === 'right' ? from.width : from.width / 2), y: from.y + (fromSide === 'top' ? 0 : fromSide === 'bottom' ? from.height : from.height / 2) };
@@ -568,6 +574,7 @@
     return () => { pinch.destroy(); host.removeEventListener('wheel', wheel); document.removeEventListener('pointerdown', outside, true); window.removeEventListener('keydown', windowKey); window.removeEventListener('keyup', windowKey); window.removeEventListener('blur', blur); flushNudge(); resetNoteSearch(); };
   });
   $effect(() => { if (addOpen) queueMicrotask(() => addMenuHost.querySelector<HTMLElement>('[role=menuitem]')?.focus()); });
+  let selectionSize = $derived(nodes.reduce((count, node) => count + (node.selected ? 1 : 0), 0));
   const nodeTypes = { card: CanvasFlowNode }, edgeTypes = { canvas: CanvasFlowEdge };
   let menuNode = $derived(menu?.kind === 'node' ? canvas.nodes.find((node) => node.id === menu!.id) : undefined);
   let menuEdge = $derived(menu?.kind === 'edge' ? canvas.edges.find((edge) => edge.id === menu!.id) : undefined);
@@ -586,7 +593,7 @@
         minZoom={MIN_ZOOM} maxZoom={MAX_ZOOM} connectionMode={ConnectionMode.Loose} selectionMode={SelectionMode.Partial} snapGrid={snap ? [GRID, GRID] : undefined}
         zoomOnScroll={false} zoomOnPinch={false} zoomOnDoubleClick={false} panOnScroll={false} panOnDrag={marquee ? [1] : true} selectionOnDrag={marquee}
         nodeDragThreshold={0} onbeforedelete={async () => false} selectionKey="Shift" multiSelectionKey={['Shift', 'Meta', 'Control']} elevateNodesOnSelect={false} nodesConnectable={!parseError} connectionRadius={28}
-        onlyRenderVisibleElements={nodes.length > VISIBLE_ONLY_ABOVE} defaultMarkerColor={null}
+        onlyRenderVisibleElements={nodes.length > VISIBLE_ONLY_ABOVE} defaultMarkerColor={null} attributionPosition="bottom-left"
         ariaLabelConfig={{ 'node.a11yDescription.default': 'Press Enter or Space to select a card. Arrow keys move the selection, Enter edits it and Delete removes it.', 'node.a11yDescription.keyboardDisabled': 'Press Enter or Space to select a card.' }}
         isValidConnection={(connection) => connection.source !== connection.target} onbeforeconnect={handleConnect} onconnectend={connectEnd} oninit={() => setView(view)}
         onnodedragstart={({ nodes: dragged }) => dragStart(dragged)} onnodedrag={({ nodes: dragged }) => dragMove(dragged)} onnodedragstop={({ nodes: dragged }) => dragStop(dragged)}

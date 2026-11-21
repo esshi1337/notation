@@ -177,18 +177,34 @@ embeds do not execute.
 nodes; the menu has no link entry, but imported link cards work and their URL is
 editable in Source. Link cards open only `http`, `https`, and `mailto` targets.
 
-Drag a card title to move it and the bottom-right corner to resize. With the board
-focused and a card selected, Arrow moves by 1 pixel, Shift+Arrow by 10, Alt+Arrow
-resizes by 1 (Alt+Shift+Arrow by 10). Hold Space and drag, middle-drag, or drag
-empty space to pan. The wheel pans; Ctrl/Cmd+wheel zooms. **Fit canvas** frames
-the board; **−** and **+** change zoom.
+Drag a card from anywhere on it to move it; drag the handles of a selected card
+to resize. Double-click empty space to write a new text card there, and
+double-click a text card to edit its Markdown in place (Escape, Ctrl/Cmd+Enter or
+clicking away keeps the change). Shift+drag draws a selection box, or turn on
+**Select** to make that the plain drag; Shift+click or Ctrl/Cmd+click adds a card
+to the selection. Selected cards move together and a group moves the cards inside
+it. **Snap** keeps cards on a 20-unit grid; with it off, a card released near a
+neighbour's edge or centre lines up with it. With the board focused, Arrow moves
+the selection by one grid step (1 pixel with Snap off), Shift+Arrow by a larger
+step, and Alt+Arrow resizes; a run of arrow presses is one undo step.
+Ctrl/Cmd+C, V and D copy, paste and duplicate; Delete removes the selection.
 
-Connect with the arrow button (`⇢`) on one card and then another, or use **Connect
-cards**, choose **From card**, **To card**, a **Connection label**, and **Add
-connection**. New connections point at the target; delete existing ones under
-**Connections**.
+The wheel or a two-finger scroll pans; pinch or Ctrl/Cmd+wheel zooms around the
+cursor. Hold Space and drag, middle-drag, or drag empty space to pan. **Fit
+canvas** frames the board; **−** and **+** zoom around its centre; **Map** shows a
+minimap. Right-click the board, a card or a connection for more actions,
+including card colours.
 
-A blank note card shows **Choose note**. In **Edit card**, **Card file** takes a
+Connect by dragging from a dot on a card's side to another card. Dropping on
+empty space creates a connected card. A connection whose file names no sides
+leaves from the sides that face each other and follows the cards as they move;
+new connections record their sides, and **Choose sides automatically** in a
+connection's menu clears them. Double-click a connection or its label to edit the
+label. **Connect cards** connects by name: choose **From card**, **To card**, a
+**Connection label**, and **Add connection**. Delete a selected connection with
+Delete, or under **Connections**.
+
+A blank note card shows **Choose note**. In **Card details** (a card's **⋯** button), **Card file** takes a
 workspace-relative path such as `notes/example.md` (not an absolute home path).
 Use **Find note**, **Search notes**, and a **Use note: …** result, then **Apply
 card**. **Open original** opens the note at its saved heading. On desktop, a
@@ -197,7 +213,7 @@ overwritten. Browser note cards resolve open tabs only.
 
 Media cards use workspace-relative images, audio, video, or PDFs. Local media and
 the PDF viewer require desktop; remote resources show **Load external media**.
-Groups are visual containers. Canvas changes share tab recovery, undo, and Save
+Groups move the cards that lie fully inside them. Canvas changes share tab recovery, undo, and Save
 with notes; Save writes the `.canvas` file. Source exposes the JSON and preserves
 unknown fields. Invalid Canvas JSON stays unchanged and disables editing until
 repaired in Source.

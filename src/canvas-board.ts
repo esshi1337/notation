@@ -9,11 +9,16 @@ export type CanvasBoard = {
   readonly editing: string;
   /** Id of the connection whose label is being edited, or ''. */
   readonly editingEdge: string;
+  /** How many cards are selected; resize handles show for a single selection only. */
+  readonly selectionSize: number;
   readonly path: string | undefined;
   readonly render: RenderCard | undefined;
   /** True once for a card this session just added, so only it animates in. */
   fresh(id: string): boolean;
   edit(id: string): void;
+  /** Write the editor's text to the document and keep editing. */
+  saveDraft(id: string, text: string): void;
+  /** Write the editor's text to the document and leave the editor. */
   commitEdit(id: string, text: string): void;
   commitEdgeLabel(id: string, label: string): void;
   details(id: string): void;
