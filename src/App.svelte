@@ -51,7 +51,7 @@
   import { fadeOnChange, pop, publishMotionPreference } from './motion';
   import WorkspaceSwitcher from './WorkspaceSwitcher.svelte';
   import { isMac } from './platform';
-  import { COMMANDS, commandForEvent, formatShortcut, readShortcutOverrides, shortcutFor } from './shortcuts';
+  import { COMMANDS, commandForEvent, formatShortcut, menuAccelerator, readShortcutOverrides, shortcutFor } from './shortcuts';
   import type { CommandId } from './shortcuts';
   import type { CommandItem } from './ui-commands';
   import { createTab, restoreTabs, serializeTab, tabDirty } from './documents';
@@ -837,6 +837,18 @@
     if (closingWindow || document.querySelector('dialog[open]') || event.repeat) return;
     void runCommand(command);
   }
+  // macOS: show the effective shortcuts in the menu bar. An item with a key
+  // equivalent takes that key before the webview sees it and sends the
+  // command instead, so none are set while Settings captures shortcuts.
+  $effect(() => {
+    if (!desktop || !mac) return;
+    const bindings: Record<string, string> = {};
+    if (!settingsOpen) for (const command of COMMANDS) {
+      const accelerator = menuAccelerator(shortcutFor(command.id, shortcuts));
+      if (accelerator) bindings[command.id] = accelerator;
+    }
+    void invoke('set_menu_shortcuts', { shortcuts: bindings }).catch(() => undefined);
+  });
   function runMenuCommand(id: unknown) {
     const command = COMMANDS.find((item) => item.id === id);
     if (!command || closingWindow || document.querySelector('dialog[open]')) return;

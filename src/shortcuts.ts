@@ -167,6 +167,22 @@ export function commandForEvent(event: KeyEvent, overrides: ShortcutOverrides, m
   return null;
 }
 
+/**
+ * A stored binding in the native menu's accelerator syntax, or null if the
+ * menu cannot show it. `Mod` becomes `CmdOrCtrl`; keys keep their names.
+ */
+export function menuAccelerator(binding: string): string | null {
+  const normalized = normalizeShortcut(binding);
+  if (!normalized) return null;
+  const parts = normalized.split('+');
+  const held: string[] = [];
+  while (parts.length > 1 && modifiers.has(parts[0])) held.push(parts.shift()!);
+  const key = parts.join('+');
+  // The accelerator parser splits on "+", so a "+" key cannot be expressed.
+  if (!key || key === '+') return null;
+  return [...held.map((part) => part === 'Mod' ? 'CmdOrCtrl' : part), key].join('+');
+}
+
 /** The one label formatter: `⇧⌘S` on macOS, `Ctrl+Shift+S` elsewhere. */
 export function formatShortcut(binding: string, mac = isMac): string {
   if (!binding) return '';

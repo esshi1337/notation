@@ -865,6 +865,45 @@ mod desktop {
             .items(&[&application, &file, &edit, &view, &window])
             .build()
     }
+    /// Show the configured shortcuts next to their menu items. `shortcuts`
+    /// maps frontend command ids to accelerators (`CmdOrCtrl+Shift+S`); menu
+    /// commands without an entry lose theirs. Once an item has an accelerator
+    /// the menu handles that key and sends the command, so the frontend
+    /// clears them while it needs to see every key (shortcut capture).
+    /// Without an application menu (every platform but macOS) this does
+    /// nothing.
+    #[tauri::command]
+    fn set_menu_shortcuts(
+        window: tauri::WebviewWindow,
+        app: tauri::AppHandle,
+        shortcuts: std::collections::HashMap<String, String>,
+    ) -> Result<(), String> {
+        sticky::authorize_main(window.label())?;
+        fn apply(
+            items: Vec<tauri::menu::MenuItemKind<tauri::Wry>>,
+            shortcuts: &std::collections::HashMap<String, String>,
+        ) {
+            for item in items {
+                match item {
+                    tauri::menu::MenuItemKind::Submenu(submenu) => {
+                        apply(submenu.items().unwrap_or_default(), shortcuts)
+                    }
+                    tauri::menu::MenuItemKind::MenuItem(item) => {
+                        if let Some(command) = item.id().as_ref().strip_prefix(MENU_COMMAND_PREFIX) {
+                            // An accelerator the menu library cannot parse is
+                            // dropped; the key then still reaches the app.
+                            let _ = item.set_accelerator(shortcuts.get(command));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if let Some(menu) = app.menu() {
+            apply(menu.items().map_err(|error| error.to_string())?, &shortcuts);
+        }
+        Ok(())
+    }
     fn handle_menu_event(app: &tauri::AppHandle, id: &str) {
         if let Some(command) = id.strip_prefix(MENU_COMMAND_PREFIX) {
             let _ = app.emit_to("main", "notation:menu-command", command);
@@ -1096,6 +1135,7 @@ mod desktop {
                 cancel_export,
                 render_citations,
                 open_external,
+                set_menu_shortcuts,
                 get_tasks,
                 get_tags,
                 get_backlinks,

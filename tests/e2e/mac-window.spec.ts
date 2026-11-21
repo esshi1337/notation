@@ -14,6 +14,7 @@ async function openDesktop(page: Page, platform: 'MacIntel' | 'Linux x86_64') {
     const listeners = new Map<string, number[]>();
     let next = 1;
     Object.assign(window, {
+      menuShortcuts: [],
       isTauri: true,
       emitTauri(event: string, payload: unknown) {
         const handlers = listeners.get(event) ?? [];
@@ -28,6 +29,7 @@ async function openDesktop(page: Page, platform: 'MacIntel' | 'Linux x86_64') {
         async invoke(cmd: string, args: Record<string, unknown> = {}) {
           if (cmd === 'bootstrap_state') return { settings: {}, draft: null, scriptDraft: null, scripts: [], recents: [], workspace: null, workspaceCatalog: { activeId: null, workspaces: [] }, session: null };
           if (cmd === 'plugin:event|listen') { const event = String(args.event); listeners.set(event, [...(listeners.get(event) ?? []), Number(args.handler)]); return Number(args.handler); }
+          if (cmd === 'set_menu_shortcuts') { (window as unknown as { menuShortcuts: unknown[] }).menuShortcuts.push(args.shortcuts); return null; }
           if (cmd === 'launch_ready') return [];
           return null;
         },
@@ -95,4 +97,40 @@ test('other desktop platforms and the browser keep the plain top bar', async ({ 
   await expect(tab.locator('html')).not.toHaveClass(/platform-mac/u);
   expect(await tab.locator('header.workspace-bar').getAttribute('data-tauri-drag-region')).toBeNull();
   await context.close();
+});
+
+const sentShortcuts = (page: Page) => page.evaluate(() => (window as unknown as { menuShortcuts: Array<Record<string, string>> }).menuShortcuts);
+
+test('the macOS menu receives the effective shortcuts, follows remaps and yields keys to shortcut capture', async ({ page }) => {
+  await openDesktop(page, 'MacIntel');
+  await expect.poll(async () => (await sentShortcuts(page)).length).toBeGreaterThan(0);
+  let latest = (await sentShortcuts(page)).at(-1)!;
+  // macOS defaults, in the menu library's syntax.
+  expect(latest).toMatchObject({ 'file.new': 'CmdOrCtrl+N', 'file.saveAs': 'CmdOrCtrl+Shift+S', 'tab.close': 'CmdOrCtrl+W', 'app.settings': 'CmdOrCtrl+,', 'edit.replace': 'CmdOrCtrl+Alt+F', 'tab.next': 'CmdOrCtrl+Alt+ArrowRight', 'view.source': 'CmdOrCtrl+Alt+1' });
+  expect(Object.values(latest).some((value) => /Mod|[⌘⇧⌥]/u.test(value))).toBe(false);
+  expect(latest['file.newCanvas']).toBeUndefined();
+
+  // While Settings is open the menu holds no key equivalents, so capture sees every key.
+  await emit(page, 'app.settings');
+  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await expect(settings).toBeVisible();
+  await expect.poll(async () => Object.keys((await sentShortcuts(page)).at(-1)!).length).toBe(0);
+  await settings.getByRole('tab', { name: 'Shortcuts', exact: true }).click();
+  const binding = settings.getByRole('textbox', { name: 'Shortcut for New', exact: true });
+  await binding.focus();
+  await page.keyboard.press('Meta+Shift+j');
+  await expect(binding).toHaveValue('⇧⌘J');
+  expect(Object.keys((await sentShortcuts(page)).at(-1)!).length).toBe(0);
+
+  // Closing Settings sends the remapped set.
+  await settings.getByRole('button', { name: 'Close settings' }).click();
+  await expect.poll(async () => (await sentShortcuts(page)).at(-1)!['file.new']).toBe('CmdOrCtrl+Shift+J');
+  latest = (await sentShortcuts(page)).at(-1)!;
+  expect(latest['file.saveAs']).toBe('CmdOrCtrl+Shift+S');
+});
+
+test('other platforms send no menu shortcuts', async ({ page }) => {
+  await openDesktop(page, 'Linux x86_64');
+  await page.waitForTimeout(300);
+  expect(await sentShortcuts(page)).toEqual([]);
 });

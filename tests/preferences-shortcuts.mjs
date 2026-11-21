@@ -348,6 +348,18 @@ try {
     assert.equal(keys.normalizeShortcut('⌘ + J'), 'Mod+J');
     assert.equal(keys.normalizeShortcut('⌘'), null);
   });
+  check('bindings convert to native menu accelerators, or to nothing when the menu cannot show them', () => {
+    const cases = [['Mod+N', 'CmdOrCtrl+N'], ['Mod+Shift+S', 'CmdOrCtrl+Shift+S'], ['Mod+Alt+ArrowRight', 'CmdOrCtrl+Alt+ArrowRight'], ['Mod+,', 'CmdOrCtrl+,'], ['Mod+=', 'CmdOrCtrl+='],
+      ['F2', 'F2'], ['Shift+F12', 'Shift+F12'], ['Mod+PageDown', 'CmdOrCtrl+PageDown'], ['Ctrl+Shift+j', 'CmdOrCtrl+Shift+J'], ['', null], ['x', null], ['Mod+', null]];
+    for (const [binding, accelerator] of cases) assert.equal(keys.menuAccelerator(binding), accelerator, binding);
+    // Every default on both platforms has an accelerator without the internal Mod token.
+    for (const mac of [true, false]) for (const command of keys.COMMANDS) {
+      const binding = keys.defaultShortcut(command.id, mac);
+      if (!binding) continue;
+      const accelerator = keys.menuAccelerator(binding);
+      assert.ok(accelerator && !accelerator.includes('Mod') && !/[⌘⇧⌥]/u.test(accelerator), command.id);
+    }
+  });
   check('smooth scrolling defaults follow the platform and stored choices win', () => {
     assert.equal(preferences.DEFAULT_UI_PREFERENCES.smoothScrolling, !platform.isMac);
     assert.equal(preferences.readUIPreferences({ smoothScrolling: false }).smoothScrolling, false);
