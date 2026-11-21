@@ -25,6 +25,10 @@ if (label.startsWith('sticky-') || query.has('sticky')) {
 } else {
   const { bootstrapMetadata } = await import('./store');
   await bootstrapMetadata().then(() => undefined);
+  // The macOS window draws its controls over the app's top bar (overlay
+  // title bar); the stylesheet insets the bar under this class.
+  const { isMac } = await import('./platform');
+  if (isTauri() && isMac) document.documentElement.classList.add('platform-mac');
   const { default: App } = await import('./App.svelte');
   target.textContent = '';
   mount(App, { target });

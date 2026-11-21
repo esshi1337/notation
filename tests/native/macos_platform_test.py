@@ -252,6 +252,17 @@ class MacosPlatformTest(unittest.TestCase):
         self.assertEqual(macos['bundle']['targets'], ['app', 'dmg'])
         # Apple Silicon refuses unsigned code; the CSS needs Safari 16.2+ (macOS 13).
         self.assertEqual(macos['bundle']['macOS'], {'minimumSystemVersion': '13.0', 'signingIdentity': '-'})
+        # Platform config replaces the windows array, so the macOS window must
+        # restate every base setting and add only the overlay title bar.
+        [base_window], [mac_window] = base['app']['windows'], macos['app']['windows']
+        overlay = {'titleBarStyle': 'Overlay', 'hiddenTitle': True, 'trafficLightPosition': {'x': 14, 'y': 16}}
+        self.assertEqual(mac_window, {**base_window, **overlay})
+        self.assertFalse(set(overlay) & set(base_window))
+        capability = json.loads((ROOT / 'src-tauri/capabilities/macos.json').read_text())
+        self.assertEqual((capability['platforms'], capability['windows']), (['macOS'], ['main']))
+        self.assertEqual(capability['permissions'], ['core:window:allow-start-dragging', 'core:window:allow-internal-toggle-maximize'])
+        default = json.loads((ROOT / 'src-tauri/capabilities/default.json').read_text())
+        self.assertNotIn('core:window:allow-start-dragging', default['permissions'])
         self.assertEqual(base['bundle']['resources'], {'resources/engines/': 'engines/'})
         for name in ['desktop', 'desktop:build', 'desktop:bundle']:
             self.assertIn('scripts/native-cli.py', scripts[name])

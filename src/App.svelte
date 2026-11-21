@@ -816,6 +816,11 @@
     if (closingWindow || document.querySelector('dialog[open]') || event.repeat) return;
     void runCommand(command);
   }
+  function runMenuCommand(id: unknown) {
+    const command = COMMANDS.find((item) => item.id === id);
+    if (!command || closingWindow || document.querySelector('dialog[open]')) return;
+    void runCommand(command.id);
+  }
   function tabSnapshot(tab: DocumentTab) {
     return { id: tab.id, name: tab.name, path: tab.path, content: editors[tab.id]?.snapshot().text ?? tab.content, dirty: tabDirty(tab), hemingway: tab.hemingway, selection: editors[tab.id]?.selected() ?? tab.selection };
   }
@@ -845,7 +850,7 @@
     const guard = (event: BeforeUnloadEvent) => { if (!desktop && documents.some(tabDirty)) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', guard);
     window.addEventListener('keydown', handleKeyboard, true);
-    let unclose: (() => void) | undefined, unagent: (() => void) | undefined, unlaunch: (() => void) | undefined, disposed = false;
+    let unclose: (() => void) | undefined, unagent: (() => void) | undefined, unlaunch: (() => void) | undefined, unmenu: (() => void) | undefined, disposed = false;
     if (nativeStore) {
       void import('@tauri-apps/api/window').then(async ({ getCurrentWindow }) => {
         const current = getCurrentWindow(); let closing = false;
@@ -900,6 +905,11 @@
         const pending = await invoke<LaunchRequest[]>('launch_ready', { ready: true });
         if (!disposed) for (const request of pending) queueLaunchRequest(request);
       }).catch((cause: unknown) => { error = 'File launch queue unavailable: ' + String(cause); });
+      // The macOS menu bar sends app command ids; run them like shortcuts.
+      void import('@tauri-apps/api/event').then(async ({ listen }) => {
+        const stop = await listen<string>('notation:menu-command', ({ payload }) => runMenuCommand(payload));
+        if (disposed) stop(); else unmenu = stop;
+      }).catch(() => undefined);
       type AgentRequest = { id: string; operation: 'list_tabs' | 'read_tab' | 'open_document' | 'edit_document'; path?: string; tabId?: string; expectedContent?: string; content?: string; expiresAt: number };
       void import('@tauri-apps/api/event').then(async ({ listen }) => {
         unagent = await listen<AgentRequest>('notation:agent-request', async ({ payload: request }) => {
@@ -933,12 +943,12 @@
         await tick(); if (!disposed) await invoke('agent_ready', { ready: true });
       }).catch((cause: unknown) => { error = 'MCP editor bridge unavailable: ' + String(cause); });
     }
-    return () => { disposed = true; launchDisposed = true; window.removeEventListener('beforeunload', guard); window.removeEventListener('keydown', handleKeyboard, true); unobserve(); unclose?.(); unagent?.(); unlaunch?.(); if (nativeStore) { void invoke('launch_ready', { ready: false }).catch(() => {}); void invoke('agent_ready', { ready: false }).catch(() => {}); } };
+    return () => { disposed = true; launchDisposed = true; window.removeEventListener('beforeunload', guard); window.removeEventListener('keydown', handleKeyboard, true); unobserve(); unclose?.(); unagent?.(); unlaunch?.(); unmenu?.(); if (nativeStore) { void invoke('launch_ready', { ready: false }).catch(() => {}); void invoke('agent_ready', { ready: false }).catch(() => {}); } };
   });
 </script>
 
 <main class="app" use:smoothScrolling={ui.smoothScrolling && !ui.performanceMode} data-performance-mode={ui.performanceMode} class:focus-mode={ui.focusMode} data-density={ui.density} data-dark-preset={ui.darkPreset} data-light-preset={ui.lightPreset} inert={closingWindow} style={preferencesStyle(ui) + ';--editor-font-size:' + fontSize + 'px'}>
-  <header class="workspace-bar">
+  <header class="workspace-bar" data-tauri-drag-region={desktop && mac ? 'deep' : undefined}>
     <CompactMenu label="App menu" text="N" items={appMenuItems} execute={(id) => void runCommand(id)} bind:open={appMenuOpen} {theme} />
     <div class="workspace-control">
       {#if catalog.workspaces.length}<select class="workspace-switcher" aria-label="Active workspace" value={catalog.activeId ?? ''} disabled={workspaceBusy || busy} onchange={event => void chooseWorkspace(event.currentTarget.value)}>{#each catalog.workspaces as workspace}<option value={workspace.id}>{workspace.name}</option>{/each}</select>{:else}<span class="workspace-personal">Personal</span>{/if}
