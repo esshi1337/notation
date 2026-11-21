@@ -14,12 +14,30 @@ export function prepareMedia(html:string):string{
   for(const element of template.content.querySelectorAll('[src],[srcset],[poster],[background],[ping]'))for(const attribute of ['src','srcset','poster','background','ping'])element.removeAttribute(attribute);
   return template.innerHTML;
 }
+// Loaded local media, kept across preview renders. Every use still asks the
+// backend, which repeats its path checks and answers "unchanged" when the
+// file has the fingerprint held here, instead of reading and encoding it again.
+type LoadedMedia={dataUrl:string;mime:string;fingerprint?:string};
+const MEDIA_CACHE_BYTES=64*1024*1024,MEDIA_CACHE_ENTRIES=24;
+const mediaCache=new Map<string,LoadedMedia>();
+function rememberMedia(key:string,media:LoadedMedia){
+  mediaCache.delete(key);
+  if(!media.fingerprint||media.dataUrl.length>MEDIA_CACHE_BYTES/2)return;
+  mediaCache.set(key,media);
+  let total=0;for(const item of mediaCache.values())total+=item.dataUrl.length;
+  // Oldest first: a Map iterates in insertion order.
+  for(const [oldest,item] of mediaCache){if(mediaCache.size<=MEDIA_CACHE_ENTRIES&&total<=MEDIA_CACHE_BYTES)break;mediaCache.delete(oldest);total-=item.dataUrl.length;}
+}
 export async function loadLocalMedia(source:string,sourcePath?:string):Promise<{dataUrl:string;mime:string}>{
   if(/^data:(?:image|audio|video)\/|^data:application\/pdf/iu.test(source)){if(source.length>28*1024*1024)throw new Error('Media exceeds 20 MiB.');return{dataUrl:source,mime:source.slice(5,source.indexOf(';'))};}
   if(/^[a-z][a-z0-9+.-]*:|^\/\//iu.test(source))throw new Error('This resource is not a local media file.');
   if(!isTauri())throw new Error('Local media requires a desktop workspace.');
   let path=source.split(/[?#]/u)[0];try{path=decodeURIComponent(path);}catch{/* Keep literal malformed escapes. */}
-  return invoke('read_workspace_asset',{path,sourcePath:sourcePath?.startsWith('/')?sourcePath:undefined});
+  const from=sourcePath?.startsWith('/')?sourcePath:undefined,key=JSON.stringify([from??null,path]),held=mediaCache.get(key);
+  const answer=await invoke<LoadedMedia|{unchanged:true;fingerprint:string}>('read_workspace_asset',{path,sourcePath:from,known:held?.fingerprint});
+  if(held&&'unchanged' in answer&&answer.unchanged===true){rememberMedia(key,held);return held;}
+  if(!('dataUrl' in answer))throw new Error('Local media could not be loaded.');
+  rememberMedia(key,answer);return answer;
 }
 export async function renderMedia(target:HTMLElement,sourcePath:string|undefined,current:()=>boolean):Promise<()=>void>{
   const source=target.dataset.mediaSource??'',kind=(target.dataset.mediaKind??'image') as MediaKind,alt=target.dataset.mediaAlt??source;
