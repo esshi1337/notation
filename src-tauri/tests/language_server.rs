@@ -124,6 +124,7 @@ fn wait_message(receiver: &mpsc::Receiver<Event>) -> (String, String) {
 }
 
 #[test]
+#[cfg_attr(target_os = "macos", ignore = "the optional language pack is refused on macOS")]
 fn absent_optional_pack_has_an_actionable_error_and_no_fallback() {
     let directory = tempfile::tempdir().unwrap();
     for kind in [ServerKind::TypeScript, ServerKind::Svelte] {
@@ -137,7 +138,18 @@ fn absent_optional_pack_has_an_actionable_error_and_no_fallback() {
     assert!(!error.contains("resources"), "{error}");
 }
 
+#[cfg(target_os = "macos")]
 #[test]
+fn optional_pack_is_refused_with_a_platform_message_on_macos() {
+    let directory = tempfile::tempdir().unwrap();
+    for kind in [ServerKind::TypeScript, ServerKind::Svelte] {
+        let error = production_descriptor(kind, Some(directory.path())).unwrap_err();
+        assert!(error.contains("Linux x86-64 only"), "{error}");
+    }
+}
+
+#[test]
+#[cfg_attr(target_os = "macos", ignore = "the optional language pack is refused on macOS")]
 fn explicit_valid_pack_drives_server_and_typescript_resolution() {
     let directory = tempfile::tempdir().unwrap();
     let base = optional_pack(directory.path(), 1, &["svelte-untrusted-prettier-config"]);
@@ -164,6 +176,7 @@ fn explicit_valid_pack_drives_server_and_typescript_resolution() {
 }
 
 #[test]
+#[cfg_attr(target_os = "macos", ignore = "the optional language pack is refused on macOS")]
 fn unsupported_manifest_version_is_rejected_before_resolution() {
     let directory = tempfile::tempdir().unwrap();
     optional_pack(directory.path(), 2, &["svelte-untrusted-prettier-config"]);
@@ -176,6 +189,7 @@ fn unsupported_manifest_version_is_rejected_before_resolution() {
 }
 
 #[test]
+#[cfg_attr(target_os = "macos", ignore = "the optional language pack is refused on macOS")]
 fn unpatched_pack_is_rejected_before_resolution() {
     let directory = tempfile::tempdir().unwrap();
     optional_pack(directory.path(), 1, &[]);

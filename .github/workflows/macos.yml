@@ -68,7 +68,8 @@ jobs:
           mkdir -p "$TMPDIR"
           python3 tests/native/macos_platform_test.py
           python3 tests/native/packaging_test.py
-          python3 tests/native/language_packaging_test.py
+          # tests/native/language_packaging_test.py exercises the optional
+          # language-pack installer, which refuses non-Linux hosts by design.
 
       - name: Desktop build (.app + .dmg)
         run: npm run desktop:build
