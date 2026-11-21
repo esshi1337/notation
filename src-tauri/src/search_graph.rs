@@ -246,7 +246,7 @@ impl Database {
         if scope.legacy_root.is_some() && folder.as_ref().is_some_and(|folder| !folder.is_dir()) {
             return Err("Search folder must be a workspace directory.".into());
         }
-        let connection = self.lock()?;
+        let connection = self.index_read()?;
         let paths = safe_paths(&connection, &scope)?;
         let mut bindings = Bindings(vec![]);
         let scope =
@@ -461,7 +461,7 @@ impl Database {
                     .map(|path| path.to_string_lossy().into_owned())
             })
             .transpose()?;
-        let connection = self.lock()?;
+        let connection = self.index_read()?;
         let paths = safe_paths(&connection, &scope)?
             .into_iter()
             .collect::<HashSet<_>>();

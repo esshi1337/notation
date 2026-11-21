@@ -47,7 +47,7 @@ fn seed(root: &Path) {
 /// file, rename it over the note) may reshuffle, so it is only comparable
 /// when the test rewrites notes in place.
 fn dump(database: &Database, scan_order: bool) -> Vec<(String, Vec<String>)> {
-    let connection = rusqlite::Connection::open(&database.path).unwrap();
+    let connection = rusqlite::Connection::open(database.index_path()).unwrap();
     let mut tables = Vec::new();
     for table in TABLES {
         let columns = if table == "cache_fts" { "path,title,body" } else { "*" };
@@ -253,16 +253,16 @@ fn a_full_rebuild_does_not_leave_an_index_sized_write_ahead_log() {
     for index in 0..200 {
         fs::write(root.join(format!("big{index}.md")), format!("# Big {index}\n[[big{}]] #tag{index}\n{filler}\n", (index + 1) % 200)).unwrap();
     }
-    let wal = database.path.with_extension("sqlite3-wal");
+    let index = database.index_path();
+    let wal = PathBuf::from(format!("{}-wal", index.display()));
     for _ in 0..2 {
         assert_eq!(database.index_workspace().unwrap().indexed, 200);
         let size = fs::metadata(&wal).map(|metadata| metadata.len()).unwrap_or(0);
         assert!(size <= 4 * 1024 * 1024, "write-ahead log is {size} bytes after a rebuild");
     }
-    let connection = rusqlite::Connection::open(&database.path).unwrap();
-    // The limit is per connection; the application sets it when it opens.
-    drop(connection);
-    assert!(fs::metadata(&database.path).unwrap().len() > 4 * 1024 * 1024);
+    assert!(fs::metadata(&index).unwrap().len() > 4 * 1024 * 1024);
+    // The index no longer grows the state database.
+    assert!(fs::metadata(&database.path).unwrap().len() < 1024 * 1024);
     // The index is intact after the checkpoint.
     assert_eq!(database.search_workspace("Lorem", Some(5)).unwrap().len(), 5);
 }

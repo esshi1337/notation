@@ -194,7 +194,7 @@ fn suggestions(root: &Path, folder: &Path, mut candidates: Vec<Candidate>) -> Ve
 }
 impl Database {
     pub(crate) fn indexed_notes(&self) -> Result<Vec<Candidate>, String> {
-        let connection = self.lock()?;
+        let connection = self.index_read()?;
         let mut statement=connection.prepare("SELECT f.path,f.name,f.title,m.json FROM cache_files f LEFT JOIN cache_frontmatter m ON m.path=f.path ORDER BY f.path").map_err(|error|error.to_string())?;
         let rows = statement
             .query_map([], |row| {
@@ -618,7 +618,7 @@ impl Database {
                     .map(|path| path.to_string_lossy().into_owned())
             })
             .transpose()?;
-        let connection = self.lock()?;
+        let connection = self.index_read()?;
         let mut statement=connection.prepare("SELECT path,json FROM cache_frontmatter WHERE (?1 IS NULL OR path=?1) ORDER BY path LIMIT 10000").map_err(|error|error.to_string())?;
         let rows = statement
             .query_map([path], |row| {
@@ -648,7 +648,7 @@ impl Database {
         if value.as_ref().is_some_and(|value| value.len() > 64 * 1024) {
             return Err("Property query value exceeds 64 KiB.".into());
         }
-        let connection = self.lock()?;
+        let connection = self.index_read()?;
         let mut statement=connection.prepare("SELECT DISTINCT m.path,m.json FROM cache_frontmatter m JOIN cache_properties p ON p.path=m.path WHERE p.key=?1 AND (?2 IS NULL OR p.json_value=?2) ORDER BY m.path LIMIT ?3").map_err(|error|error.to_string())?;
         let rows = statement
             .query_map(

@@ -204,15 +204,24 @@ impl Database {
         let complete = report.skipped == 0
             && report.errors.len() < MAX_ERRORS
             && report.errors.len() == yaml_errors;
-        let mut connection = self.lock()?;
+        // The index has its own database: this section does not block
+        // autosave or any other state write. Workspace changes take the index
+        // writer first, so the selection cannot change while it is held here.
+        let mut connection = self.index_lock()?;
+        crate::workspace_catalog::validate_index_snapshot(&*self.lock()?, &scope, revision)?;
+        let index_scope = self.index_scope()?;
         let tx = connection
             .transaction()
             .map_err(|error| error.to_string())?;
-        crate::workspace_catalog::validate_index_snapshot(&tx, &scope, revision)?;
         clear_cache(&tx)?;
         for (file, references) in files.iter().zip(&resolved_files) {
             insert_file(&tx, file, references, false)?;
         }
+        tx.execute(
+            "INSERT OR REPLACE INTO index_meta(key,value) VALUES(?1,?2)",
+            params![crate::storage::INDEX_SCOPE_KEY, index_scope],
+        )
+        .map_err(|error| error.to_string())?;
         if complete {
             let baseline = Baseline {
                 workspace: scope.id.clone(),
@@ -222,7 +231,7 @@ impl Database {
                 errors: report.errors.clone(),
             };
             tx.execute(
-                "INSERT OR REPLACE INTO app_meta(key,value) VALUES(?1,?2)",
+                "INSERT OR REPLACE INTO index_meta(key,value) VALUES(?1,?2)",
                 params![
                     crate::storage::INDEX_BASELINE_KEY,
                     serde_json::to_string(&baseline).map_err(|error| error.to_string())?
@@ -264,18 +273,20 @@ impl Database {
         }
         let aliases =
             crate::frontmatter::string_list(file.metadata.frontmatter.properties.get("aliases"));
-        let mut connection = self.lock()?;
+        let mut connection = self.index_lock()?;
+        if crate::workspace_catalog::validate_index_snapshot(&*self.lock()?, &scope, revision)
+            .is_err()
+        {
+            return Ok(None);
+        }
         let tx = connection
             .transaction()
             .map_err(|error| error.to_string())?;
-        if crate::workspace_catalog::validate_index_snapshot(&tx, &scope, revision).is_err() {
-            return Ok(None);
-        }
         // The last full rebuild must have been complete for this workspace
         // and membership revision.
         let baseline: Option<String> = tx
             .query_row(
-                "SELECT value FROM app_meta WHERE key=?1",
+                "SELECT value FROM index_meta WHERE key=?1",
                 [crate::storage::INDEX_BASELINE_KEY],
                 |row| row.get(0),
             )
@@ -419,7 +430,7 @@ impl Database {
             return Err("Search query exceeds the 512 character limit.".into());
         }
         let limit = limit.unwrap_or(100).clamp(1, 500) as i64;
-        let connection = self.lock()?;
+        let connection = self.index_read()?;
         if query.trim().is_empty() {
             let mut statement=connection.prepare("SELECT path,name,title,substr(content,1,160) FROM cache_files ORDER BY title COLLATE NOCASE,path LIMIT ?1").map_err(|error|error.to_string())?;
             let rows = statement
@@ -462,7 +473,7 @@ impl Database {
             .map_err(|error| error.to_string())
     }
     pub fn get_tasks(&self, checked: Option<bool>) -> Result<Vec<Task>, String> {
-        let connection = self.lock()?;
+        let connection = self.index_read()?;
         let mut statement=connection.prepare("SELECT path,line,text,checked FROM cache_tasks WHERE (?1 IS NULL OR checked=?1) ORDER BY path,line LIMIT 2000").map_err(|error|error.to_string())?;
         let rows = statement
             .query_map([checked], |row| {
@@ -478,7 +489,7 @@ impl Database {
             .map_err(|error| error.to_string())
     }
     pub fn get_tags(&self) -> Result<Vec<TagCount>, String> {
-        let connection = self.lock()?;
+        let connection = self.index_read()?;
         let mut statement=connection.prepare("SELECT tag,count(DISTINCT path) FROM cache_tags GROUP BY tag ORDER BY tag COLLATE NOCASE LIMIT 2000").map_err(|error|error.to_string())?;
         let rows = statement
             .query_map([], |row| {
@@ -494,7 +505,7 @@ impl Database {
     pub fn get_backlinks(&self, path: &str) -> Result<Vec<Backlink>, String> {
         let scope = self.active_workspace()?;
         let path = scope.resolve(path)?;
-        let connection = self.lock()?;
+        let connection = self.index_read()?;
         let mut statement=connection.prepare("SELECT DISTINCT source_path,line,text FROM cache_links WHERE target_path=?1 ORDER BY source_path,line LIMIT 2000").map_err(|error|error.to_string())?;
         let rows = statement
             .query_map([path.to_string_lossy()], |row| {
@@ -1165,6 +1176,55 @@ fn link_target(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn state_writes_and_index_queries_do_not_wait_for_the_index_writer() {
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("notes");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("a.md"), "# A\n#tagged\n- [ ] task\n").unwrap();
+        let database = Database::open(&directory.path().join("app/state.sqlite3")).unwrap();
+        database.set_workspace(root.to_str().unwrap()).unwrap();
+        database.index_workspace().unwrap();
+
+        // A rebuild in its write phase: the index writer is held, with an
+        // open write transaction.
+        let (held, wait_held) = mpsc::channel();
+        let (finish, wait_finish) = mpsc::channel::<()>();
+        let rebuilding = {
+            let database = database.clone();
+            std::thread::spawn(move || {
+                let mut index = database.index_lock().unwrap();
+                let tx = index.transaction().unwrap();
+                tx.execute("DELETE FROM cache_tags", []).unwrap();
+                held.send(()).unwrap();
+                wait_finish.recv().unwrap();
+                drop(tx); // rolled back
+            })
+        };
+        wait_held.recv().unwrap();
+        let started = Instant::now();
+        // Autosave and other state writes use the state database.
+        database
+            .persist(crate::storage::StateUpdate {
+                settings: Some(serde_json::json!({"theme": "light"})),
+                ..Default::default()
+            })
+            .unwrap();
+        let sticky = database.create_sticky().unwrap();
+        database.update_sticky(&sticky.id, "Title", "text").unwrap();
+        // Queries read the last committed index.
+        assert_eq!(database.get_tags().unwrap().len(), 1);
+        assert_eq!(database.get_tasks(None).unwrap().len(), 1);
+        assert_eq!(database.search_workspace("tagged", Some(5)).unwrap().len(), 1);
+        assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+        finish.send(()).unwrap();
+        rebuilding.join().unwrap();
+        assert_eq!(database.bootstrap(None).unwrap().settings["theme"], "light");
+        assert_eq!(database.get_tags().unwrap().len(), 1);
+    }
 
     #[test]
     fn line_index_matches_a_newline_count_at_every_offset() {

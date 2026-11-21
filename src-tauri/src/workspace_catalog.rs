@@ -252,6 +252,10 @@ impl Database {
         &self,
         operation: impl FnOnce(&Connection) -> Result<(), String>,
     ) -> Result<WorkspaceCatalog, String> {
+        // Index first, then state (the order everywhere). Holding the index
+        // writer keeps a rebuild from committing rows for the old selection
+        // after this change.
+        let index = self.index_lock()?;
         let mut connection = self.lock()?;
         let tx = connection.transaction().map_err(error)?;
         operation(&tx)?;
@@ -262,8 +266,12 @@ impl Database {
         .map_err(error)?;
         tx.execute("DELETE FROM workspaces", []).map_err(error)?;
         tx.execute("INSERT INTO workspaces(id,path) SELECT 1,legacy_root FROM named_workspaces WHERE id=(SELECT active_id FROM workspace_selection WHERE id=1) AND legacy_root IS NOT NULL",[]).map_err(error)?;
-        clear_cache(&tx)?;
         let result = catalog(&tx)?;
+        // The index was built for the previous selection or membership.
+        // Empty it before the change becomes visible, so no query can pair
+        // the new selection with old rows. If the commit below fails the
+        // index is merely empty and is rebuilt on demand.
+        clear_cache(&index)?;
         tx.commit().map_err(error)?;
         Ok(result)
     }
