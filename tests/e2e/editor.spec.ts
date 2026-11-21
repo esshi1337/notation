@@ -136,3 +136,47 @@ test('starts safely with malformed saved preferences', async ({ page }) => {
   await settings.getByRole('tab', { name: 'Appearance', exact: true }).click();
   await expectSetting(page, 'Theme', 'dark');
 });
+
+test('unchanged diagrams are reused across renders with unique ids, errors and themes are not', async ({ page }) => {
+  const diagram = '```mermaid\nflowchart LR\n  A[Same] --> B[Diagram]\n```';
+  await source(page).fill(`# Twice\n\n${diagram}\n\nBetween.\n\n${diagram}\n\n\`\`\`mermaid\nthis is not a diagram\n\`\`\`\n`);
+  const diagrams = preview(page).locator('.diagram');
+  await expect(diagrams.locator('svg')).toHaveCount(2);
+  await expect(preview(page).getByRole('alert')).toContainText('Diagram error');
+  const ids = () => page.evaluate(() => [...document.querySelectorAll('[id]')].map((element) => element.id));
+  const unique = async () => { const all = await ids(); return all.length === new Set(all).size; };
+  expect(await unique()).toBe(true);
+  const firstIds = await diagrams.locator('svg').evaluateAll((list) => list.map((svg) => svg.id));
+  expect(new Set(firstIds).size).toBe(2);
+
+  // An edit outside the diagrams re-renders the preview. The diagrams come
+  // back without a loading placeholder being shown, under new unique ids,
+  // and the broken diagram reports its error again.
+  await page.evaluate(() => {
+    const seen = window as unknown as { placeholders: number };
+    seen.placeholders = 0;
+    new MutationObserver((records) => { for (const record of records) for (const node of record.addedNodes) if (node instanceof HTMLElement && node.classList.contains('diagram-loading') && /Same|Diagram/u.test(node.closest('.markdown-body')?.textContent ?? '') ) seen.placeholders++; }).observe(document.body, { childList: true, subtree: true });
+  });
+  await source(page).press('Control+End');
+  await page.keyboard.type('\nA new last line.');
+  await expect(preview(page).getByText('A new last line.')).toBeVisible();
+  await expect(diagrams.locator('svg')).toHaveCount(2);
+  await expect(preview(page).getByRole('alert')).toContainText('Diagram error');
+  await expect(preview(page).getByText('Diagram', { exact: true })).toHaveCount(2);
+  expect(await unique()).toBe(true);
+  const secondIds = await diagrams.locator('svg').evaluateAll((list) => list.map((svg) => svg.id));
+  expect(secondIds.some((id) => firstIds.includes(id))).toBe(false);
+  // Only the broken diagram went through a fresh render (one placeholder).
+  expect(await page.evaluate(() => (window as unknown as { placeholders: number }).placeholders)).toBe(1);
+  // Arrowheads still resolve inside each copy: marker references name ids that exist.
+  expect(await diagrams.locator('svg').evaluateAll((list) => list.every((svg) => [...svg.querySelectorAll('[marker-end]')].every((path) => { const match = /url\(#([^)]+)\)/u.exec(path.getAttribute('marker-end') ?? ''); return !match || svg.querySelector('#' + CSS.escape(match[1])) !== null; })))).toBe(true);
+
+  // The other theme renders its own diagrams rather than reusing these.
+  const before = await diagrams.first().locator('svg').evaluate((svg) => svg.querySelector('style')?.textContent ?? '');
+  await page.getByRole('button', { name: 'App menu' }).click();
+  await page.getByRole('menu', { name: 'App menu' }).getByRole('menuitem', { name: 'Settings' }).click();
+  await setSetting(page, 'Theme', 'light');
+  await page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('button', { name: 'Close settings' }).click();
+  await expect(diagrams.locator('svg')).toHaveCount(2);
+  await expect.poll(async () => (await diagrams.first().locator('svg').evaluate((svg) => svg.querySelector('style')?.textContent ?? '')).replace(/notation-diagram-\d+/gu, '') !== before.replace(/notation-diagram-\d+/gu, '')).toBe(true);
+});
