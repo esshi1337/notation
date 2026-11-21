@@ -109,12 +109,13 @@ Do not claim leak freedom without runtime memory/lifecycle evidence.
 Commit only scoped files, then create a PR using
 `scripts/notation-task pr --title '<title>' --body-file <file>`. The body must
 include `Closes #<issue>`, `## Validation` and `## Review` with exact results,
-fixes and remaining gaps. Keep one coherent issue per PR. The only CI is the
-macOS workflow (`.github/workflows/macos.yml`): on PRs that touch app, native,
-test or tooling files it builds the `.app`/`.dmg` on Apple Silicon and Intel,
-launches the built app as a smoke test, runs the Rust tests and runs the
-Playwright suite on WebKit. Wait for it and report its result in the PR. All
-other checks and review evidence are local.
+fixes and remaining gaps. Keep one coherent issue per PR. All checks and review
+evidence are local. A macOS workflow exists (`.github/workflows/macos.yml`:
+builds and launches the app on Apple Silicon and Intel, runs the Rust tests and
+the Playwright suite on WebKit), but the owner has disabled it and it is
+manual-only. Do not wait for it, enable it or dispatch it; write "macOS CI:
+disabled by user" in the PR's Validation section and say what in the change
+still needs a build or a person on a Mac.
 
 After inspecting the reports and accepting the exact committed result,
 Astra can use `scripts/notation-task record-review --checks-file <file>
