@@ -40,5 +40,38 @@ try {
       assert.equal(undo(view),true);assert.equal(state.doc.toString(),original);
     }
   });
+  {
+    // The engine reads only frontmatter, so body edits must reuse the result.
+    const calls = [];
+    globalThis.isTauri = true;
+    globalThis.window = { __TAURI_INTERNALS__: { invoke: async (command, args) => { calls.push({ command, ...args }); return { citations: args.citations.map(raw => ({ raw, html: '<span>' + raw + '</span>' })), bibliographyHtml: '' }; } } };
+    const { formatCitations, citationMetadataSource } = await server.ssrLoadModule('/src/render-citations.ts');
+    const front = '---\nbibliography: refs.bib\nlang: en\n---\n';
+    const body = 'First claim [@doe2020]. Second claim [@roe2021; @doe2020].\n';
+    assert.equal(citationMetadataSource(front + body), front);
+    assert.equal(citationMetadataSource('\uFEFF' + front + body), '\uFEFF' + front);
+    assert.equal(citationMetadataSource(front.replace('---\n', '---\r\n') + body), front.replace('---\n', '---\r\n'));
+    assert.equal(citationMetadataSource(body), body, 'no frontmatter: the source is sent unchanged');
+    assert.equal(citationMetadataSource('---\nbibliography: refs.bib\n' + body), '---\nbibliography: refs.bib\n' + body, 'unclosed frontmatter: the source is sent unchanged');
+    const groups = ['[@doe2020]', '[@roe2021; @doe2020]'];
+    const first = await formatCitations(front + body, '/notes/a.md', groups);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].content, front, 'only the frontmatter block is sent');
+    assert.deepEqual(calls[0].citations, groups);
+    // Typing in the body: same frontmatter, same groups in the same order.
+    const second = await formatCitations(front + 'A new opening sentence. ' + body + 'And a closing one.\n', '/notes/a.md', groups);
+    assert.equal(calls.length, 1, 'a body edit reuses the formatted citations');
+    assert.deepEqual(second, first);
+    // Each of these changes what the engine would produce.
+    await formatCitations(front.replace('lang: en', 'lang: de') + body, '/notes/a.md', groups);
+    assert.equal(calls.length, 2, 'frontmatter change');
+    await formatCitations(front + 'Second claim [@roe2021; @doe2020]. First claim [@doe2020].\n', '/notes/a.md', groups);
+    assert.equal(calls.length, 3, 'citation order change');
+    await formatCitations(front + body + 'Third [@new2022].\n', '/notes/a.md', [...groups, '[@new2022]']);
+    assert.equal(calls.length, 4, 'new citation group');
+    await formatCitations(front + body, '/notes/b.md', groups);
+    assert.equal(calls.length, 5, 'another note');
+    passed++; console.log('✓ citation formatting is keyed on frontmatter and citation groups, not the note body');
+  }
   console.log(passed+' citation and insertion scenarios passed.');
 } finally {await server.close();}

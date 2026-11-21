@@ -103,6 +103,7 @@
   let active = $derived(documents.find((document) => document.id === activeId) ?? documents[0]);
   let editors = $state<Record<string, Editor | undefined>>({});
   let editor = $derived(editors[activeId]);
+  let preview = $state<Preview>();
   // Persist the built-in choice separately; every renderer gets the effective
   // base mode of the active saved theme or temporary preview.
   let builtInTheme = $state<'dark' | 'light'>(preferences.theme === 'light' ? 'light' : 'dark');
@@ -239,6 +240,26 @@
     persistMetadata({ session: { activeTabId: activeId, tabs: documents.map(serializeTab), updatedAt: Date.now(), activeWorkspaceId: catalog.activeId, workspaceViews: { ...workspaceViews, [workspaceKey(catalog.activeId)]: captureWorkspaceView(documents, visibleIds, activeId, layout) } } });
   });
 
+  // Keep the reading position across view modes: take the source line at the
+  // top of the outgoing view before the DOM changes, then put that line at
+  // the top of whichever panes the new mode shows.
+  let anchoredLayout: Layout | undefined, anchoredTab = '';
+  $effect.pre(() => {
+    const next = effectiveLayout, tab = activeId;
+    untrack(() => {
+      if (anchoredLayout !== undefined && tab === anchoredTab && next !== anchoredLayout && !canvasDocument) {
+        const line = anchoredLayout === 'preview' ? preview?.topLine() ?? null : editors[tab]?.topLine() ?? null;
+        if (line !== null) void tick().then(() => {
+          if (activeId !== tab || effectiveLayout !== next) return;
+          if (next !== 'source' && next !== 'live') preview?.scrollToLine(line);
+          // After the editor has been shown again and re-measured.
+          if (next !== 'preview') requestAnimationFrame(() => { if (activeId === tab && effectiveLayout === next) editors[tab]?.scrollToLine(line); });
+        });
+      }
+      anchoredLayout = next; anchoredTab = tab;
+    });
+  });
+
   async function readDiskFile(path: string) { return (await invoke<DocumentResult>('read_document_snapshot', { path })).content; }
   async function readCodeFile(path: string) { return documents.find(tab=>tab.path===path || tab.id===path)?.content ?? await readDiskFile(path); }
   configureLanguageIntelligence({
@@ -348,7 +369,9 @@
     if (activeId === id) activeId = visibleIds[Math.max(0, Math.min(index - 1, visibleIds.length - 1))];
     scheduleDiskCheck();
     await tick();
-    if (previousControl instanceof HTMLElement && !previousControl.isConnected && document.activeElement === document.body) {
+    // A closed tab stays in the DOM, inert, while it animates out.
+    // The browser may not have moved focus off it yet.
+    if (previousControl instanceof HTMLElement && (!previousControl.isConnected || previousControl.closest('[inert]')) && (document.activeElement === document.body || document.activeElement === previousControl)) {
       document.querySelector<HTMLElement>('.document-tab.active [role="tab"]')?.focus();
     }
     await flushPersistence();
@@ -937,7 +960,7 @@
   </header>
   {#if error}<div class="app-error" role="alert">{error}<button aria-label="Dismiss error" onclick={() => error = ''}>×</button></div>{/if}
   {#if persistence.state === 'error'}<div class="app-error" role="alert">{persistence.error}<button onclick={() => void retryPersistence()}>Retry saving app state</button></div>{/if}
-  {#if persistence.recovery?.draft || persistence.recovery?.scriptDraft || persistence.recovery?.session}<div class="recovery-banner" role="status"><div class="recovery-copy"><strong>Work available to restore</strong>{#if persistence.recovery.session}<span>Restore tabs replaces your current open tabs; unsaved tabs are confirmed first.</span>{:else if persistence.recovery.draft}<span>Restore document opens the draft and replaces its matching open tab.</span>{/if}{#if persistence.recovery.scriptDraft}<span>{scriptsEnabled ? 'Restore script edits replaces the code in Scripts without running it or updating saved library scripts.' : 'Enable scripts in Settings → Editor to restore these edits.'}</span>{/if}<span>Document files stay unchanged. Keep current work dismisses these options and keeps your current work.</span></div><div class="recovery-actions">{#if persistence.recovery.session}<button onclick={recoverSession}>Restore tabs</button>{:else if persistence.recovery.draft}<button onclick={recoverDraft}>Restore document</button>{/if}{#if persistence.recovery.scriptDraft && scriptsEnabled}<button onclick={recoverScript}>Restore script edits</button>{/if}<button onclick={dismissRecovery}>Keep current work</button></div></div>{/if}
+  {#if persistence.recoveryOffered && (persistence.recovery?.draft || persistence.recovery?.scriptDraft || persistence.recovery?.session)}<div class="recovery-banner" role="status"><div class="recovery-copy"><strong>Work available to restore</strong>{#if persistence.recovery.session}<span>Restore tabs replaces your current open tabs; unsaved tabs are confirmed first.</span>{:else if persistence.recovery.draft}<span>Restore document opens the draft and replaces its matching open tab.</span>{/if}{#if persistence.recovery.scriptDraft}<span>{scriptsEnabled ? 'Restore script edits replaces the code in Scripts without running it or updating saved library scripts.' : 'Enable scripts in Settings → Editor to restore these edits.'}</span>{/if}<span>Document files stay unchanged. Keep current work dismisses these options and keeps your current work.</span></div><div class="recovery-actions">{#if persistence.recovery.session}<button onclick={recoverSession}>Restore tabs</button>{:else if persistence.recovery.draft}<button onclick={recoverDraft}>Restore document</button>{/if}{#if persistence.recovery.scriptDraft && scriptsEnabled}<button onclick={recoverScript}>Restore script edits</button>{/if}<button onclick={dismissRecovery}>Keep current work</button></div></div>{/if}
   <div class="content-area" data-sidebar-position={ui.sidebarPosition}>
     {#if !ui.focusMode}
       <aside class="app-sidebar" aria-label="Application tools">
@@ -955,9 +978,9 @@
         {#if reducedDocument}<div class="formatting-notice" role="status">Reduced formatting · This document is large or punctuation-heavy. Editing continues in Source; rich formatting returns when it shrinks. Your text is unchanged.</div>{/if}
         {#if active.hemingway}<div class="pane-heading" role="status" aria-label="Hemingway mode"><span>HEMINGWAY MODE</span><span class="pane-hint">Deletion blocked · Commands → Hemingway mode</span></div>{:else if effectiveLayout === 'split'}<div class="pane-heading"><span>SOURCE</span><span class="pane-hint">{standalone ? '.mmd' : '.md'}</span></div>{/if}
         {#if diskConflicts[activeId]}<div class="disk-conflict-banner" role="alert"><span>{diskConflicts[activeId]}</span><button onclick={() => comparingDisk = activeId}>Compare / reload</button><button onclick={() => delete diskConflicts[activeId]}>Keep editing</button></div>{/if}
-        {#each documents as tab (tab.lifetime)}<div class="editor-tab-host" hidden={tab.id !== activeId}><Editor bind:this={editors[tab.id]} value={tab.content} codeLanguage={ui.performanceMode ? 'plaintext' : detectLanguage(tab.name, tab.language)} intelligenceEnabled={desktop && intelligenceEnabled} tabSize={ui.tabSize} indentWithTabs={ui.indentWithTabs} onIntelligence={(value) => intelligenceStates[tab.id] = value} hemingway={tab.hemingway} initialSelection={tab.selection} active={tab.id === activeId} {wrap} showLineNumbers={ui.showLineNumbers} appearance={[fontSize, ui.editorFont, ui.lineHeight, ui.readingWidth].join(':')} live={tab.id === activeId && effectiveLayout === 'live' && !canvasDocument} standalone={tab.name.toLowerCase().endsWith('.mmd')} {theme} folds={tab.folds} cells={cellsFor(tab)} sourcePath={tab.path ?? tab.id} loadEmbed={loadEmbedded} onOpenPath={(path) => void openPath(path)} onOpenWiki={(target, path) => void openWiki(target, tab.id, path)} onEditProperties={() => editProperties(tab.id)} wikiCandidates={(context) => candidatesFor(tab.id, context)} onFormatting={(state) => formattingReduced[tab.id] = state.reduced} onChange={(value) => { invalidateDiskCheck(); scheduleDiskCheck(); tab.content = value; tab.updatedAt = Date.now(); }} onSelection={(selection) => tab.selection = selection} /></div>{/each}
+        {#each documents as tab (tab.lifetime)}<div class="editor-tab-host" hidden={tab.id !== activeId}><Editor bind:this={editors[tab.id]} value={tab.content} codeLanguage={ui.performanceMode ? 'plaintext' : detectLanguage(tab.name, tab.language)} intelligenceEnabled={desktop && intelligenceEnabled} tabSize={ui.tabSize} indentWithTabs={ui.indentWithTabs} onIntelligence={(value) => { intelligenceStates[tab.id] = value; }} hemingway={tab.hemingway} initialSelection={tab.selection} active={tab.id === activeId} {wrap} showLineNumbers={ui.showLineNumbers} appearance={[fontSize, ui.editorFont, ui.lineHeight, ui.readingWidth].join(':')} live={tab.id === activeId && effectiveLayout === 'live' && !canvasDocument} standalone={tab.name.toLowerCase().endsWith('.mmd')} {theme} folds={tab.folds} cells={cellsFor(tab)} sourcePath={tab.path ?? tab.id} loadEmbed={loadEmbedded} onOpenPath={(path) => void openPath(path)} onOpenWiki={(target, path) => void openWiki(target, tab.id, path)} onEditProperties={() => editProperties(tab.id)} wikiCandidates={(context) => candidatesFor(tab.id, context)} onFormatting={(state) => { formattingReduced[tab.id] = state.reduced; }} onChange={(value) => { invalidateDiskCheck(); scheduleDiskCheck(); tab.content = value; tab.updatedAt = Date.now(); }} onSelection={(selection) => { tab.selection = selection; }} /></div>{/each}
       </section>
-      <section class="pane preview-pane" aria-label="Preview pane" hidden={effectiveLayout === 'source' || effectiveLayout === 'live' || canvasVisible || active.hemingway}>{#if effectiveLayout === 'split'}<div class="pane-heading"><span>PREVIEW</span></div>{/if}{#if !active.hemingway && !canvasVisible && (effectiveLayout === 'split' || effectiveLayout === 'preview')}<Preview documentId={active.lifetime} content={active.content} {standalone} {theme} folds={active.folds} onToggleTask={togglePreviewTask} onEditSource={(from) => void editSource(from)} cells={cellsFor(active)} sourcePath={active.path ?? active.id} loadEmbed={loadEmbedded} onOpenPath={(path) => void openPath(path)} onOpenWiki={wikiHandler(activeId)} onEditProperties={propertiesHandler(activeId)} />{/if}</section>
+      <section class="pane preview-pane" aria-label="Preview pane" hidden={effectiveLayout === 'source' || effectiveLayout === 'live' || canvasVisible || active.hemingway}>{#if effectiveLayout === 'split'}<div class="pane-heading"><span>PREVIEW</span></div>{/if}{#if !active.hemingway && !canvasVisible && (effectiveLayout === 'split' || effectiveLayout === 'preview')}<Preview bind:this={preview} documentId={active.lifetime} content={active.content} {standalone} {theme} folds={active.folds} onToggleTask={togglePreviewTask} onEditSource={(from) => void editSource(from)} cells={cellsFor(active)} sourcePath={active.path ?? active.id} loadEmbed={loadEmbedded} onOpenPath={(path) => void openPath(path)} onOpenWiki={wikiHandler(activeId)} onEditProperties={propertiesHandler(activeId)} />{/if}</section>
       {#if canvasVisible}<Canvas content={active.content} documentId={active.lifetime} path={active.path} apply={applyCanvas} openNote={(file,subpath)=>void openWiki(file+(subpath||''),activeId,'')} noteCandidates={canvasNoteCandidates} renderCard={renderCanvasCard} undo={()=>editor?.undoEdit()} redo={()=>editor?.redoEdit()} />{/if}
     </div>
 

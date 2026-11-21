@@ -43,3 +43,11 @@ landlock = "0.4"
 
 [dev-dependencies]
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
+
+# Thin LTO, one codegen unit and stripped symbols make the release binary about
+# a third smaller with no measurable runtime change. `panic` stays "unwind":
+# blocking-task and worker panics are turned into error messages, not aborts.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
