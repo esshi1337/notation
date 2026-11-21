@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const MAX_CONTENT: usize = 4 * 1024 * 1024;
 const REVISION_LIMIT: usize = 50;
 const RUN_LIMIT: usize = 200;
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 
 pub fn now() -> i64 {
     SystemTime::now()
@@ -283,6 +283,13 @@ INSERT INTO sticky_notes_v9(id,title,text,updated_at,color,html) SELECT id,title
 DROP TABLE sticky_notes;
 ALTER TABLE sticky_notes_v9 RENAME TO sticky_notes;
 PRAGMA user_version=9;").map_err(database_error)?;
+            tx.commit().map_err(database_error)?;
+        }
+        if version < 10 {
+            let tx = connection.transaction().map_err(database_error)?;
+            // Search and graph queries correlate tags and properties by note
+            // path; without these each result row scanned the whole table.
+            tx.execute_batch("CREATE INDEX IF NOT EXISTS cache_tags_path ON cache_tags(path,tag); CREATE INDEX IF NOT EXISTS cache_properties_path ON cache_properties(path,key); PRAGMA user_version=10;").map_err(database_error)?;
             tx.commit().map_err(database_error)?;
         }
         Ok(Self {

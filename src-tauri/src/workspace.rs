@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
+use std::sync::LazyLock;
 
 const MAX_FILES: usize = 10_000;
 const MAX_TOTAL: usize = 64 * 1024 * 1024;
@@ -56,6 +57,17 @@ struct Metadata {
     tags: Vec<(usize, String)>,
     tasks: Vec<(usize, String, bool)>,
 }
+struct ResolvedLink<'a> {
+    line: usize,
+    text: &'a str,
+    display: String,
+    wiki: bool,
+    resolved: Option<String>,
+    status: &'static str,
+    candidates: String,
+    heading: Option<String>,
+    alias: Option<String>,
+}
 struct IndexedFile {
     path: PathBuf,
     content: String,
@@ -88,8 +100,10 @@ impl Database {
             );
         }
         {
+            let mut scanned: HashSet<PathBuf> =
+                files.iter().map(|file| file.path.clone()).collect();
             for path in &scope.files {
-                if files.iter().any(|file| file.path == Path::new(path)) {
+                if !scanned.insert(PathBuf::from(path)) {
                     continue;
                 }
                 if report.files >= MAX_FILES {
@@ -164,15 +178,86 @@ impl Database {
                 blocks: file.metadata.blocks.clone(),
             })
             .collect::<Vec<_>>();
+        // Resolve every link before taking the database lock: resolution only
+        // needs the scanned note set, and other commands wait on that lock.
+        let lookup = crate::wiki::NoteLookup::new(&notes);
+        let mut graph_refs = 0;
+        let mut block_refs = 0;
+        let mut resolved_files = Vec::with_capacity(files.len());
+        for file in &files {
+            let mut blocks = 0;
+            for _ in &file.metadata.blocks {
+                if block_refs >= 100000 {
+                    report_error(
+                        &mut report,
+                        "Workspace block references exceeded the 100,000 reference limit.",
+                    );
+                    break;
+                }
+                block_refs += 1;
+                blocks += 1;
+            }
+            let mut links = Vec::new();
+            for (line, text, target, wiki) in &file.metadata.links {
+                if graph_refs >= 100000 {
+                    report_error(
+                        &mut report,
+                        "Workspace links exceeded the 100,000 reference limit.",
+                    );
+                    break;
+                }
+                let Some((display, heading, alias)) =
+                    crate::wiki::scoped_link(&root, &file.path, target, *wiki)
+                else {
+                    continue;
+                };
+                graph_refs += 1;
+                let matches = if *wiki {
+                    lookup.matches(&root, &file.path, target)
+                } else if display.is_empty() {
+                    vec![file.path.clone()]
+                } else {
+                    link_target(&root, &file.path, target, false, &paths)
+                        .into_iter()
+                        .collect::<Vec<_>>()
+                };
+                let resolved =
+                    (matches.len() == 1).then(|| matches[0].to_string_lossy().into_owned());
+                let status = match matches.len() {
+                    0 => "missing",
+                    1 => "resolved",
+                    _ => "ambiguous",
+                };
+                let candidates = if matches.len() > 1 {
+                    matches
+                        .iter()
+                        .map(|path| path.to_string_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![]
+                };
+                links.push(ResolvedLink {
+                    line: *line,
+                    text,
+                    display,
+                    wiki: *wiki,
+                    resolved,
+                    status,
+                    candidates: serde_json::to_string(&candidates)
+                        .map_err(|error| error.to_string())?,
+                    heading,
+                    alias,
+                });
+            }
+            resolved_files.push((blocks, links));
+        }
         let mut connection = self.lock()?;
         let tx = connection
             .transaction()
             .map_err(|error| error.to_string())?;
         crate::workspace_catalog::validate_index_snapshot(&tx, &scope, revision)?;
         clear_cache(&tx)?;
-        let mut graph_refs = 0;
-        let mut block_refs = 0;
-        for file in files {
+        for (file, (blocks, links)) in files.iter().zip(resolved_files) {
             let path = file.path.to_string_lossy();
             let name = file.path.file_name().unwrap_or_default().to_string_lossy();
             let title = if file.metadata.title.is_empty() {
@@ -224,75 +309,30 @@ impl Database {
                 )
                 .map_err(|error| error.to_string())?;
             }
-            for block in &file.metadata.blocks {
-                if block_refs >= 100000 {
-                    report_error(
-                        &mut report,
-                        "Workspace block references exceeded the 100,000 reference limit.",
-                    );
-                    break;
-                }
-                block_refs += 1;
+            for block in file.metadata.blocks.iter().take(blocks) {
                 tx.execute(
                     "INSERT INTO cache_blocks(path,id,line) VALUES(?1,?2,?3)",
                     params![path, block.id, block.line as i64],
                 )
                 .map_err(|error| error.to_string())?;
             }
-            for (line, text, target, wiki) in file.metadata.links {
-                if graph_refs >= 100000 {
-                    report_error(
-                        &mut report,
-                        "Workspace links exceeded the 100,000 reference limit.",
-                    );
-                    break;
-                }
-                let Some((display, heading, alias)) =
-                    crate::wiki::scoped_link(&root, &file.path, &target, wiki)
-                else {
-                    continue;
-                };
-                graph_refs += 1;
-                let matches = if wiki {
-                    crate::wiki::indexed_matches(&root, &file.path, &target, &notes)
-                } else if display.is_empty() {
-                    vec![file.path.clone()]
-                } else {
-                    link_target(&root, &file.path, &target, false, &paths)
-                        .into_iter()
-                        .collect::<Vec<_>>()
-                };
-                let resolved =
-                    (matches.len() == 1).then(|| matches[0].to_string_lossy().into_owned());
-                let status = match matches.len() {
-                    0 => "missing",
-                    1 => "resolved",
-                    _ => "ambiguous",
-                };
-                let candidates = if matches.len() > 1 {
-                    matches
-                        .iter()
-                        .map(|path| path.to_string_lossy().into_owned())
-                        .collect::<Vec<_>>()
-                } else {
-                    vec![]
-                };
-                tx.execute("INSERT INTO cache_graph_links(source_path,line,raw_target,kind,target_path,status,candidates_json,heading,alias) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![path,line as i64,display,if wiki{"wiki"}else{"markdown"},resolved,status,serde_json::to_string(&candidates).map_err(|error|error.to_string())?,heading,alias]).map_err(|error|error.to_string())?;
-                if let Some(target) = resolved {
-                    tx.execute("INSERT INTO cache_links(source_path,line,text,target_path) VALUES(?1,?2,?3,?4)",params![path,line as i64,text,target]).map_err(|error|error.to_string())?;
+            for link in links {
+                tx.execute("INSERT INTO cache_graph_links(source_path,line,raw_target,kind,target_path,status,candidates_json,heading,alias) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![path,link.line as i64,link.display,if link.wiki{"wiki"}else{"markdown"},link.resolved,link.status,link.candidates,link.heading,link.alias]).map_err(|error|error.to_string())?;
+                if let Some(target) = link.resolved {
+                    tx.execute("INSERT INTO cache_links(source_path,line,text,target_path) VALUES(?1,?2,?3,?4)",params![path,link.line as i64,link.text,target]).map_err(|error|error.to_string())?;
                 }
             }
-            for (line, tag) in file.metadata.tags {
+            for (line, tag) in &file.metadata.tags {
                 tx.execute(
                     "INSERT INTO cache_tags(path,line,tag) VALUES(?1,?2,?3)",
-                    params![path, line as i64, tag],
+                    params![path, *line as i64, tag],
                 )
                 .map_err(|error| error.to_string())?;
             }
-            for (line, text, checked) in file.metadata.tasks {
+            for (line, text, checked) in &file.metadata.tasks {
                 tx.execute(
                     "INSERT INTO cache_tasks(path,line,text,checked) VALUES(?1,?2,?3,?4)",
-                    params![path, line as i64, text, checked],
+                    params![path, *line as i64, text, checked],
                 )
                 .map_err(|error| error.to_string())?;
             }
@@ -572,12 +612,31 @@ fn scan(
         report.indexed += 1;
     }
 }
-fn line_number(source: &str, offset: usize) -> usize {
-    source[..offset]
+// Compiling these per parsed file cost about 0.5 ms each (the tag pattern
+// builds Unicode classes), which dominated indexing of large workspaces.
+static TAGS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:^|[^\p{L}\p{N}_/])#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)").unwrap()
+});
+// Keep marker/quote/list syntax in sync with the editor's task recognizer.
+static TASKS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[ \t]*(?:>[ \t]*)*(?:(?:[-*+]|\d+[.)])[ \t]+)?\[([ xX]?)\](?:[ \t]+(.*))?$")
+        .unwrap()
+});
+static BLOCKS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:^|[ \t])\^([A-Za-z0-9][A-Za-z0-9-]*)[ \t]*$").unwrap());
+
+/// Byte offsets of every `\n`, so a line number is a binary search instead
+/// of a rescan from the start of the note for each heading, link and block.
+fn newline_offsets(source: &str) -> Vec<usize> {
+    source
         .bytes()
-        .filter(|byte| *byte == b'\n')
-        .count()
-        + 1
+        .enumerate()
+        .filter_map(|(index, byte)| (byte == b'\n').then_some(index))
+        .collect()
+}
+/// One-based line of `offset`: one more than the newlines before it.
+fn line_at(newlines: &[usize], offset: usize) -> usize {
+    newlines.partition_point(|&newline| newline < offset) + 1
 }
 fn line_text(source: &str, offset: usize) -> String {
     let start = source[..offset].rfind('\n').map_or(0, |index| index + 1);
@@ -595,6 +654,7 @@ fn mask(bytes: &mut [u8], range: std::ops::Range<usize>) {
 }
 fn parse_metadata(source: &str) -> Metadata {
     let mut metadata = Metadata::default();
+    let newlines = newline_offsets(source);
     let mut cleaned = source.as_bytes().to_vec();
     metadata.frontmatter = crate::frontmatter::parse(source);
     if metadata.frontmatter.closed {
@@ -664,7 +724,7 @@ fn parse_metadata(source: &str) -> Metadata {
             Event::Start(Tag::Heading { level, .. }) => {
                 heading = Some(crate::wiki::Heading {
                     text: String::new(),
-                    line: line_number(source, range.start),
+                    line: line_at(&newlines, range.start),
                     level: level as usize,
                 })
             }
@@ -681,7 +741,7 @@ fn parse_metadata(source: &str) -> Metadata {
                 heading.as_mut().unwrap().text.push_str(&text)
             }
             Event::Start(Tag::Link { dest_url, .. }) => metadata.links.push((
-                line_number(source, range.start),
+                line_at(&newlines, range.start),
                 line_text(source, range.start),
                 dest_url.to_string(),
                 false,
@@ -695,18 +755,13 @@ fn parse_metadata(source: &str) -> Metadata {
     let cleaned = String::from_utf8(cleaned).unwrap();
     for (offset, target) in crate::wiki::spans(&cleaned) {
         metadata.links.push((
-            line_number(source, offset),
+            line_at(&newlines, offset),
             line_text(source, offset),
             target,
             true,
         ));
     }
-    let tags = Regex::new(r"(?:^|[^\p{L}\p{N}_/])#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)").unwrap();
-    // Keep marker/quote/list syntax in sync with the editor's task recognizer.
-    let tasks =
-        Regex::new(r"^[ \t]*(?:>[ \t]*)*(?:(?:[-*+]|\d+[.)])[ \t]+)?\[([ xX]?)\](?:[ \t]+(.*))?$")
-            .unwrap();
-    let blocks = Regex::new(r"(?:^|[ \t])\^([A-Za-z0-9][A-Za-z0-9-]*)[ \t]*$").unwrap();
+    let (tags, tasks, blocks) = (&*TAGS, &*TASKS, &*BLOCKS);
     let mut line_offset = 0;
     for (line, raw_line) in cleaned.split_inclusive('\n').enumerate() {
         let text = raw_line.trim_end_matches(['\r', '\n']);
@@ -737,7 +792,7 @@ fn parse_metadata(source: &str) -> Metadata {
             if let Some(range) = candidates.first() {
                 metadata.blocks.push(crate::wiki::BlockReference {
                     id: block[1].to_string(),
-                    line: line_number(source, range.start),
+                    line: line_at(&newlines, range.start),
                 });
             }
         }
@@ -823,4 +878,53 @@ fn link_target(
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn line_index_matches_a_newline_count_at_every_offset() {
+        for source in ["", "one", "\n", "a\nb\n", "a\r\nb\r\n\r\nc", "\n\n\nx\n", "é\nü\n"] {
+            let newlines = newline_offsets(source);
+            for offset in 0..=source.len() {
+                let expected = source.as_bytes()[..offset]
+                    .iter()
+                    .filter(|byte| **byte == b'\n')
+                    .count()
+                    + 1;
+                assert_eq!(line_at(&newlines, offset), expected, "{source:?} at {offset}");
+            }
+        }
+    }
+
+    #[test]
+    fn dense_notes_keep_heading_link_and_block_lines() {
+        let mut source = String::from("---\ntitle: Dense\n---\n");
+        for index in 0..500 {
+            source.push_str(&format!(
+                "## Heading {index}\r\n[[note{index}]] and [doc](doc{index}.md) #tag{index} ^block{index}\n\n"
+            ));
+        }
+        let metadata = parse_metadata(&source);
+        assert_eq!(metadata.headings.len(), 500);
+        assert_eq!(metadata.blocks.len(), 500);
+        assert_eq!(metadata.links.len(), 1000);
+        for (index, heading) in metadata.headings.iter().enumerate() {
+            assert_eq!(heading.line, 4 + index * 3, "heading {index}");
+        }
+        for (index, block) in metadata.blocks.iter().enumerate() {
+            assert_eq!(block.line, 5 + index * 3, "block {index}");
+        }
+        for (line, _, target, _) in &metadata.links {
+            let index: usize = target
+                .trim_start_matches("note")
+                .trim_start_matches("doc")
+                .trim_end_matches(".md")
+                .parse()
+                .unwrap();
+            assert_eq!(*line, 5 + index * 3, "link {target}");
+        }
+    }
 }
