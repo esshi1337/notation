@@ -400,6 +400,44 @@
 .agent-socket summary { color: var(--text); font-size: 13px; cursor: pointer; }
 .agent-socket code { display: block; margin-top: 8px; color: var(--muted); font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .settings-mcp .script-error { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+/* Settings → Databases */
+.settings-databases { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.settings-databases button { min-height: var(--control-size); padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius-control); font-size: 13px; white-space: nowrap; transition: var(--control-transition); }
+.settings-databases button:disabled { cursor: not-allowed; opacity: .6; }
+.settings-databases .script-error { margin: 0; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+.settings-databases .panel-status { margin: 0; font-size: 13px; line-height: 20px; }
+.settings-databases code { font-size: 12px; }
+.database-keychain-card { display: flex; align-items: flex-start; gap: 10px; min-width: 0; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
+.database-keychain-card[data-state='ready'] .agent-status-dot { background: var(--heading); }
+.database-keychain-card[data-state='checking'] .agent-status-dot { background: var(--muted); }
+.database-keychain-card[data-state='error'] .agent-status-dot { background: var(--error); }
+.database-keychain-card strong, .database-form-title { color: var(--heading); font-size: 13px; font-weight: 600; line-height: 20px; }
+.database-keychain-card p { margin: 2px 0 0; color: var(--muted); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.database-list { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.database-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
+.database-row-copy { min-width: 0; }
+.database-row-copy strong { color: var(--heading); font-size: 13px; font-weight: 600; line-height: 20px; }
+.database-kind { margin-left: 8px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 11px; line-height: 16px; }
+.database-row-copy p { margin: 2px 0 0; overflow: hidden; color: var(--muted); font-size: 12px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+.database-row-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.database-confirm { color: var(--muted); font-size: 12px; }
+.settings-databases .database-danger { border-color: var(--error); color: var(--error); }
+.settings-databases .database-add { align-self: flex-start; }
+.settings-databases .database-primary { border-color: var(--muted); background: var(--active); color: var(--heading); }
+.database-form { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 14px; border: 1px solid var(--border); border-radius: 10px; }
+.database-form .settings-help { margin: -2px 0 4px; font-size: 12px; line-height: 18px; }
+.database-form .settings-field > input { justify-self: end; max-width: 240px; }
+.database-file { display: flex; gap: 6px; justify-self: end; width: 240px; max-width: 100%; min-width: 0; }
+.database-file input { flex: 1; min-width: 0; }
+.database-form-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.database-help { color: var(--muted); font-size: 13px; line-height: 1.55; }
+.database-help summary { cursor: pointer; }
+.database-help p { margin: 8px 0 0; }
+.database-help strong { color: var(--text); font-weight: 600; }
+@media (max-width: 640px) {
+  .database-row { flex-direction: column; align-items: flex-start; }
+  .database-row-copy { width: 100%; }
+}
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline-color: color-mix(in srgb, var(--accent) 65%, var(--text)); }
 
 @media (max-width: 900px) {
