@@ -11,6 +11,7 @@ import { mediaKind } from './media-path';
 import { citationAt, scanCitations } from './citations';
 import type { CitationSpan } from './citations';
 import { resolveVariable } from './templates';
+import { sqlConnection } from './sql-format';
 
 export function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/gu, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
@@ -64,10 +65,10 @@ export function frontmatterMarkup(frontmatter: Frontmatter): string {
   return `<section class="frontmatter-properties" aria-label="Frontmatter"><div class="frontmatter-heading"><strong>Properties${entries.length ? ` · ${entries.length}` : ''}</strong><button data-edit-properties>Edit properties</button></div>${rows ? `<dl>${rows}</dl>` : ''}${entries.length > 8 ? '<span class="frontmatter-more">More properties in the properties panel</span>' : ''}</section>`;
 }
 
-type RenderResult = { citations?: CitationSpan[]; documentSource?: string; html: string; tasks: TaskSpan[]; maths: MathSpan[]; diagrams: string[]; callouts: CalloutSpan[]; links: WikiLinkSpan[]; frontmatter: Frontmatter | null; embeds?: WikiLinkSpan[]; queries?: string[]; cells?: {id:string;code:string;runnable:boolean}[]; advanced?: {engine:string;source:string}[] };
+type RenderResult = { citations?: CitationSpan[]; documentSource?: string; html: string; tasks: TaskSpan[]; maths: MathSpan[]; diagrams: string[]; callouts: CalloutSpan[]; links: WikiLinkSpan[]; frontmatter: Frontmatter | null; embeds?: WikiLinkSpan[]; queries?: string[]; cells?: {id:string;code:string;runnable:boolean}[]; advanced?: {engine:string;source:string}[]; sqls?: {connection:string;sql:string}[] };
 
 function buildMarkdown(text: string, allowCallouts: boolean, offset: number, outer?: CalloutSpan, suppliedVariables?:Record<string,unknown>): RenderResult {
-  const result: RenderResult = { citations: [], documentSource: text, html: '', tasks: [], maths: [], diagrams: [], callouts: [], links: [], embeds: [], queries: [], cells: [], advanced: [], frontmatter: outer ? null : parseFrontmatter(text) };
+  const result: RenderResult = { citations: [], documentSource: text, html: '', tasks: [], maths: [], diagrams: [], callouts: [], links: [], embeds: [], queries: [], cells: [], advanced: [], sqls: [], frontmatter: outer ? null : parseFrontmatter(text) };
   if (!result.frontmatter?.closed) result.frontmatter = null;
   const variables=suppliedVariables??result.frontmatter?.values??{};
   const footnotes = new Map<string,{body:string;position:(at:number)=>number}>(), footnoteOrder:string[]=[];
@@ -110,6 +111,10 @@ function buildMarkdown(text: string, allowCallouts: boolean, offset: number, out
     renderer.code = (token) => {
       const cell=/^(?:js|javascript)\s+cell:([A-Za-z][A-Za-z0-9_-]{0,63})$/u.exec(token.lang?.trim()??'');
       if(cell){const index=result.cells!.push({id:cell[1],code:token.text,runnable:depth===0&&!insideList})-1;return `<section class="code-cell" data-cell-index="${index}"><pre><code>${escapeHtml(token.text)}</code></pre></section>`;}
+      // ```sql connection:name — a SQL block. The query is shown as code;
+      // rendering never runs it.
+      const connection=sqlConnection(token.lang);
+      if(connection){const index=result.sqls!.push({connection,sql:token.text})-1;return `<section class="sql-block" data-sql-index="${index}">${defaultCode({...token,lang:'sql'})}</section>`;}
       const engine=token.lang?.trim().toLowerCase();
       if(engine&&['dot','graphviz','d2','plantuml','puml'].includes(engine)){const index=result.advanced!.push({engine:engine==='graphviz'?'dot':engine==='puml'?'plantuml':engine,source:token.text})-1;return `<div class="diagram advanced-diagram" data-advanced-index="${index}">Rendering ${escapeHtml(engine)}…</div>`;}
       if (token.lang?.trim().toLowerCase() === 'query') {

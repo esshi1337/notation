@@ -76,7 +76,7 @@ test('a connection is added, tested and saved; its password is sent once and nev
   await form.getByLabel('Host', { exact: true }).fill('db.example.test');
   await form.getByLabel('Database', { exact: true }).fill('app');
   await form.getByLabel('User', { exact: true }).fill('reader');
-  await expect(form.getByRole('combobox', { name: 'Password', exact: true })).toContainText('System keychain');
+  await expect(form.getByRole('combobox', { name: 'Password storage', exact: true })).toContainText('System keychain');
   const password = form.getByLabel('Password', { exact: true }).and(form.locator('input'));
   await expect(password).toHaveAttribute('type', 'password');
   await password.fill(PASSWORD);
@@ -150,7 +150,7 @@ test('without a keychain the reason is shown and passwords can only be asked eve
   await expect(card).toContainText('Passwords are not written to disk instead');
   await panel.getByRole('button', { name: 'Add connection' }).click();
   const form = panel.getByRole('form', { name: 'New connection' });
-  const storage = form.getByRole('combobox', { name: 'Password', exact: true });
+  const storage = form.getByRole('combobox', { name: 'Password storage', exact: true });
   await expect(storage).toContainText('Ask every session');
   await storage.click();
   await expect(page.getByRole('option', { name: /System keychain/u })).toHaveAttribute('aria-disabled', 'true');
@@ -173,7 +173,7 @@ test('SQLite needs only a file, and backend errors are shown in the form', async
   const form = panel.getByRole('form', { name: 'New connection' });
   await form.getByRole('radiogroup', { name: 'Kind' }).getByRole('radio', { name: 'SQLite' }).click();
   await expect(form.getByLabel('Host', { exact: true })).toHaveCount(0);
-  await expect(form.getByRole('combobox', { name: 'Password', exact: true })).toHaveCount(0);
+  await expect(form.getByRole('combobox', { name: 'Password storage', exact: true })).toHaveCount(0);
   await expect(form.getByText('Opened read-only. A file that does not exist is never created.')).toBeVisible();
   await form.getByLabel('Name', { exact: true }).fill('bad name');
   await form.getByLabel('Database file', { exact: true }).fill('/data/shop.sqlite3');

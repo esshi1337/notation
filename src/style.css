@@ -137,16 +137,16 @@
 ::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 8px; background-color: var(--scrollbar-thumb); background-clip: padding-box; }
 ::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-thumb-hover); }
 ::-webkit-scrollbar-corner { background: var(--scrollbar-track); }
-:where(.cm-scroller, .preview-scroll, .settings-content, .settings-sections, .shortcut-list, .select-listbox, .scripts-panel, .utility-panel, .explorer-panel, .sidebar-tools, .compact-menu, .command-results, .wiki-candidates, .git-diff, .diagram, .markdown-table-scroll, .query-table-scroll, .cell-output) {
+:where(.cm-scroller, .preview-scroll, .settings-content, .settings-sections, .shortcut-list, .select-listbox, .scripts-panel, .utility-panel, .explorer-panel, .sidebar-tools, .compact-menu, .command-results, .wiki-candidates, .git-diff, .diagram, .markdown-table-scroll, .query-table-scroll, .sql-table-scroll, .cell-output) {
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
-:where(.cm-scroller, .preview-scroll, .settings-content, .settings-sections, .shortcut-list, .select-listbox, .scripts-panel, .utility-panel, .explorer-panel, .sidebar-tools, .compact-menu, .command-results, .wiki-candidates, .git-diff, .diagram, .markdown-table-scroll, .query-table-scroll, .cell-output):hover,
-:where(.cm-scroller, .preview-scroll, .settings-content, .settings-sections, .shortcut-list, .select-listbox, .scripts-panel, .utility-panel, .explorer-panel, .sidebar-tools, .compact-menu, .command-results, .wiki-candidates, .git-diff, .diagram, .markdown-table-scroll, .query-table-scroll, .cell-output):focus-within {
+:where(.cm-scroller, .preview-scroll, .settings-content, .settings-sections, .shortcut-list, .select-listbox, .scripts-panel, .utility-panel, .explorer-panel, .sidebar-tools, .compact-menu, .command-results, .wiki-candidates, .git-diff, .diagram, .markdown-table-scroll, .query-table-scroll, .sql-table-scroll, .cell-output):hover,
+:where(.cm-scroller, .preview-scroll, .settings-content, .settings-sections, .shortcut-list, .select-listbox, .scripts-panel, .utility-panel, .explorer-panel, .sidebar-tools, .compact-menu, .command-results, .wiki-candidates, .git-diff, .diagram, .markdown-table-scroll, .query-table-scroll, .sql-table-scroll, .cell-output):focus-within {
   scrollbar-color: var(--scrollbar-thumb-hover) var(--scrollbar-track);
 }
-:where(.cm-scroller, .preview-scroll, .settings-content, .settings-sections, .shortcut-list, .select-listbox, .scripts-panel, .utility-panel, .explorer-panel, .sidebar-tools, .compact-menu, .command-results, .wiki-candidates, .git-diff, .diagram, .markdown-table-scroll, .query-table-scroll, .cell-output):hover::-webkit-scrollbar-thumb,
-:where(.cm-scroller, .preview-scroll, .settings-content, .settings-sections, .shortcut-list, .select-listbox, .scripts-panel, .utility-panel, .explorer-panel, .sidebar-tools, .compact-menu, .command-results, .wiki-candidates, .git-diff, .diagram, .markdown-table-scroll, .query-table-scroll, .cell-output):focus-within::-webkit-scrollbar-thumb {
+:where(.cm-scroller, .preview-scroll, .settings-content, .settings-sections, .shortcut-list, .select-listbox, .scripts-panel, .utility-panel, .explorer-panel, .sidebar-tools, .compact-menu, .command-results, .wiki-candidates, .git-diff, .diagram, .markdown-table-scroll, .query-table-scroll, .sql-table-scroll, .cell-output):hover::-webkit-scrollbar-thumb,
+:where(.cm-scroller, .preview-scroll, .settings-content, .settings-sections, .shortcut-list, .select-listbox, .scripts-panel, .utility-panel, .explorer-panel, .sidebar-tools, .compact-menu, .command-results, .wiki-candidates, .git-diff, .diagram, .markdown-table-scroll, .query-table-scroll, .sql-table-scroll, .cell-output):focus-within::-webkit-scrollbar-thumb {
   background-color: var(--scrollbar-thumb-hover);
 }
 @media (forced-colors: active) {
@@ -869,6 +869,48 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .cell-output { order: 2; max-width: 100%; padding: 8px 16px; border-top: 1px solid var(--border); font: 11px/18px 'IBM Plex Mono', monospace; overflow: auto; }
 .cell-output pre { max-height: 320px; margin: 0; padding: 4px 0; border: 0; white-space: pre-wrap; }
 .cell-status { margin-bottom: 5px; color: var(--muted); font: 11px/18px 'IBM Plex Mono', monospace; }
+/* SQL blocks: ```sql connection:name */
+.sql-block { display: flex; flex-direction: column; min-width: 0; max-width: 100%; margin: 24px 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--bar); }
+.sql-block > pre { order: 1; margin: 0; border: 0; border-radius: 0; background: transparent; }
+.sql-block-compact > pre { display: none; }
+.sql-actions { order: 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-height: 38px; padding: 6px 8px 6px 16px; border-bottom: 1px solid var(--border); font: 13px/20px 'Source Sans 3', sans-serif; }
+.sql-block-compact .sql-actions { border-bottom: 0; }
+.sql-actions strong { color: var(--muted); font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; font-weight: 400; line-height: 18px; text-transform: uppercase; }
+.sql-connection { min-width: 0; margin-right: auto; overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.sql-actions button, .sql-toolbar button, .sql-unlock button, .sql-more { min-height: 26px; padding: 2px 8px; border-radius: var(--radius-control); background: var(--hover); font: 13px/20px 'Source Sans 3', sans-serif; transition: var(--control-transition); }
+.sql-actions button:disabled, .sql-unlock button:disabled { cursor: default; opacity: .55; }
+.sql-actions .sql-run:not(:disabled) { background: var(--active); color: var(--heading); }
+.sql-output { order: 2; min-width: 0; border-top: 1px solid var(--border); font: 13px/20px 'Source Sans 3', sans-serif; }
+.sql-output .sql-status { margin: 0; padding: 8px 16px; color: var(--muted); font-size: 12px; line-height: 18px; }
+.sql-error { padding: 8px 16px; color: var(--error); font: 12px/18px 'IBM Plex Mono', ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sql-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 8px 6px 16px; }
+.sql-meta { margin-right: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.sql-note { flex-basis: 100%; color: var(--muted); font-size: 12px; line-height: 18px; }
+.sql-note:empty { display: none; }
+.sql-table-scroll { max-width: 100%; max-height: 420px; overflow: auto; border-top: 1px solid var(--border); overscroll-behavior: contain; }
+.sql-table-scroll:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.markdown-body .sql-table { display: table; width: max-content; min-width: 100%; margin: 0; border-collapse: separate; border-spacing: 0; font-size: 12px; line-height: 18px; }
+.markdown-body .sql-table th, .markdown-body .sql-table td { max-width: 48ch; overflow: hidden; border: 0; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); text-overflow: ellipsis; vertical-align: top; white-space: pre; }
+.markdown-body .sql-table td { padding: 4px 10px; }
+.markdown-body .sql-table :is(th, td):last-child { border-right: 0; }
+.markdown-body .sql-table tbody tr:last-child td { border-bottom: 0; }
+/* The header stays in view while rows scroll under it. */
+.markdown-body .sql-table th { position: sticky; top: 0; z-index: 1; padding: 0; background: var(--code); }
+.sql-sort { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 26px; padding: 4px 10px; border-radius: 0; color: var(--heading); font: 550 12px/18px 'Source Sans 3', sans-serif; text-align: left; }
+.sql-sort:hover { background: var(--hover); }
+/* A header is never narrower than its name. */
+.sql-column-name { white-space: nowrap; }
+.sql-sort-mark { flex: 0 0 9px; margin-left: auto; color: var(--muted); font-size: 9px; }
+.sql-table .sql-cell-number { text-align: right; font-variant-numeric: tabular-nums; }
+.sql-table .sql-cell-null { color: var(--muted); font-style: italic; opacity: .75; }
+.sql-table .sql-cell-json, .sql-table .sql-cell-bytes { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; }
+.sql-table .sql-cell-date { font-variant-numeric: tabular-nums; }
+.sql-table .sql-cell-other, .sql-table .sql-cell-cut { color: var(--muted); }
+.sql-more { margin: 6px 16px 8px; }
+.sql-unlock { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 16px 10px; }
+.sql-unlock input { flex: 0 1 240px; min-width: 0; min-height: 26px; padding: 2px 8px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--bg); color: var(--text); font: 13px/20px 'Source Sans 3', sans-serif; }
+.sql-unlock .sql-error { padding: 0; }
+.cm-live-sql-result .sql-block { margin: 6px 0 12px; }
 .media-embed { display: block; margin: .8em 0; max-width: 100%; font: 12px/1.5 'Source Sans 3', sans-serif; overflow: hidden; }
 .media-embed img, .media-embed video, .media-embed canvas { display: block; max-width: 100%; height: auto; }
 .media-embed audio { max-width: 100%; }

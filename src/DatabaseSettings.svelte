@@ -175,7 +175,7 @@
             <div class="settings-field"><label class="settings-field-label" for={instanceId + '-port'}>Port</label><input id={instanceId + '-port'} type="text" inputmode="numeric" value={form.port || ''} placeholder={String(defaultPorts[form.kind])} oninput={(event) => { if (form) form.port = Number((event.currentTarget as HTMLInputElement).value.replace(/\D/gu, '').slice(0, 5)) || 0; }} /></div>
             <div class="settings-field"><label class="settings-field-label" for={instanceId + '-database'}>Database</label><input id={instanceId + '-database'} bind:value={form.database} spellcheck="false" autocapitalize="off" /></div>
             <div class="settings-field"><label class="settings-field-label" for={instanceId + '-user'}>User</label><input id={instanceId + '-user'} bind:value={form.user} spellcheck="false" autocapitalize="off" autocomplete="off" /></div>
-            <SelectControl label="Password" options={storageOptions} value={form.passwordStorage} onchange={setStorage} {theme} />
+            <SelectControl label="Password storage" options={storageOptions} value={form.passwordStorage} onchange={setStorage} {theme} />
             {#if form.passwordStorage !== 'none'}
               <div class="settings-field"><label class="settings-field-label" for={instanceId + '-password'}>{passwordKept ? 'Replace password' : 'Password'}</label><input id={instanceId + '-password'} type="password" bind:value={password} placeholder={passwordPlaceholder} autocomplete="new-password" spellcheck="false" /></div>
             {/if}
