@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const MAX_CONTENT: usize = 4 * 1024 * 1024;
 const REVISION_LIMIT: usize = 50;
 const RUN_LIMIT: usize = 200;
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
 
 pub fn now() -> i64 {
     SystemTime::now()
@@ -290,6 +290,15 @@ PRAGMA user_version=9;").map_err(database_error)?;
             // Search and graph queries correlate tags and properties by note
             // path; without these each result row scanned the whole table.
             tx.execute_batch("CREATE INDEX IF NOT EXISTS cache_tags_path ON cache_tags(path,tag); CREATE INDEX IF NOT EXISTS cache_properties_path ON cache_properties(path,key); PRAGMA user_version=10;").map_err(database_error)?;
+            tx.commit().map_err(database_error)?;
+        }
+        if version < 11 {
+            let tx = connection.transaction().map_err(database_error)?;
+            // A single-note index update removes one note's rows from these
+            // tables; without a path index each removal scanned the table.
+            tx.execute_batch("CREATE INDEX IF NOT EXISTS cache_headings_path ON cache_headings(path); CREATE INDEX IF NOT EXISTS cache_blocks_path ON cache_blocks(path); CREATE INDEX IF NOT EXISTS cache_tasks_path ON cache_tasks(path); CREATE INDEX IF NOT EXISTS cache_links_source ON cache_links(source_path); PRAGMA user_version=11;").map_err(database_error)?;
+            // Indexes built before this version carry no baseline marker.
+            tx.execute("DELETE FROM app_meta WHERE key=?1", [INDEX_BASELINE_KEY]).map_err(database_error)?;
             tx.commit().map_err(database_error)?;
         }
         Ok(Self {

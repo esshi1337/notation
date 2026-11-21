@@ -385,7 +385,7 @@ impl Database {
             return Ok(None);
         }
         for statement in [
-            "DELETE FROM cache_fts WHERE path=?1",
+            "DELETE FROM cache_fts WHERE rowid=(SELECT rowid FROM cache_files WHERE path=?1)",
             "DELETE FROM cache_properties WHERE path=?1",
             "DELETE FROM cache_headings WHERE path=?1",
             "DELETE FROM cache_blocks WHERE path=?1",
@@ -648,8 +648,10 @@ fn insert_file(
         )
         .map_err(|error| error.to_string())?;
     }
+    // The full-text row shares the note's rowid, so a later single-note
+    // update can find it without scanning the full-text table.
     tx.execute(
-        "INSERT INTO cache_fts(path,title,body) VALUES(?1,?2,?3)",
+        "INSERT INTO cache_fts(rowid,path,title,body) VALUES((SELECT rowid FROM cache_files WHERE path=?1),?1,?2,?3)",
         params![path, title, file.content],
     )
     .map_err(|error| error.to_string())?;
