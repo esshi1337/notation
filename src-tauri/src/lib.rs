@@ -103,17 +103,20 @@ mod desktop {
     async fn sql_run(request: sql::RunRequest, state: State<'_, SqlState>) -> Result<sql::QueryResult, sql::SqlError> {
         sql_work(&state, move |service| service.run(request)).await
     }
-    /// Write a result the user chose to export. Unlike saving a document,
-    /// this records no revision: results never enter the state database.
+    /// Write a file the user chose to export: an HTML page, or a SQL result
+    /// as CSV. Unlike saving a document this records no revision and no
+    /// recent file, so exported content, which can include query results,
+    /// never enters the state database.
     #[tauri::command]
-    async fn sql_write_csv(path: String, content: String) -> Result<(), String> {
-        if !path.to_ascii_lowercase().ends_with(".csv") {
-            return Err("Choose a .csv filename for this export.".into());
+    async fn write_export_file(path: String, content: String) -> Result<documents::Document, String> {
+        let lower = path.to_ascii_lowercase();
+        if ![".csv", ".html", ".htm"].iter().any(|extension| lower.ends_with(extension)) {
+            return Err("Choose a .csv or .html filename for this export.".into());
         }
         if content.len() > 64 * 1024 * 1024 {
-            return Err("This result is too large to export.".into());
+            return Err("This export is too large to write.".into());
         }
-        tauri::async_runtime::spawn_blocking(move || documents::write_document(&path, &content).map(|_| ()))
+        tauri::async_runtime::spawn_blocking(move || documents::write_document(&path, &content))
             .await
             .map_err(|error| format!("Could not write the file: {error}"))?
     }
@@ -1368,7 +1371,7 @@ mod desktop {
                 list_sticky_notes, create_sticky_note, open_sticky_note, delete_sticky_note,
                 read_sticky_note, update_sticky_note, close_sticky_note, new_sticky_note, drag_sticky_note,
                 sql_list_connections, sql_save_connection, sql_delete_connection, sql_test_connection,
-                sql_unlock_connection, sql_run, sql_cancel, sql_write_csv
+                sql_unlock_connection, sql_run, sql_cancel, write_export_file
                 ];
                 move |invoke: tauri::ipc::Invoke| {
                     // Custom app commands have no generated ACL. Keep sticky webviews

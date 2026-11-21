@@ -26,7 +26,9 @@ fn allowed_start(kind: Kind) -> &'static [&'static str] {
     match kind {
         Kind::Sqlite => &["SELECT", "WITH", "VALUES", "EXPLAIN", "PRAGMA"],
         Kind::Postgres => &["SELECT", "WITH", "VALUES", "EXPLAIN", "SHOW", "TABLE"],
-        Kind::Mysql => &["SELECT", "WITH", "VALUES", "EXPLAIN", "SHOW", "DESCRIBE", "DESC", "TABLE"],
+        Kind::Mysql => &[
+            "SELECT", "WITH", "VALUES", "EXPLAIN", "SHOW", "DESCRIBE", "DESC", "TABLE",
+        ],
     }
 }
 
@@ -34,27 +36,71 @@ fn allowed_start(kind: Kind) -> &'static [&'static str] {
 /// string, quoted identifier or comment (a writing CTE, `EXPLAIN ANALYZE
 /// DELETE`, `SELECT … INTO`).
 const WRITERS: &[&str] = &[
-    "INSERT", "UPDATE", "DELETE", "MERGE", "UPSERT", "DROP", "ALTER", "CREATE", "TRUNCATE",
-    "GRANT", "REVOKE", "ATTACH", "DETACH", "VACUUM", "REINDEX", "REFRESH", "COPY", "CALL",
-    "LOCK", "INTO", "SET_CONFIG",
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "MERGE",
+    "UPSERT",
+    "DROP",
+    "ALTER",
+    "CREATE",
+    "TRUNCATE",
+    "GRANT",
+    "REVOKE",
+    "ATTACH",
+    "DETACH",
+    "VACUUM",
+    "REINDEX",
+    "REFRESH",
+    "COPY",
+    "CALL",
+    "LOCK",
+    "INTO",
+    "SET_CONFIG",
 ];
 
 /// SQLite pragmas that only report.
 const READ_PRAGMAS: &[&str] = &[
-    "TABLE_INFO", "TABLE_XINFO", "TABLE_LIST", "INDEX_LIST", "INDEX_INFO", "INDEX_XINFO",
-    "FOREIGN_KEY_LIST", "FOREIGN_KEY_CHECK", "DATABASE_LIST", "COLLATION_LIST",
-    "FUNCTION_LIST", "MODULE_LIST", "PRAGMA_LIST", "COMPILE_OPTIONS", "INTEGRITY_CHECK",
-    "QUICK_CHECK", "USER_VERSION", "SCHEMA_VERSION", "APPLICATION_ID", "PAGE_COUNT",
-    "PAGE_SIZE", "FREELIST_COUNT", "ENCODING", "DATA_VERSION",
+    "TABLE_INFO",
+    "TABLE_XINFO",
+    "TABLE_LIST",
+    "INDEX_LIST",
+    "INDEX_INFO",
+    "INDEX_XINFO",
+    "FOREIGN_KEY_LIST",
+    "FOREIGN_KEY_CHECK",
+    "DATABASE_LIST",
+    "COLLATION_LIST",
+    "FUNCTION_LIST",
+    "MODULE_LIST",
+    "PRAGMA_LIST",
+    "COMPILE_OPTIONS",
+    "INTEGRITY_CHECK",
+    "QUICK_CHECK",
+    "USER_VERSION",
+    "SCHEMA_VERSION",
+    "APPLICATION_ID",
+    "PAGE_COUNT",
+    "PAGE_SIZE",
+    "FREELIST_COUNT",
+    "ENCODING",
+    "DATA_VERSION",
 ];
 
 /// Pragmas that are settings: they may be read, never given a value.
-const SETTING_PRAGMAS: &[&str] = &["USER_VERSION", "SCHEMA_VERSION", "APPLICATION_ID", "PAGE_SIZE", "ENCODING"];
+const SETTING_PRAGMAS: &[&str] = &[
+    "USER_VERSION",
+    "SCHEMA_VERSION",
+    "APPLICATION_ID",
+    "PAGE_SIZE",
+    "ENCODING",
+];
 
 /// Whether a pragma only reports. Shared with the SQLite authorizer.
 pub(crate) fn reporting_pragma(name: &str, has_value: bool) -> bool {
     let name = name.to_ascii_uppercase();
-    READ_PRAGMAS.contains(&name.as_str()) && !(has_value && SETTING_PRAGMAS.contains(&name.as_str()))
+    READ_PRAGMAS.contains(&name.as_str())
+        && !(has_value && SETTING_PRAGMAS.contains(&name.as_str()))
 }
 
 fn refuse(word: &str) -> String {
@@ -81,7 +127,12 @@ pub(crate) fn mysql_leading_keyword(source: &str) -> Option<String> {
             index += 1;
         }
         let rest = &source[index..];
-        if rest.starts_with('#') || (rest.starts_with("--") && bytes.get(index + 2).is_none_or(|after| after.is_ascii_whitespace() || after.is_ascii_control())) {
+        if rest.starts_with('#')
+            || (rest.starts_with("--")
+                && bytes
+                    .get(index + 2)
+                    .is_none_or(|after| after.is_ascii_whitespace() || after.is_ascii_control()))
+        {
             index += rest.find('\n')?;
         } else if rest.starts_with("/*") {
             if rest.starts_with("/*!") {
@@ -92,7 +143,10 @@ pub(crate) fn mysql_leading_keyword(source: &str) -> Option<String> {
             break;
         }
     }
-    let end = bytes[index..].iter().position(|byte| !identifier_part(*byte)).map_or(bytes.len(), |offset| index + offset);
+    let end = bytes[index..]
+        .iter()
+        .position(|byte| !identifier_part(*byte))
+        .map_or(bytes.len(), |offset| index + offset);
     (end > index && identifier_start(bytes[index])).then(|| source[index..end].to_ascii_uppercase())
 }
 
@@ -133,9 +187,13 @@ pub fn check(source: &str, kind: Kind) -> Result<Checked, String> {
         let dash_comment = byte == b'-'
             && next == Some(b'-')
             && (kind != Kind::Mysql
-                || bytes.get(index + 2).is_none_or(|after| after.is_ascii_whitespace() || after.is_ascii_control()));
+                || bytes
+                    .get(index + 2)
+                    .is_none_or(|after| after.is_ascii_whitespace() || after.is_ascii_control()));
         if dash_comment || (byte == b'#' && kind == Kind::Mysql) {
-            let end = source[index..].find('\n').map_or(bytes.len(), |offset| index + offset);
+            let end = source[index..]
+                .find('\n')
+                .map_or(bytes.len(), |offset| index + offset);
             copy!(index, end);
             index = end;
             continue;
@@ -150,7 +208,10 @@ pub fn check(source: &str, kind: Kind) -> Result<Checked, String> {
                 if bytes[at] == b'*' && bytes.get(at + 1) == Some(&b'/') {
                     depth -= 1;
                     at += 2;
-                } else if kind == Kind::Postgres && bytes[at] == b'/' && bytes.get(at + 1) == Some(&b'*') {
+                } else if kind == Kind::Postgres
+                    && bytes[at] == b'/'
+                    && bytes.get(at + 1) == Some(&b'*')
+                {
                     depth += 1;
                     at += 2;
                 } else {
@@ -190,7 +251,9 @@ pub fn check(source: &str, kind: Kind) -> Result<Checked, String> {
             let escapes = match kind {
                 Kind::Mysql => byte != b'`',
                 Kind::Postgres => {
-                    byte == b'\'' && index > 0 && matches!(bytes[index - 1], b'E' | b'e')
+                    byte == b'\''
+                        && index > 0
+                        && matches!(bytes[index - 1], b'E' | b'e')
                         && (index < 2 || !identifier_part(bytes[index - 2]))
                 }
                 Kind::Sqlite => false,
@@ -220,7 +283,10 @@ pub fn check(source: &str, kind: Kind) -> Result<Checked, String> {
             continue;
         }
         // Postgres dollar-quoted strings: $$…$$ or $tag$…$tag$.
-        if byte == b'$' && kind == Kind::Postgres && (index == 0 || !identifier_part(bytes[index - 1])) {
+        if byte == b'$'
+            && kind == Kind::Postgres
+            && (index == 0 || !identifier_part(bytes[index - 1]))
+        {
             let mut at = index + 1;
             while at < bytes.len() && identifier_part(bytes[at]) {
                 at += 1;
@@ -254,7 +320,10 @@ pub fn check(source: &str, kind: Kind) -> Result<Checked, String> {
             assigned_pragma = true;
         }
         // `:name` placeholder; not `::cast`, not `:=`.
-        if byte == b':' && next.is_some_and(identifier_start) && (index == 0 || bytes[index - 1] != b':') {
+        if byte == b':'
+            && next.is_some_and(identifier_start)
+            && (index == 0 || bytes[index - 1] != b':')
+        {
             let mut at = index + 1;
             while at < bytes.len() && identifier_part(bytes[at]) {
                 at += 1;
@@ -284,14 +353,18 @@ pub fn check(source: &str, kind: Kind) -> Result<Checked, String> {
                 }
             }
             if parameters.len() > MAX_PARAMETERS {
-                return Err(format!("A SQL block can use at most {MAX_PARAMETERS} parameters."));
+                return Err(format!(
+                    "A SQL block can use at most {MAX_PARAMETERS} parameters."
+                ));
             }
             index = at;
             continue;
         }
         // A positional placeholder would be bound to nothing; say so plainly.
         if (byte == b'?' && kind != Kind::Postgres)
-            || (byte == b'$' && kind == Kind::Postgres && next.is_some_and(|after| after.is_ascii_digit()))
+            || (byte == b'$'
+                && kind == Kind::Postgres
+                && next.is_some_and(|after| after.is_ascii_digit()))
         {
             return Err("Positional placeholders are not supported. Use :name and define name in the note's properties.".into());
         }
@@ -311,7 +384,11 @@ pub fn check(source: &str, kind: Kind) -> Result<Checked, String> {
     }
     if first == "PRAGMA" {
         // `PRAGMA schema.name`: the pragma is the last name before any argument.
-        let name = words.iter().skip(1).take(2).find(|word| READ_PRAGMAS.contains(&word.as_str()));
+        let name = words
+            .iter()
+            .skip(1)
+            .take(2)
+            .find(|word| READ_PRAGMAS.contains(&word.as_str()));
         if name.is_none() || assigned_pragma {
             return Err("Only reporting PRAGMA statements (table_info, index_list, …) can run in a SQL block.".into());
         }
@@ -319,7 +396,10 @@ pub fn check(source: &str, kind: Kind) -> Result<Checked, String> {
             return Err("Only reporting PRAGMA statements (table_info, index_list, …) can run in a SQL block.".into());
         }
     }
-    Ok(Checked { sql: output.trim().to_string(), parameters })
+    Ok(Checked {
+        sql: output.trim().to_string(),
+        parameters,
+    })
 }
 
 #[cfg(test)]
@@ -337,8 +417,14 @@ mod tests {
     fn accepts_reads_and_one_trailing_semicolon() {
         for kind in [Kind::Sqlite, Kind::Postgres, Kind::Mysql] {
             assert_eq!(ok("select 1;", kind).sql, "select 1");
-            ok("  -- note\nWITH a AS (SELECT 1) SELECT * FROM a ; -- done\n", kind);
-            ok("select 'insert; update' as \"delete\", updated_at, created from t", kind);
+            ok(
+                "  -- note\nWITH a AS (SELECT 1) SELECT * FROM a ; -- done\n",
+                kind,
+            );
+            ok(
+                "select 'insert; update' as \"delete\", updated_at, created from t",
+                kind,
+            );
             ok("explain select 1", kind);
             ok("values (1), (2)", kind);
         }
@@ -347,7 +433,10 @@ mod tests {
         ok("select `drop` from t", Kind::Mysql);
         ok("select [drop] from t", Kind::Sqlite);
         ok("select $body$ drop table x; $body$, $$;$$", Kind::Postgres);
-        ok("select a[1], '{}'::jsonb /* outer /* nested ; */ still */ from t", Kind::Postgres);
+        ok(
+            "select a[1], '{}'::jsonb /* outer /* nested ; */ still */ from t",
+            Kind::Postgres,
+        );
         ok("PRAGMA table_info(customers)", Kind::Sqlite);
         ok("pragma main.index_list('customers')", Kind::Sqlite);
         ok("pragma user_version", Kind::Sqlite);
@@ -357,13 +446,30 @@ mod tests {
     fn refuses_writers_ddl_session_changes_and_second_statements() {
         for kind in [Kind::Sqlite, Kind::Postgres, Kind::Mysql] {
             for sql in [
-                "insert into t values (1)", "UPDATE t SET a=1", "delete from t", "drop table t",
-                "create table t(a)", "alter table t add b", "truncate t", "begin", "commit",
-                "set x = 1", "vacuum", "attach 'x' as y", "grant all on t to u", "call p()",
+                "insert into t values (1)",
+                "UPDATE t SET a=1",
+                "delete from t",
+                "drop table t",
+                "create table t(a)",
+                "alter table t add b",
+                "truncate t",
+                "begin",
+                "commit",
+                "set x = 1",
+                "vacuum",
+                "attach 'x' as y",
+                "grant all on t to u",
+                "call p()",
                 "with d as (delete from t returning *) select * from d",
-                "explain analyze delete from t", "select * into copy_t from t",
-                "select 1; select 2", "select 1; drop table t", "select 1;;drop table t",
-                "", "   -- only a comment", "select 'open", "select 1 /* open",
+                "explain analyze delete from t",
+                "select * into copy_t from t",
+                "select 1; select 2",
+                "select 1; drop table t",
+                "select 1;;drop table t",
+                "",
+                "   -- only a comment",
+                "select 'open",
+                "select 1 /* open",
             ] {
                 refused(sql, kind);
             }
@@ -372,7 +478,10 @@ mod tests {
         assert!(refused("update t set a=1", Kind::Postgres).contains("UPDATE"));
         refused("select 1 into outfile '/tmp/x'", Kind::Mysql);
         refused("select /*!50000 1; drop table t */ 1", Kind::Mysql);
-        refused("select set_config('transaction_read_only','off',true)", Kind::Postgres);
+        refused(
+            "select set_config('transaction_read_only','off',true)",
+            Kind::Postgres,
+        );
         refused("copy t to '/tmp/x'", Kind::Postgres);
         refused("pragma query_only = 0", Kind::Sqlite);
         refused("pragma query_only(0)", Kind::Sqlite);
@@ -384,8 +493,14 @@ mod tests {
 
     #[test]
     fn finds_the_leading_mysql_keyword_past_plain_comments_only() {
-        assert_eq!(mysql_leading_keyword("  -- c\n/* c */ # c\n show tables").as_deref(), Some("SHOW"));
-        assert_eq!(mysql_leading_keyword("explain select 1").as_deref(), Some("EXPLAIN"));
+        assert_eq!(
+            mysql_leading_keyword("  -- c\n/* c */ # c\n show tables").as_deref(),
+            Some("SHOW")
+        );
+        assert_eq!(
+            mysql_leading_keyword("explain select 1").as_deref(),
+            Some("EXPLAIN")
+        );
         assert_eq!(mysql_leading_keyword("/*! call p() */ show tables"), None);
         assert_eq!(mysql_leading_keyword("(select 1)"), None);
         assert_eq!(mysql_leading_keyword("--x\nshow tables"), None);
@@ -412,8 +527,14 @@ mod tests {
 
     #[test]
     fn rewrites_named_parameters_outside_strings_only() {
-        let postgres = ok("select :id, ':id', x::text, :name, :id from t -- :not\n", Kind::Postgres);
-        assert_eq!(postgres.sql, "select $1, ':id', x::text, $2, $1 from t -- :not");
+        let postgres = ok(
+            "select :id, ':id', x::text, :name, :id from t -- :not\n",
+            Kind::Postgres,
+        );
+        assert_eq!(
+            postgres.sql,
+            "select $1, ':id', x::text, $2, $1 from t -- :not"
+        );
         assert_eq!(postgres.parameters, ["id", "name"]);
         let mysql = ok("select :id, \":id\", :name, :id, @v := 1", Kind::Mysql);
         assert_eq!(mysql.sql, "select ?, \":id\", ?, ?, @v := 1");

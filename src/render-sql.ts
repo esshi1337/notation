@@ -13,7 +13,7 @@ import { isMac } from './platform';
 import { DESKTOP_ONLY, kindLabels, knownConnection, connectionsLoaded, listConnections, subscribeConnections, sqlFailure } from './sql-connections';
 import { cellCut, cellKind, cellText, formatDuration, formatRows, sortedRows, sqlParameters, toCsv, toMarkdownTable, truncationNotice } from './sql-format';
 import type { SqlResult } from './sql-format';
-import { cancelSql, runSql, sqlKey, sqlState, subscribeSql } from './sql-session';
+import { cancelSql, runSql, sqlKey, sqlResult, sqlState, subscribeSql } from './sql-session';
 
 export type SqlBlockContext = {
   /** The document the block belongs to; results are kept per document. */
@@ -134,7 +134,7 @@ export function renderSqlBlock(target: HTMLElement, block: { connection: string;
       if (desktop) bar.append(action('Export CSV', async () => {
         const path = await save({ defaultPath: block.connection + '-results.csv', filters: [{ name: 'CSV', extensions: ['csv'] }] });
         if (!path) return;
-        await invoke('sql_write_csv', { path, content: toCsv(result) });
+        await invoke('write_export_file', { path, content: toCsv(result) });
         say('Exported ' + (path.split(/[\\/]/u).pop() || 'results.csv') + '.');
       }));
       if (context.insert) bar.append(action('Insert as table', () => { say(context.insert!(toMarkdownTable(result)) ? 'Inserted below the query. Undo removes it.' : 'The note changed; the table was not inserted.'); }));
@@ -201,4 +201,42 @@ export function renderSqlBlock(target: HTMLElement, block: { connection: string;
 /** Run the block at a source position, for the editor's Ctrl/Cmd+Enter. */
 export function runSqlBlock(scope: string, block: { connection: string; sql: string }, variables: Record<string, unknown>) {
   void runSql(scope, block.connection, block.sql, sqlParameters(block.sql, variables));
+}
+
+export const EXPORT_ROWS = 1000;
+function stamp(timestamp: number): string {
+  const date = new Date(timestamp), two = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`;
+}
+/**
+ * For an export: replace a block with the result it produced in this
+ * session, as a static table captioned with the connection's name and the
+ * time. Nothing is run, and nothing about the connection but its name is
+ * written. Returns false when the block was not run, leaving its SQL.
+ */
+export function renderSqlSnapshot(target: HTMLElement, block: { connection: string; sql: string }, scope: string): boolean {
+  const result = sqlResult(scope, block.connection, block.sql);
+  if (!result || !result.columns.length) return false;
+  const order = sortedRows(result, sorts.get(sqlKey(scope, block.connection, block.sql)) ?? null).slice(0, EXPORT_ROWS);
+  const numeric = result.columns.map((_, index) => result.rows.some((row) => row[index] !== null) && result.rows.every((row) => row[index] === null || cellKind(row[index]) === 'number'));
+  const grid = element('table', 'sql-snapshot'), head = element('thead'), header = element('tr'), body = element('tbody');
+  grid.append(element('caption', '', `Results from ${block.connection} at ${stamp(result.finishedAt)}`));
+  for (const [index, column] of result.columns.entries()) { const th = element('th', '', column.name || ' '); if (numeric[index]) th.setAttribute('align', 'right'); header.append(th); }
+  head.append(header); grid.append(head, body);
+  for (const index of order) {
+    const tr = element('tr');
+    for (const [column, cell] of result.rows[index].entries()) {
+      const td = element('td', cell === null ? 'sql-null' : '');
+      td.textContent = cellText(cell);
+      if (numeric[column]) td.setAttribute('align', 'right');
+      tr.append(td);
+    }
+    body.append(tr);
+  }
+  const figure = element('div', 'sql-export');
+  figure.append(grid);
+  const notes = [order.length < result.rows.length ? `The first ${formatRows(order.length)} of ${formatRows(result.rows.length)} are included.` : '', truncationNotice(result).replace(/^Showing the first/u, 'The query was cut at the first')].filter(Boolean);
+  if (notes.length) figure.append(element('p', 'sql-export-note', notes.join(' ')));
+  target.replaceWith(figure);
+  return true;
 }

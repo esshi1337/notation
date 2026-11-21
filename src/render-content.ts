@@ -15,7 +15,7 @@ import { motionMs } from './motion';
 import { renderMarkdown as renderEmbeddedMarkdown } from './render-markdown';
 import { renderQuery } from './render-query';
 import { renderCell } from './render-cell';
-import { renderSqlBlock } from './render-sql';
+import { renderSqlBlock, renderSqlSnapshot } from './render-sql';
 import type { CellSession } from './cells';
 import { renderAdvancedInto } from './advanced-diagrams';
 import { prepareMedia, renderMedia } from './media';
@@ -123,7 +123,12 @@ export async function renderContent(target: HTMLElement, result: ReturnType<type
   for (const link of target.querySelectorAll<HTMLAnchorElement>('a:not([data-wiki-index]):not([data-footnote-ref]):not([data-footnote-back])')) { link.target = '_blank'; link.rel = 'noopener noreferrer'; }
   for(const [index,cell] of (result.cells??[]).entries()){const element=target.querySelector<HTMLElement>(`[data-cell-index="${index}"]`);if(element)cleanups.set(element,renderCell(element,cell.id,cell.runnable?context.cells:undefined,context.current));}
   // SQL blocks show their query and, if it was run in this session, the
-  // result. Hydrating one never runs it. Exports keep the plain code block.
+  // result. Hydrating one never runs it. An export gets the session's result
+  // as a static table, or the plain code block when the block was not run.
+  if (context.prepareHtml) for (const [index, block] of (result.sqls ?? []).entries()) {
+    const element = target.querySelector<HTMLElement>(`[data-sql-index="${index}"]`);
+    if (element) renderSqlSnapshot(element, block, context.sourcePath ?? '');
+  }
   if (!context.prepareHtml && result.sqls?.length) {
     const occurrences = new Map<string, number>();
     const variables = context.variables ?? parseFrontmatter(source)?.values ?? {};

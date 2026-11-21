@@ -1,6 +1,8 @@
 //! Postgres: one prepared statement inside `START TRANSACTION READ ONLY`,
 //! always rolled back, with `statement_timeout` and a server-side cancel.
-use super::{cell, civil_from_days, clock, tls, Collector, Column, Job, Parameter, SqlError, TlsMode};
+use super::{
+    cell, civil_from_days, clock, tls, Collector, Column, Job, Parameter, SqlError, TlsMode,
+};
 use serde_json::Value;
 use std::error::Error;
 use tokio_postgres::config::SslMode;
@@ -25,10 +27,19 @@ fn failure(error: &tokio_postgres::Error) -> SqlError {
         }
         let code = database.code().code();
         if code == "57014" {
-            return SqlError::new("timeout", format!("Postgres stopped the query: {}", database.message()));
+            return SqlError::new(
+                "timeout",
+                format!("Postgres stopped the query: {}", database.message()),
+            );
         }
         if code == "25006" {
-            return SqlError::new("refused", format!("SQL blocks are read-only. Postgres refused the statement: {}", database.message()));
+            return SqlError::new(
+                "refused",
+                format!(
+                    "SQL blocks are read-only. Postgres refused the statement: {}",
+                    database.message()
+                ),
+            );
         }
         return SqlError::new("query", format!("Postgres {message} [{code}]"));
     }
@@ -39,7 +50,14 @@ fn failure(error: &tokio_postgres::Error) -> SqlError {
         message.push_str(&format!(": {cause}"));
         source = cause.source();
     }
-    SqlError::new(if error.is_closed() { "connect" } else { "query" }, format!("Postgres: {message}"))
+    SqlError::new(
+        if error.is_closed() {
+            "connect"
+        } else {
+            "query"
+        },
+        format!("Postgres: {message}"),
+    )
 }
 
 /// The raw bytes of any column, so every type can be decoded here.
@@ -72,8 +90,16 @@ pub(crate) fn numeric_text(raw: &[u8]) -> Option<String> {
         0xF000 => return Some("-Infinity".into()),
         _ => {}
     }
-    let digits: Vec<u16> = (0..count).map(|index| be(raw.get(8 + 2 * index..)?).map(u16::from_be_bytes)).collect::<Option<_>>()?;
-    let digit = |index: i32| if index < 0 { 0 } else { digits.get(index as usize).copied().unwrap_or(0) };
+    let digits: Vec<u16> = (0..count)
+        .map(|index| be(raw.get(8 + 2 * index..)?).map(u16::from_be_bytes))
+        .collect::<Option<_>>()?;
+    let digit = |index: i32| {
+        if index < 0 {
+            0
+        } else {
+            digits.get(index as usize).copied().unwrap_or(0)
+        }
+    };
     let mut text = String::new();
     if sign == 0x4000 {
         text.push('-');
@@ -82,7 +108,11 @@ pub(crate) fn numeric_text(raw: &[u8]) -> Option<String> {
         text.push('0');
     } else {
         for index in 0..=weight {
-            text.push_str(&if index == 0 { digit(index).to_string() } else { format!("{:04}", digit(index)) });
+            text.push_str(&if index == 0 {
+                digit(index).to_string()
+            } else {
+                format!("{:04}", digit(index))
+            });
         }
     }
     if scale > 0 {
@@ -106,7 +136,13 @@ pub(crate) fn numeric_bytes(text: &str) -> Option<Vec<u8>> {
         None => (false, text.strip_prefix('+').unwrap_or(text)),
     };
     let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
-    if whole.is_empty() && fraction.is_empty() || !whole.bytes().chain(fraction.bytes()).all(|byte| byte.is_ascii_digit()) || unsigned.len() > 1000 {
+    if whole.is_empty() && fraction.is_empty()
+        || !whole
+            .bytes()
+            .chain(fraction.bytes())
+            .all(|byte| byte.is_ascii_digit())
+        || unsigned.len() > 1000
+    {
         return None;
     }
     let mut padded = "0".repeat((4 - whole.len() % 4) % 4);
@@ -114,7 +150,15 @@ pub(crate) fn numeric_bytes(text: &str) -> Option<Vec<u8>> {
     let whole_groups = padded.len() / 4;
     padded.push_str(fraction);
     padded.push_str(&"0".repeat((4 - fraction.len() % 4) % 4));
-    let mut digits: Vec<u16> = padded.as_bytes().chunks(4).map(|chunk| chunk.iter().fold(0u16, |value, byte| value * 10 + u16::from(byte - b'0'))).collect();
+    let mut digits: Vec<u16> = padded
+        .as_bytes()
+        .chunks(4)
+        .map(|chunk| {
+            chunk
+                .iter()
+                .fold(0u16, |value, byte| value * 10 + u16::from(byte - b'0'))
+        })
+        .collect();
     let mut weight = whole_groups as i16 - 1;
     while digits.first() == Some(&0) {
         digits.remove(0);
@@ -129,7 +173,14 @@ pub(crate) fn numeric_bytes(text: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(8 + digits.len() * 2);
     out.extend_from_slice(&(digits.len() as i16).to_be_bytes());
     out.extend_from_slice(&weight.to_be_bytes());
-    out.extend_from_slice(&(if negative && !digits.is_empty() { 0x4000u16 } else { 0 }).to_be_bytes());
+    out.extend_from_slice(
+        &(if negative && !digits.is_empty() {
+            0x4000u16
+        } else {
+            0
+        })
+        .to_be_bytes(),
+    );
     out.extend_from_slice(&(fraction.len() as u16).to_be_bytes());
     for digit in digits {
         out.extend_from_slice(&digit.to_be_bytes());
@@ -149,7 +200,12 @@ fn date_text(days: i32) -> String {
 }
 fn time_text(micros: i64) -> String {
     let seconds = micros.div_euclid(1_000_000);
-    clock(seconds / 3600, (seconds / 60 % 60) as u32, (seconds % 60) as u32, micros.rem_euclid(1_000_000) as u32)
+    clock(
+        seconds / 3600,
+        (seconds / 60 % 60) as u32,
+        (seconds % 60) as u32,
+        micros.rem_euclid(1_000_000) as u32,
+    )
 }
 fn timestamp_text(micros: i64) -> String {
     match micros {
@@ -157,7 +213,10 @@ fn timestamp_text(micros: i64) -> String {
         i64::MIN => "-infinity".into(),
         micros => {
             let (year, month, day) = civil_from_days(micros.div_euclid(DAY_MICROS) + EPOCH_DAYS);
-            format!("{year:04}-{month:02}-{day:02} {}", time_text(micros.rem_euclid(DAY_MICROS)))
+            format!(
+                "{year:04}-{month:02}-{day:02} {}",
+                time_text(micros.rem_euclid(DAY_MICROS))
+            )
         }
     }
 }
@@ -176,10 +235,18 @@ fn interval_text(raw: &[u8]) -> Option<String> {
     let months = i32::from_be_bytes(be(&raw[12..])?);
     let mut parts = Vec::new();
     if months / 12 != 0 {
-        parts.push(format!("{} year{}", months / 12, if months / 12 == 1 { "" } else { "s" }));
+        parts.push(format!(
+            "{} year{}",
+            months / 12,
+            if months / 12 == 1 { "" } else { "s" }
+        ));
     }
     if months % 12 != 0 {
-        parts.push(format!("{} mon{}", months % 12, if months % 12 == 1 { "" } else { "s" }));
+        parts.push(format!(
+            "{} mon{}",
+            months % 12,
+            if months % 12 == 1 { "" } else { "s" }
+        ));
     }
     if days != 0 {
         parts.push(format!("{days} day{}", if days == 1 { "" } else { "s" }));
@@ -191,19 +258,38 @@ fn interval_text(raw: &[u8]) -> Option<String> {
     Some(parts.join(" "))
 }
 fn inet_text(raw: &[u8]) -> Option<String> {
-    let (family, bits, is_cidr, length) = (*raw.first()?, *raw.get(1)?, *raw.get(2)?, *raw.get(3)? as usize);
+    let (family, bits, is_cidr, length) = (
+        *raw.first()?,
+        *raw.get(1)?,
+        *raw.get(2)?,
+        *raw.get(3)? as usize,
+    );
     let address = raw.get(4..4 + length)?;
     let (text, full) = match (family, length) {
         (2, 4) => (std::net::Ipv4Addr::from(be::<4>(address)?).to_string(), 32),
-        (3, 16) => (std::net::Ipv6Addr::from(be::<16>(address)?).to_string(), 128),
+        (3, 16) => (
+            std::net::Ipv6Addr::from(be::<16>(address)?).to_string(),
+            128,
+        ),
         _ => return None,
     };
-    Some(if is_cidr != 0 || bits != full { format!("{text}/{bits}") } else { text })
+    Some(if is_cidr != 0 || bits != full {
+        format!("{text}/{bits}")
+    } else {
+        text
+    })
 }
 fn uuid_text(raw: &[u8]) -> Option<String> {
     let bytes = be::<16>(raw)?;
     let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-    Some(format!("{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..]))
+    Some(format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    ))
 }
 
 /// A value this module has no decoder for.
@@ -223,7 +309,9 @@ fn array(element: &Type, raw: &[u8]) -> Option<Value> {
         at += 8;
     }
     fn build(sizes: &[usize], element: &Type, raw: &[u8], at: &mut usize) -> Option<Value> {
-        let Some((&size, rest)) = sizes.split_first() else { return Some(Value::Array(Vec::new())) };
+        let Some((&size, rest)) = sizes.split_first() else {
+            return Some(Value::Array(Vec::new()));
+        };
         let mut items = Vec::with_capacity(size.min(1024));
         for _ in 0..size {
             if !rest.is_empty() {
@@ -278,24 +366,65 @@ fn decode(ty: &Type, raw: &[u8]) -> Value {
         Type::NUMERIC => numeric_text(raw).map(|text| cell::tagged("number", text)),
         Type::MONEY => be(raw).map(|bytes| {
             let cents = i64::from_be_bytes(bytes);
-            cell::tagged("number", format!("{}{}.{:02}", if cents < 0 { "-" } else { "" }, cents.unsigned_abs() / 100, cents.unsigned_abs() % 100))
+            cell::tagged(
+                "number",
+                format!(
+                    "{}{}.{:02}",
+                    if cents < 0 { "-" } else { "" },
+                    cents.unsigned_abs() / 100,
+                    cents.unsigned_abs() % 100
+                ),
+            )
         }),
-        Type::TEXT | Type::VARCHAR | Type::BPCHAR | Type::NAME | Type::UNKNOWN | Type::XML | Type::CHAR => Some(cell::text_bytes(raw)),
-        Type::JSON => std::str::from_utf8(raw).ok().map(|text| cell::tagged_text("json", text)),
-        Type::JSONB => raw.get(1..).and_then(|body| std::str::from_utf8(body).ok()).map(|text| cell::tagged_text("json", text)),
+        Type::TEXT
+        | Type::VARCHAR
+        | Type::BPCHAR
+        | Type::NAME
+        | Type::UNKNOWN
+        | Type::XML
+        | Type::CHAR => Some(cell::text_bytes(raw)),
+        Type::JSON => std::str::from_utf8(raw)
+            .ok()
+            .map(|text| cell::tagged_text("json", text)),
+        Type::JSONB => raw
+            .get(1..)
+            .and_then(|body| std::str::from_utf8(body).ok())
+            .map(|text| cell::tagged_text("json", text)),
         Type::BYTEA => Some(cell::bytes(raw)),
         Type::UUID => uuid_text(raw).map(Value::String),
-        Type::DATE => be(raw).map(|bytes| cell::tagged("date", date_text(i32::from_be_bytes(bytes)))),
-        Type::TIME => be(raw).map(|bytes| cell::tagged("time", time_text(i64::from_be_bytes(bytes)))),
-        Type::TIMETZ => be::<8>(raw).zip(raw.get(8..).and_then(be::<4>)).map(|(time, zone)| {
-            // The wire value is seconds west of UTC.
-            cell::tagged("time", format!("{}{}", time_text(i64::from_be_bytes(time)), offset_text(-i32::from_be_bytes(zone))))
-        }),
-        Type::TIMESTAMP => be(raw).map(|bytes| cell::tagged("datetime", timestamp_text(i64::from_be_bytes(bytes)))),
+        Type::DATE => {
+            be(raw).map(|bytes| cell::tagged("date", date_text(i32::from_be_bytes(bytes))))
+        }
+        Type::TIME => {
+            be(raw).map(|bytes| cell::tagged("time", time_text(i64::from_be_bytes(bytes))))
+        }
+        Type::TIMETZ => be::<8>(raw)
+            .zip(raw.get(8..).and_then(be::<4>))
+            .map(|(time, zone)| {
+                // The wire value is seconds west of UTC.
+                cell::tagged(
+                    "time",
+                    format!(
+                        "{}{}",
+                        time_text(i64::from_be_bytes(time)),
+                        offset_text(-i32::from_be_bytes(zone))
+                    ),
+                )
+            }),
+        Type::TIMESTAMP => {
+            be(raw).map(|bytes| cell::tagged("datetime", timestamp_text(i64::from_be_bytes(bytes))))
+        }
         Type::TIMESTAMPTZ => be(raw).map(|bytes| {
             let micros = i64::from_be_bytes(bytes);
             let text = timestamp_text(micros);
-            cell::tagged("datetime", if micros == i64::MAX || micros == i64::MIN { text } else { text + "+00" })
+            cell::tagged(
+                "datetime",
+                if micros == i64::MAX || micros == i64::MIN {
+                    text
+                } else {
+                    text + "+00"
+                },
+            )
         }),
         Type::INTERVAL => interval_text(raw).map(|text| cell::tagged("other", text)),
         Type::INET | Type::CIDR => inet_text(raw).map(Value::String),
@@ -310,7 +439,11 @@ fn decode(ty: &Type, raw: &[u8]) -> Value {
 #[derive(Debug)]
 struct Bound<'a>(&'a str, &'a Parameter);
 impl ToSql for Bound<'_> {
-    fn to_sql(&self, ty: &Type, out: &mut BytesMut) -> Result<IsNull, Box<dyn Error + Sync + Send>> {
+    fn to_sql(
+        &self,
+        ty: &Type,
+        out: &mut BytesMut,
+    ) -> Result<IsNull, Box<dyn Error + Sync + Send>> {
         let mismatch = |wanted: &str| -> Box<dyn Error + Sync + Send> {
             format!("Parameter :{} is used as {} but its value is not {wanted}. Change the property, or cast in SQL: :{}::text::{}", self.0, ty.name(), self.0, ty.name()).into()
         };
@@ -334,19 +467,56 @@ impl ToSql for Bound<'_> {
                     _ => return Err(mismatch("true or false")),
                 },
             },
-            Type::INT2 => out.extend_from_slice(&text.parse::<i16>().map_err(|_| mismatch("a small whole number"))?.to_be_bytes()),
-            Type::INT4 => out.extend_from_slice(&text.parse::<i32>().map_err(|_| mismatch("a whole number"))?.to_be_bytes()),
-            Type::INT8 => out.extend_from_slice(&text.parse::<i64>().map_err(|_| mismatch("a whole number"))?.to_be_bytes()),
-            Type::OID => out.extend_from_slice(&text.parse::<u32>().map_err(|_| mismatch("a whole number"))?.to_be_bytes()),
-            Type::FLOAT4 => out.extend_from_slice(&text.parse::<f32>().map_err(|_| mismatch("a number"))?.to_be_bytes()),
-            Type::FLOAT8 => out.extend_from_slice(&text.parse::<f64>().map_err(|_| mismatch("a number"))?.to_be_bytes()),
-            Type::NUMERIC => out.extend_from_slice(&numeric_bytes(&text).ok_or_else(|| mismatch("a number"))?),
-            Type::TEXT | Type::VARCHAR | Type::BPCHAR | Type::NAME | Type::UNKNOWN => out.extend_from_slice(text.as_bytes()),
+            Type::INT2 => out.extend_from_slice(
+                &text
+                    .parse::<i16>()
+                    .map_err(|_| mismatch("a small whole number"))?
+                    .to_be_bytes(),
+            ),
+            Type::INT4 => out.extend_from_slice(
+                &text
+                    .parse::<i32>()
+                    .map_err(|_| mismatch("a whole number"))?
+                    .to_be_bytes(),
+            ),
+            Type::INT8 => out.extend_from_slice(
+                &text
+                    .parse::<i64>()
+                    .map_err(|_| mismatch("a whole number"))?
+                    .to_be_bytes(),
+            ),
+            Type::OID => out.extend_from_slice(
+                &text
+                    .parse::<u32>()
+                    .map_err(|_| mismatch("a whole number"))?
+                    .to_be_bytes(),
+            ),
+            Type::FLOAT4 => out.extend_from_slice(
+                &text
+                    .parse::<f32>()
+                    .map_err(|_| mismatch("a number"))?
+                    .to_be_bytes(),
+            ),
+            Type::FLOAT8 => out.extend_from_slice(
+                &text
+                    .parse::<f64>()
+                    .map_err(|_| mismatch("a number"))?
+                    .to_be_bytes(),
+            ),
+            Type::NUMERIC => {
+                out.extend_from_slice(&numeric_bytes(&text).ok_or_else(|| mismatch("a number"))?)
+            }
+            Type::TEXT | Type::VARCHAR | Type::BPCHAR | Type::NAME | Type::UNKNOWN => {
+                out.extend_from_slice(text.as_bytes())
+            }
             _ => {
                 return Err(format!(
-                    "Parameter :{} is used as {}. Cast it in SQL so it is sent as text: :{}::text::{}",
-                    self.0, ty.name(), self.0, ty.name()
-                )
+                "Parameter :{} is used as {}. Cast it in SQL so it is sent as text: :{}::text::{}",
+                self.0,
+                ty.name(),
+                self.0,
+                ty.name()
+            )
                 .into())
             }
         }
@@ -358,7 +528,10 @@ impl ToSql for Bound<'_> {
     tokio_postgres::types::to_sql_checked!();
 }
 
-async fn connect(job: &Job<'_>, tls: Option<MakeRustlsConnect>) -> Result<Client, tokio_postgres::Error> {
+async fn connect(
+    job: &Job<'_>,
+    tls: Option<MakeRustlsConnect>,
+) -> Result<Client, tokio_postgres::Error> {
     let profile = job.profile;
     let mut config = Config::new();
     config
@@ -409,7 +582,12 @@ async fn query(client: &mut Client, job: &Job<'_>, out: &mut Collector) -> Resul
         ))
         .await
         .map_err(fail)?;
-    let transaction = client.build_transaction().read_only(true).start().await.map_err(fail)?;
+    let transaction = client
+        .build_transaction()
+        .read_only(true)
+        .start()
+        .await
+        .map_err(fail)?;
     // Take the transaction's first snapshot now. Postgres refuses to switch
     // a transaction to read-write "after any query", so nothing the block
     // runs (a DO block, a procedure) can lift the read-only mode.
@@ -423,19 +601,43 @@ async fn query(client: &mut Client, job: &Job<'_>, out: &mut Collector) -> Resul
     if statement.columns().is_empty() {
         return Err(SqlError::new("refused", "SQL blocks are read-only. Postgres reports that this statement does not return rows, so it was not run."));
     }
-    out.set_columns(statement.columns().iter().map(|column| Column { name: column.name().to_string(), type_name: column.type_().name().to_string() }).collect())?;
-    let bound: Vec<Bound<'_>> = job.parameters.iter().map(|(name, value)| Bound(name, value)).collect();
-    let references: Vec<&(dyn ToSql + Sync)> = bound.iter().map(|value| value as &(dyn ToSql + Sync)).collect();
-    let portal = transaction.bind(&statement, &references).await.map_err(|error| {
-        // A parameter that could not be encoded reports through `source`.
-        match error.source() {
-            Some(cause) if error.as_db_error().is_none() => SqlError::new("invalid", cause.to_string()),
-            _ => failure(&error),
-        }
-    })?;
+    out.set_columns(
+        statement
+            .columns()
+            .iter()
+            .map(|column| Column {
+                name: column.name().to_string(),
+                type_name: column.type_().name().to_string(),
+            })
+            .collect(),
+    )?;
+    let bound: Vec<Bound<'_>> = job
+        .parameters
+        .iter()
+        .map(|(name, value)| Bound(name, value))
+        .collect();
+    let references: Vec<&(dyn ToSql + Sync)> = bound
+        .iter()
+        .map(|value| value as &(dyn ToSql + Sync))
+        .collect();
+    let portal = transaction
+        .bind(&statement, &references)
+        .await
+        .map_err(|error| {
+            // A parameter that could not be encoded reports through `source`.
+            match error.source() {
+                Some(cause) if error.as_db_error().is_none() => {
+                    SqlError::new("invalid", cause.to_string())
+                }
+                _ => failure(&error),
+            }
+        })?;
     'read: loop {
         let wanted = (out.wanted() as i32).min(FETCH);
-        let rows = transaction.query_portal(&portal, wanted).await.map_err(fail)?;
+        let rows = transaction
+            .query_portal(&portal, wanted)
+            .await
+            .map_err(fail)?;
         let last = rows.len() < wanted as usize;
         for row in &rows {
             let mut values = Vec::with_capacity(row.len());
@@ -463,7 +665,15 @@ pub(crate) async fn run(job: &Job<'_>, out: &mut Collector) -> Result<(), SqlErr
         _ => Some(MakeRustlsConnect::new(tls::client_config(job.profile)?)),
     };
     let deadline = tokio::time::Instant::now() + job.timeout;
-    let timed_out = || SqlError::new("timeout", format!("The query was stopped after {} s (the connection's timeout).", job.timeout.as_secs()));
+    let timed_out = || {
+        SqlError::new(
+            "timeout",
+            format!(
+                "The query was stopped after {} s (the connection's timeout).",
+                job.timeout.as_secs()
+            ),
+        )
+    };
     let cancelled = || SqlError::new("cancelled", "Query cancelled.");
     let mut client = tokio::select! {
         client = connect(job, tls.clone()) => client.map_err(|error| {
@@ -509,7 +719,18 @@ mod tests {
 
     #[test]
     fn numeric_round_trips_through_the_wire_format() {
-        for text in ["0", "1", "-1", "12345.6789", "0.0001", "0.00000001", "-999999999999.5", "10000", "1.50", "100000000"] {
+        for text in [
+            "0",
+            "1",
+            "-1",
+            "12345.6789",
+            "0.0001",
+            "0.00000001",
+            "-999999999999.5",
+            "10000",
+            "1.50",
+            "100000000",
+        ] {
             let bytes = numeric_bytes(text).unwrap();
             assert_eq!(numeric_text(&bytes).as_deref(), Some(text), "{text}");
         }

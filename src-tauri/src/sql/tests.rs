@@ -46,9 +46,22 @@ fn seeded(directory: &Path) -> PathBuf {
 }
 
 /// Run through a driver directly: no `guard::check`.
-fn raw(profile: &Profile, password: Option<&str>, sql: &str, parameters: Vec<(String, Parameter)>, cancel: Arc<Cancel>) -> Result<Collector, SqlError> {
+fn raw(
+    profile: &Profile,
+    password: Option<&str>,
+    sql: &str,
+    parameters: Vec<(String, Parameter)>,
+    cancel: Arc<Cancel>,
+) -> Result<Collector, SqlError> {
     let secret = password.map(|value| Secret::new(value.to_string()));
-    let job = Job { profile, password: secret.as_ref(), sql, parameters, timeout: Duration::from_secs(u64::from(profile.timeout_seconds)), cancel };
+    let job = Job {
+        profile,
+        password: secret.as_ref(),
+        sql,
+        parameters,
+        timeout: Duration::from_secs(u64::from(profile.timeout_seconds)),
+        cancel,
+    };
     let mut collector = Collector::new(profile.row_limit);
     match profile.kind {
         Kind::Sqlite => sqlite::run(&job, &mut collector)?,
@@ -58,27 +71,64 @@ fn raw(profile: &Profile, password: Option<&str>, sql: &str, parameters: Vec<(St
     Ok(collector)
 }
 fn direct(profile: &Profile, password: Option<&str>, sql: &str) -> Result<Collector, SqlError> {
-    raw(profile, password, sql, Vec::new(), Arc::new(Cancel::default()))
+    raw(
+        profile,
+        password,
+        sql,
+        Vec::new(),
+        Arc::new(Cancel::default()),
+    )
 }
 
 fn service(directory: &Path, keychain: Box<dyn SecretStore>) -> Service {
     Service::with_keychain(Database::open(&directory.join("state.sqlite3")), keychain)
 }
 fn request(connection: &str, sql: &str) -> RunRequest {
-    RunRequest { id: format!("run-{}", sql.len()), connection: connection.into(), sql: sql.into(), parameters: BTreeMap::new() }
+    RunRequest {
+        id: format!("run-{}", sql.len()),
+        connection: connection.into(),
+        sql: sql.into(),
+        parameters: BTreeMap::new(),
+    }
 }
 
 #[test]
 fn sqlite_reads_every_value_kind_as_text_safe_cells() {
     let directory = tempfile::tempdir().unwrap();
     let profile = sqlite_profile(&seeded(directory.path()));
-    let result = direct(&profile, None, "select id, name, balance, photo, note from customers order by id").unwrap();
-    assert_eq!(result.columns.iter().map(|column| column.name.as_str()).collect::<Vec<_>>(), ["id", "name", "balance", "photo", "note"]);
-    assert_eq!(result.rows[0], vec![json!(1), json!("Ada"), json!(12.5), json!({"t":"bytes","v":"00ff10","n":3}), Value::Null]);
+    let result = direct(
+        &profile,
+        None,
+        "select id, name, balance, photo, note from customers order by id",
+    )
+    .unwrap();
+    assert_eq!(
+        result
+            .columns
+            .iter()
+            .map(|column| column.name.as_str())
+            .collect::<Vec<_>>(),
+        ["id", "name", "balance", "photo", "note"]
+    );
+    assert_eq!(
+        result.rows[0],
+        vec![
+            json!(1),
+            json!("Ada"),
+            json!(12.5),
+            json!({"t":"bytes","v":"00ff10","n":3}),
+            Value::Null
+        ]
+    );
     // Markup in data is data: it stays a plain string for the UI to show as text.
     assert_eq!(result.rows[1][4], json!("<b>bold</b>"));
     // An integer beyond 2^53 is carried as text so JavaScript cannot round it.
-    assert_eq!(direct(&profile, None, "select 9007199254740993").unwrap().rows[0][0], json!({"t":"number","v":"9007199254740993"}));
+    assert_eq!(
+        direct(&profile, None, "select 9007199254740993")
+            .unwrap()
+            .rows[0][0],
+        json!({"t":"number","v":"9007199254740993"})
+    );
     assert_eq!(result.truncated, None);
 }
 
@@ -113,18 +163,41 @@ fn sqlite_refuses_every_write_at_the_database_and_leaves_the_file_unchanged() {
     ];
     for sql in &writes {
         // The database refuses, with the SQL check bypassed.
-        let error = direct(&profile, None, sql).err().unwrap_or_else(|| panic!("{sql} ran"));
-        assert!(matches!(error.code, "refused" | "query"), "{sql}: {error:?}");
+        let error = direct(&profile, None, sql)
+            .err()
+            .unwrap_or_else(|| panic!("{sql} ran"));
+        assert!(
+            matches!(error.code, "refused" | "query"),
+            "{sql}: {error:?}"
+        );
         // The friendly check refuses first in normal use.
-        assert!(guard::check(sql, Kind::Sqlite).is_err(), "{sql} passed the check");
+        assert!(
+            guard::check(sql, Kind::Sqlite).is_err(),
+            "{sql} passed the check"
+        );
     }
-    assert_eq!(std::fs::read(&path).unwrap(), before, "the database file changed");
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        before,
+        "the database file changed"
+    );
     assert!(!attached.exists(), "ATTACH or VACUUM INTO created a file");
     let version = direct(&profile, None, "PRAGMA user_version").unwrap();
     assert_eq!(version.rows[0][0], json!(0));
-    assert_eq!(direct(&profile, None, "select count(*) from customers").unwrap().rows[0][0], json!(3));
+    assert_eq!(
+        direct(&profile, None, "select count(*) from customers")
+            .unwrap()
+            .rows[0][0],
+        json!(3)
+    );
     // Reporting pragmas still work.
-    assert_eq!(direct(&profile, None, "PRAGMA table_info(customers)").unwrap().rows.len(), 5);
+    assert_eq!(
+        direct(&profile, None, "PRAGMA table_info(customers)")
+            .unwrap()
+            .rows
+            .len(),
+        5
+    );
 }
 
 #[test]
@@ -135,8 +208,17 @@ fn sqlite_never_creates_a_missing_file_and_rejects_non_files() {
     assert_eq!(error.code, "connect");
     assert!(error.message.contains("does not exist"), "{error:?}");
     assert!(!missing.exists());
-    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0, "something was created");
-    assert_eq!(direct(&sqlite_profile(directory.path()), None, "select 1").unwrap_err().code, "connect");
+    assert_eq!(
+        std::fs::read_dir(directory.path()).unwrap().count(),
+        0,
+        "something was created"
+    );
+    assert_eq!(
+        direct(&sqlite_profile(directory.path()), None, "select 1")
+            .unwrap_err()
+            .code,
+        "connect"
+    );
     // A URI is not interpreted: it is a relative path, refused by validation.
     let mut uri = sqlite_profile(Path::new("file:made.sqlite3?mode=rwc"));
     uri.name = "uri".into();
@@ -159,12 +241,22 @@ fn sqlite_applies_row_cell_and_size_limits() {
     assert_eq!(long.rows[0][0]["v"].as_str().unwrap().len(), MAX_CELL_BYTES);
     // Many large rows stop at the total size cap, below the row limit.
     profile.row_limit = MAX_ROW_LIMIT;
-    let big = direct(&profile, None, "select printf('%.*c', 8000, 'x') from numbers").unwrap();
+    let big = direct(
+        &profile,
+        None,
+        "select printf('%.*c', 8000, 'x') from numbers",
+    )
+    .unwrap();
     assert_eq!(big.truncated, Some("size"));
-    assert!(big.rows.len() < 5000 && big.rows.len() * 8000 <= MAX_RESULT_BYTES, "{}", big.rows.len());
+    assert!(
+        big.rows.len() < 5000 && big.rows.len() * 8000 <= MAX_RESULT_BYTES,
+        "{}",
+        big.rows.len()
+    );
 }
 
-const SLOW_SQLITE: &str = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c) SELECT count(*) FROM c";
+const SLOW_SQLITE: &str =
+    "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c) SELECT count(*) FROM c";
 
 #[test]
 fn sqlite_stops_at_the_timeout() {
@@ -174,7 +266,11 @@ fn sqlite_stops_at_the_timeout() {
     let started = Instant::now();
     let error = direct(&profile, None, SLOW_SQLITE).unwrap_err();
     assert_eq!(error.code, "timeout", "{error:?}");
-    assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
 }
 
 #[test]
@@ -187,18 +283,31 @@ fn sqlite_cancel_interrupts_a_running_query() {
     assert!(!service.cancel("slow"), "nothing is running yet");
     let worker = {
         let service = service.clone();
-        std::thread::spawn(move || service.run(RunRequest { id: "slow".into(), connection: "local".into(), sql: SLOW_SQLITE.into(), parameters: BTreeMap::new() }))
+        std::thread::spawn(move || {
+            service.run(RunRequest {
+                id: "slow".into(),
+                connection: "local".into(),
+                sql: SLOW_SQLITE.into(),
+                parameters: BTreeMap::new(),
+            })
+        })
     };
     let started = Instant::now();
     while !service.cancel("slow") {
-        assert!(started.elapsed() < Duration::from_secs(5), "the query never registered");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the query never registered"
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
     let error = worker.join().unwrap().unwrap_err();
     assert_eq!(error.code, "cancelled", "{error:?}");
     assert!(started.elapsed() < Duration::from_secs(5));
     // The id is free again and the connection still works.
-    assert_eq!(service.run(request("local", "select 1")).unwrap().rows[0][0], json!(1));
+    assert_eq!(
+        service.run(request("local", "select 1")).unwrap().rows[0][0],
+        json!(1)
+    );
 }
 
 #[test]
@@ -206,13 +315,26 @@ fn parameters_are_bound_not_interpolated() {
     let directory = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     let service = service(state.path(), Box::new(MemoryStore::default()));
-    service.save(sqlite_profile(&seeded(directory.path())), None, None).unwrap();
-    let mut run = request("local", "select name, :who as who, typeof(:id) from customers where id = :id or name = :who");
+    service
+        .save(sqlite_profile(&seeded(directory.path())), None, None)
+        .unwrap();
+    let mut run = request(
+        "local",
+        "select name, :who as who, typeof(:id) from customers where id = :id or name = :who",
+    );
     // A value that would change the statement if it were pasted into it.
-    run.parameters.insert("who".into(), json!("x' OR 1=1; DROP TABLE customers; --"));
+    run.parameters
+        .insert("who".into(), json!("x' OR 1=1; DROP TABLE customers; --"));
     run.parameters.insert("id".into(), json!(2));
     let result = service.run(run).unwrap();
-    assert_eq!(result.rows, vec![vec![json!("Grace"), json!("x' OR 1=1; DROP TABLE customers; --"), json!("integer")]]);
+    assert_eq!(
+        result.rows,
+        vec![vec![
+            json!("Grace"),
+            json!("x' OR 1=1; DROP TABLE customers; --"),
+            json!("integer")
+        ]]
+    );
     let missing = service.run(request("local", "select :absent")).unwrap_err();
     assert_eq!(missing.code, "invalid");
     assert!(missing.message.contains(":absent"));
@@ -220,7 +342,10 @@ fn parameters_are_bound_not_interpolated() {
     list.parameters.insert("items".into(), json!([1, 2]));
     assert_eq!(service.run(list).unwrap_err().code, "invalid");
     // A placeholder inside a string is text.
-    assert_eq!(service.run(request("local", "select ':id'")).unwrap().rows[0][0], json!(":id"));
+    assert_eq!(
+        service.run(request("local", "select ':id'")).unwrap().rows[0][0],
+        json!(":id")
+    );
 }
 
 #[test]
@@ -228,14 +353,33 @@ fn the_service_refuses_writes_unknown_connections_and_second_statements_with_cle
     let directory = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     let service = service(state.path(), Box::new(MemoryStore::default()));
-    service.save(sqlite_profile(&seeded(directory.path())), None, None).unwrap();
+    service
+        .save(sqlite_profile(&seeded(directory.path())), None, None)
+        .unwrap();
     let unknown = service.run(request("analytics", "select 1")).unwrap_err();
     assert_eq!(unknown.code, "unknown_connection");
-    assert_eq!(unknown.message, "No connection named analytics — add it in Settings → Databases.");
-    for sql in ["delete from customers", "select 1; delete from customers", "drop table customers"] {
-        assert_eq!(service.run(request("local", sql)).unwrap_err().code, "refused", "{sql}");
+    assert_eq!(
+        unknown.message,
+        "No connection named analytics — add it in Settings → Databases."
+    );
+    for sql in [
+        "delete from customers",
+        "select 1; delete from customers",
+        "drop table customers",
+    ] {
+        assert_eq!(
+            service.run(request("local", sql)).unwrap_err().code,
+            "refused",
+            "{sql}"
+        );
     }
-    assert_eq!(service.run(request("local", "select count(*) from customers")).unwrap().rows[0][0], json!(3));
+    assert_eq!(
+        service
+            .run(request("local", "select count(*) from customers"))
+            .unwrap()
+            .rows[0][0],
+        json!(3)
+    );
 }
 
 fn network_profile(name: &str, storage: PasswordStorage) -> Profile {
@@ -264,7 +408,9 @@ fn state_bytes(directory: &Path) -> Vec<u8> {
     bytes
 }
 fn contains(haystack: &[u8], needle: &str) -> bool {
-    haystack.windows(needle.len()).any(|window| window == needle.as_bytes())
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle.as_bytes())
 }
 
 #[test]
@@ -272,72 +418,152 @@ fn passwords_go_to_the_keychain_only_and_are_never_returned_or_written_to_state(
     let state = tempfile::tempdir().unwrap();
     let keychain = Arc::new(MemoryStore::default());
     let service = service(state.path(), Box::new(keychain.clone()));
-    let saved = service.save(network_profile("analytics", PasswordStorage::Keychain), Some(PASSWORD.into()), None).unwrap();
+    let saved = service
+        .save(
+            network_profile("analytics", PasswordStorage::Keychain),
+            Some(PASSWORD.into()),
+            None,
+        )
+        .unwrap();
     assert_eq!(saved.password_state, "keychain");
     assert_eq!(saved.profile.port, 5432, "the default port is filled in");
-    assert_eq!(keychain.get("analytics").unwrap().unwrap().expose(), PASSWORD);
+    assert_eq!(
+        keychain.get("analytics").unwrap().unwrap().expose(),
+        PASSWORD
+    );
     // Nothing the UI receives carries the password.
     let listed = serde_json::to_string(&service.list().unwrap()).unwrap();
-    assert!(listed.contains("\"passwordState\":\"keychain\"") && !listed.contains(PASSWORD), "{listed}");
+    assert!(
+        listed.contains("\"passwordState\":\"keychain\"") && !listed.contains(PASSWORD),
+        "{listed}"
+    );
     assert!(!serde_json::to_string(&saved).unwrap().contains(PASSWORD));
     assert!(!format!("{:?}", Secret::new(PASSWORD.into())).contains(PASSWORD));
     // Editing without a new password keeps the stored one.
     let mut edited = network_profile("analytics", PasswordStorage::Keychain);
     edited.host = "db2.example.test".into();
-    service.save(edited, None, Some("analytics".into())).unwrap();
-    assert_eq!(keychain.get("analytics").unwrap().unwrap().expose(), PASSWORD);
+    service
+        .save(edited, None, Some("analytics".into()))
+        .unwrap();
+    assert_eq!(
+        keychain.get("analytics").unwrap().unwrap().expose(),
+        PASSWORD
+    );
     // Renaming moves the entry.
-    service.save(network_profile("warehouse", PasswordStorage::Keychain), None, Some("analytics".into())).unwrap();
+    service
+        .save(
+            network_profile("warehouse", PasswordStorage::Keychain),
+            None,
+            Some("analytics".into()),
+        )
+        .unwrap();
     assert!(keychain.get("analytics").unwrap().is_none());
-    assert_eq!(keychain.get("warehouse").unwrap().unwrap().expose(), PASSWORD);
+    assert_eq!(
+        keychain.get("warehouse").unwrap().unwrap().expose(),
+        PASSWORD
+    );
     assert_eq!(service.list().unwrap().connections.len(), 1);
     // Not in the state database, its WAL or the index, even before a checkpoint.
     assert!(!contains(&state_bytes(state.path()), PASSWORD));
-    assert!(contains(&state_bytes(state.path()), "db2.example.test"), "the profile itself is stored");
+    assert!(
+        contains(&state_bytes(state.path()), "db2.example.test"),
+        "the profile itself is stored"
+    );
     // Switching away from the keychain removes the entry; so does deleting.
-    service.save(network_profile("warehouse", PasswordStorage::None), None, Some("warehouse".into())).unwrap();
+    service
+        .save(
+            network_profile("warehouse", PasswordStorage::None),
+            None,
+            Some("warehouse".into()),
+        )
+        .unwrap();
     assert!(keychain.get("warehouse").unwrap().is_none());
-    service.save(network_profile("warehouse", PasswordStorage::Keychain), Some(PASSWORD.into()), Some("warehouse".into())).unwrap();
+    service
+        .save(
+            network_profile("warehouse", PasswordStorage::Keychain),
+            Some(PASSWORD.into()),
+            Some("warehouse".into()),
+        )
+        .unwrap();
     service.delete("warehouse").unwrap();
     assert!(keychain.get("warehouse").unwrap().is_none());
     assert!(service.list().unwrap().connections.is_empty());
-    assert_eq!(service.delete("warehouse").unwrap_err().code, "unknown_connection");
+    assert_eq!(
+        service.delete("warehouse").unwrap_err().code,
+        "unknown_connection"
+    );
     assert!(!contains(&state_bytes(state.path()), PASSWORD));
 }
 
 #[test]
 fn a_profile_cannot_carry_a_password_field() {
-    let with_password = r#"{"name":"a","kind":"postgres","host":"h","user":"u","password":"secret"}"#;
+    let with_password =
+        r#"{"name":"a","kind":"postgres","host":"h","user":"u","password":"secret"}"#;
     assert!(serde_json::from_str::<Profile>(with_password).is_err());
     let without = r#"{"name":"a","kind":"postgres","host":"h","user":"u"}"#;
-    let profile = serde_json::from_str::<Profile>(without).unwrap().validated().unwrap();
-    assert_eq!((profile.row_limit, profile.timeout_seconds, profile.tls_mode), (1000, 30, TlsMode::Prefer));
+    let profile = serde_json::from_str::<Profile>(without)
+        .unwrap()
+        .validated()
+        .unwrap();
+    assert_eq!(
+        (profile.row_limit, profile.timeout_seconds, profile.tls_mode),
+        (1000, 30, TlsMode::Prefer)
+    );
 }
 
 #[test]
 fn without_a_keychain_nothing_falls_back_to_disk_and_ask_every_session_works_in_memory() {
     let state = tempfile::tempdir().unwrap();
-    let service = service(state.path(), Box::new(NoKeychain("No keychain in this test.".into())));
+    let service = service(
+        state.path(),
+        Box::new(NoKeychain("No keychain in this test.".into())),
+    );
     let list = service.list().unwrap();
     assert!(!list.keychain_available);
-    assert_eq!(list.keychain_reason.as_deref(), Some("No keychain in this test."));
+    assert_eq!(
+        list.keychain_reason.as_deref(),
+        Some("No keychain in this test.")
+    );
     // Asking for keychain storage fails, and saves nothing at all.
-    let refused = service.save(network_profile("analytics", PasswordStorage::Keychain), Some(PASSWORD.into()), None).unwrap_err();
+    let refused = service
+        .save(
+            network_profile("analytics", PasswordStorage::Keychain),
+            Some(PASSWORD.into()),
+            None,
+        )
+        .unwrap_err();
     assert_eq!(refused.code, "keychain");
     assert!(service.list().unwrap().connections.is_empty());
     // Ask every session: the password is held in memory.
-    let saved = service.save(network_profile("analytics", PasswordStorage::Session), None, None).unwrap();
+    let saved = service
+        .save(
+            network_profile("analytics", PasswordStorage::Session),
+            None,
+            None,
+        )
+        .unwrap();
     assert_eq!(saved.password_state, "needed");
     let needs = service.run(request("analytics", "select 1")).unwrap_err();
     assert_eq!(needs.code, "password_required");
     service.unlock("analytics", PASSWORD.into()).unwrap();
-    assert_eq!(service.list().unwrap().connections[0].password_state, "session");
+    assert_eq!(
+        service.list().unwrap().connections[0].password_state,
+        "session"
+    );
     assert!(!contains(&state_bytes(state.path()), PASSWORD));
-    assert!(!serde_json::to_string(&service.list().unwrap()).unwrap().contains(PASSWORD));
+    assert!(!serde_json::to_string(&service.list().unwrap())
+        .unwrap()
+        .contains(PASSWORD));
     // A new session (a new service on the same state) has forgotten it.
     drop(service);
-    let reopened = self::service(state.path(), Box::new(NoKeychain("No keychain in this test.".into())));
-    assert_eq!(reopened.list().unwrap().connections[0].password_state, "needed");
+    let reopened = self::service(
+        state.path(),
+        Box::new(NoKeychain("No keychain in this test.".into())),
+    );
+    assert_eq!(
+        reopened.list().unwrap().connections[0].password_state,
+        "needed"
+    );
 }
 
 #[test]
@@ -347,7 +573,10 @@ fn profiles_are_validated() {
     let invalid = |change: &dyn Fn(&mut Profile)| {
         let mut profile = network_profile("ok", PasswordStorage::None);
         change(&mut profile);
-        assert_eq!(service.save(profile, None, None).unwrap_err().code, "invalid");
+        assert_eq!(
+            service.save(profile, None, None).unwrap_err().code,
+            "invalid"
+        );
     };
     invalid(&|profile| profile.name = "has space".into());
     invalid(&|profile| profile.name = "1st".into());
@@ -364,17 +593,44 @@ fn profiles_are_validated() {
         profile.tls_mode = TlsMode::VerifyFull;
         profile.ca_file = "relative.pem".into();
     });
-    service.save(network_profile("ok", PasswordStorage::None), None, None).unwrap();
+    service
+        .save(network_profile("ok", PasswordStorage::None), None, None)
+        .unwrap();
     // Names are unique whatever their letter case.
-    assert_eq!(service.save(network_profile("OK", PasswordStorage::None), None, None).unwrap_err().code, "invalid");
-    assert_eq!(service.save(network_profile("gone", PasswordStorage::None), None, Some("missing".into())).unwrap_err().code, "invalid");
-    assert_eq!(service.save(network_profile("pw", PasswordStorage::Keychain), None, None).unwrap_err().code, "invalid");
+    assert_eq!(
+        service
+            .save(network_profile("OK", PasswordStorage::None), None, None)
+            .unwrap_err()
+            .code,
+        "invalid"
+    );
+    assert_eq!(
+        service
+            .save(
+                network_profile("gone", PasswordStorage::None),
+                None,
+                Some("missing".into())
+            )
+            .unwrap_err()
+            .code,
+        "invalid"
+    );
+    assert_eq!(
+        service
+            .save(network_profile("pw", PasswordStorage::Keychain), None, None)
+            .unwrap_err()
+            .code,
+        "invalid"
+    );
 }
 
 #[test]
 fn error_messages_are_scrubbed_of_the_password() {
     let secret = Secret::new(PASSWORD.into());
-    let scrubbed = secrets::scrub(&format!("auth failed for reader:{PASSWORD}@host"), Some(&secret));
+    let scrubbed = secrets::scrub(
+        &format!("auth failed for reader:{PASSWORD}@host"),
+        Some(&secret),
+    );
     assert_eq!(scrubbed, "auth failed for reader:•••@host");
     assert_eq!(secrets::scrub("plain", Some(&secret)), "plain");
     assert_eq!(secrets::scrub("plain", None), "plain");
@@ -387,9 +643,15 @@ struct Server {
     password: String,
 }
 fn server(variable: &str, kind: Kind) -> Option<Server> {
-    let value = std::env::var(variable).ok().filter(|value| !value.is_empty())?;
+    let value = std::env::var(variable)
+        .ok()
+        .filter(|value| !value.is_empty())?;
     let parts: Vec<&str> = value.splitn(5, ':').collect();
-    assert_eq!(parts.len(), 5, "{variable} must be host:port:user:password:database");
+    assert_eq!(
+        parts.len(),
+        5,
+        "{variable} must be host:port:user:password:database"
+    );
     Some(Server {
         profile: Profile {
             name: "server".into(),
@@ -419,24 +681,34 @@ impl Server {
         direct(&self.profile, Some(&self.password), sql)
     }
     fn count(&self, sql: &str) -> Value {
-        self.direct(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}")).rows[0][0].clone()
+        self.direct(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error:?}"))
+            .rows[0][0]
+            .clone()
     }
     fn with(&self, change: impl FnOnce(&mut Profile)) -> Server {
         let mut profile = self.profile.clone();
         change(&mut profile);
-        Server { profile, password: self.password.clone() }
+        Server {
+            profile,
+            password: self.password.clone(),
+        }
     }
     /// A service with this server saved as `server`, password in a mock keychain.
     fn service(&self, state: &Path) -> Service {
         let service = service(state, Box::new(MemoryStore::default()));
-        service.save(self.profile.clone(), Some(self.password.clone()), None).unwrap();
+        service
+            .save(self.profile.clone(), Some(self.password.clone()), None)
+            .unwrap();
         service
     }
 }
 
 #[test]
 fn postgres_decodes_common_types() {
-    let Some(server) = postgres_server() else { return };
+    let Some(server) = postgres_server() else {
+        return;
+    };
     let result = server
         .direct(
             "select 42::int4, 9007199254740993::int8, 12345.6789::numeric, 0.1::float4, 'héllo'::text, true, null::text,
@@ -479,8 +751,14 @@ fn postgres_decodes_common_types() {
 
 #[test]
 fn postgres_refuses_writes_even_for_a_superuser() {
-    let Some(server) = postgres_server() else { return };
-    assert_eq!(server.count("select rolsuper from pg_roles where rolname = current_user"), json!(true), "the test must connect as a superuser");
+    let Some(server) = postgres_server() else {
+        return;
+    };
+    assert_eq!(
+        server.count("select rolsuper from pg_roles where rolname = current_user"),
+        json!(true),
+        "the test must connect as a superuser"
+    );
     let writes = [
         "insert into customers(id, name) values (99, 'Mallory')",
         "update customers set name = 'x'",
@@ -509,12 +787,24 @@ fn postgres_refuses_writes_even_for_a_superuser() {
         "select 1; delete from customers",
     ];
     for sql in writes {
-        let error = server.direct(sql).err().unwrap_or_else(|| panic!("{sql} ran"));
-        assert!(matches!(error.code, "refused" | "query"), "{sql}: {error:?}");
+        let error = server
+            .direct(sql)
+            .err()
+            .unwrap_or_else(|| panic!("{sql} ran"));
+        assert!(
+            matches!(error.code, "refused" | "query"),
+            "{sql}: {error:?}"
+        );
     }
     assert_eq!(server.count("select count(*) from customers"), json!(3));
-    assert_eq!(server.count("select count(*) from pg_tables where tablename = 'made'"), json!(0));
-    assert_eq!(server.count("select last_value from customers_seq"), json!(1));
+    assert_eq!(
+        server.count("select count(*) from pg_tables where tablename = 'made'"),
+        json!(0)
+    );
+    assert_eq!(
+        server.count("select last_value from customers_seq"),
+        json!(1)
+    );
     // Turning the session default off does not outlive the run: each run is
     // a new connection inside a new read-only transaction.
     let _ = server.direct("set default_transaction_read_only = off");
@@ -523,15 +813,25 @@ fn postgres_refuses_writes_even_for_a_superuser() {
     // Through the service the friendly check answers first.
     let state = tempfile::tempdir().unwrap();
     let service = server.service(state.path());
-    let refused = service.run(request("server", "delete from customers")).unwrap_err();
+    let refused = service
+        .run(request("server", "delete from customers"))
+        .unwrap_err();
     assert_eq!(refused.code, "refused");
     assert!(refused.message.contains("DELETE"));
-    assert_eq!(service.run(request("server", "select count(*) from customers")).unwrap().rows[0][0], json!(3));
+    assert_eq!(
+        service
+            .run(request("server", "select count(*) from customers"))
+            .unwrap()
+            .rows[0][0],
+        json!(3)
+    );
 }
 
 #[test]
 fn postgres_binds_parameters_by_inferred_type() {
-    let Some(server) = postgres_server() else { return };
+    let Some(server) = postgres_server() else {
+        return;
+    };
     let state = tempfile::tempdir().unwrap();
     let service = server.service(state.path());
     let mut run = request("server", "select name from customers where id = :id and balance > :floor and active = :active and name <> :other and created_at > :since::text::timestamp");
@@ -546,54 +846,115 @@ fn postgres_binds_parameters_by_inferred_type() {
     let mut wrong = request("server", "select name from customers where id = :id");
     wrong.parameters.insert("id".into(), json!("two"));
     let error = service.run(wrong).unwrap_err();
-    assert!(error.message.contains(":id") && error.message.contains("int4"), "{error:?}");
+    assert!(
+        error.message.contains(":id") && error.message.contains("int4"),
+        "{error:?}"
+    );
     let mut uncast = request("server", "select :day = date '2026-01-01'");
     uncast.parameters.insert("day".into(), json!("2026-01-01"));
-    assert!(service.run(uncast).unwrap_err().message.contains(":day::text::date"));
+    assert!(service
+        .run(uncast)
+        .unwrap_err()
+        .message
+        .contains(":day::text::date"));
     assert_eq!(server.count("select count(*) from customers"), json!(3));
 }
 
 #[test]
 fn postgres_limits_rows_times_out_and_cancels_on_the_server() {
-    let Some(server) = postgres_server() else { return };
-    let limited = server.with(|profile| profile.row_limit = 100).direct("select * from generate_series(1, 5000000)").unwrap();
+    let Some(server) = postgres_server() else {
+        return;
+    };
+    let limited = server
+        .with(|profile| profile.row_limit = 100)
+        .direct("select * from generate_series(1, 5000000)")
+        .unwrap();
     assert_eq!((limited.rows.len(), limited.truncated), (100, Some("rows")));
     let started = Instant::now();
-    let error = server.with(|profile| profile.timeout_seconds = 1).direct("select pg_sleep(30)").unwrap_err();
+    let error = server
+        .with(|profile| profile.timeout_seconds = 1)
+        .direct("select pg_sleep(30)")
+        .unwrap_err();
     assert_eq!(error.code, "timeout", "{error:?}");
-    assert!(started.elapsed() < Duration::from_secs(6), "{:?}", started.elapsed());
+    assert!(
+        started.elapsed() < Duration::from_secs(6),
+        "{:?}",
+        started.elapsed()
+    );
     // Cancel: the statement stops on the server, not only in the client.
     let cancel = Arc::new(Cancel::default());
     let worker = {
-        let (profile, password, cancel) = (server.profile.clone(), server.password.clone(), cancel.clone());
-        std::thread::spawn(move || raw(&profile, Some(&password), "select pg_sleep(30) /* notation-cancel-test */", Vec::new(), cancel).map(|_| ()))
+        let (profile, password, cancel) = (
+            server.profile.clone(),
+            server.password.clone(),
+            cancel.clone(),
+        );
+        std::thread::spawn(move || {
+            raw(
+                &profile,
+                Some(&password),
+                "select pg_sleep(30) /* notation-cancel-test */",
+                Vec::new(),
+                cancel,
+            )
+            .map(|_| ())
+        })
     };
     let running = "select count(*) from pg_stat_activity where query like '%notation-cancel-test%' and state = 'active' and pid <> pg_backend_pid()";
     let started = Instant::now();
     while server.count(running) != json!(1) {
-        assert!(started.elapsed() < Duration::from_secs(8), "the query never started");
+        assert!(
+            started.elapsed() < Duration::from_secs(8),
+            "the query never started"
+        );
         std::thread::sleep(Duration::from_millis(50));
     }
     let cancelled_at = Instant::now();
     cancel.cancel();
     assert_eq!(worker.join().unwrap().unwrap_err().code, "cancelled");
-    assert!(cancelled_at.elapsed() < Duration::from_secs(5), "{:?}", cancelled_at.elapsed());
+    assert!(
+        cancelled_at.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        cancelled_at.elapsed()
+    );
     let stopped = Instant::now();
     while server.count(running) != json!(0) {
-        assert!(stopped.elapsed() < Duration::from_secs(5), "pg_sleep kept running on the server after cancel");
+        assert!(
+            stopped.elapsed() < Duration::from_secs(5),
+            "pg_sleep kept running on the server after cancel"
+        );
         std::thread::sleep(Duration::from_millis(50));
     }
 }
 
 #[test]
 fn postgres_tls_modes() {
-    let Some(server) = postgres_server() else { return };
+    let Some(server) = postgres_server() else {
+        return;
+    };
     let encrypted = "select ssl from pg_stat_ssl where pid = pg_backend_pid()";
-    assert_eq!(server.count(encrypted), json!(false), "disable connects in the clear");
-    assert_eq!(server.with(|profile| profile.tls_mode = TlsMode::Require).count(encrypted), json!(true));
-    assert_eq!(server.with(|profile| profile.tls_mode = TlsMode::Prefer).count(encrypted), json!(true));
+    assert_eq!(
+        server.count(encrypted),
+        json!(false),
+        "disable connects in the clear"
+    );
+    assert_eq!(
+        server
+            .with(|profile| profile.tls_mode = TlsMode::Require)
+            .count(encrypted),
+        json!(true)
+    );
+    assert_eq!(
+        server
+            .with(|profile| profile.tls_mode = TlsMode::Prefer)
+            .count(encrypted),
+        json!(true)
+    );
     // verify-full without the test CA: the self-signed server is not trusted.
-    let untrusted = server.with(|profile| profile.tls_mode = TlsMode::VerifyFull).direct("select 1").unwrap_err();
+    let untrusted = server
+        .with(|profile| profile.tls_mode = TlsMode::VerifyFull)
+        .direct("select 1")
+        .unwrap_err();
     assert_eq!(untrusted.code, "connect", "{untrusted:?}");
     if let Ok(ca) = std::env::var("NOTATION_SQL_TEST_CA") {
         let verified = server.with(|profile| {
@@ -618,21 +979,37 @@ fn network_errors_never_contain_the_password() {
         let state = tempfile::tempdir().unwrap();
         let service = service(state.path(), Box::new(MemoryStore::default()));
         // A wrong password, and a port nothing listens on.
-        service.save(server.profile.clone(), Some(PASSWORD.into()), None).unwrap();
+        service
+            .save(server.profile.clone(), Some(PASSWORD.into()), None)
+            .unwrap();
         let rejected = service.run(request("server", "select 1")).unwrap_err();
         assert_eq!(rejected.code, "connect", "{rejected:?}");
         assert!(!rejected.message.contains(PASSWORD), "{rejected:?}");
         let mut closed = server.profile.clone();
         closed.port = 1;
-        service.save(closed, Some(PASSWORD.into()), Some("server".into())).unwrap();
+        service
+            .save(closed, Some(PASSWORD.into()), Some("server".into()))
+            .unwrap();
         let refused = service.run(request("server", "select 1")).unwrap_err();
         assert_eq!(refused.code, "connect", "{refused:?}");
         assert!(!refused.message.contains(PASSWORD), "{refused:?}");
         assert!(!contains(&state_bytes(state.path()), PASSWORD));
         // Test connection reports the server and takes a typed password.
-        let tested = service.test(server.profile.clone(), Some(server.password.clone()), None).unwrap();
-        assert!(tested.server.starts_with("PostgreSQL ") || tested.server.starts_with("MySQL "), "{}", tested.server);
-        assert_eq!(service.test(server.profile.clone(), None, None).unwrap_err().code, "password_required");
+        let tested = service
+            .test(server.profile.clone(), Some(server.password.clone()), None)
+            .unwrap();
+        assert!(
+            tested.server.starts_with("PostgreSQL ") || tested.server.starts_with("MySQL "),
+            "{}",
+            tested.server
+        );
+        assert_eq!(
+            service
+                .test(server.profile.clone(), None, None)
+                .unwrap_err()
+                .code,
+            "password_required"
+        );
     }
 }
 
@@ -667,7 +1044,11 @@ fn mysql_decodes_common_types() {
     // Statements other than SELECT that only read.
     assert!(!server.direct("show tables").unwrap().rows.is_empty());
     assert!(!server.direct("describe customers").unwrap().rows.is_empty());
-    assert!(!server.direct("explain select * from customers").unwrap().rows.is_empty());
+    assert!(!server
+        .direct("explain select * from customers")
+        .unwrap()
+        .rows
+        .is_empty());
 }
 
 #[test]
@@ -696,17 +1077,42 @@ fn mysql_refuses_writes_even_for_root() {
         "set session transaction read write",
     ];
     for sql in writes {
-        let error = server.direct(sql).err().unwrap_or_else(|| panic!("{sql} ran"));
-        assert!(matches!(error.code, "refused" | "query"), "{sql}: {error:?}");
+        let error = server
+            .direct(sql)
+            .err()
+            .unwrap_or_else(|| panic!("{sql} ran"));
+        assert!(
+            matches!(error.code, "refused" | "query"),
+            "{sql}: {error:?}"
+        );
     }
     assert_eq!(server.count("select count(*) from customers"), json!(3));
-    assert_eq!(server.count("select count(*) from information_schema.tables where table_name = 'made'"), json!(0));
-    assert_eq!(server.count("select name from customers where id = 1"), json!("Ada"));
+    assert_eq!(
+        server.count("select count(*) from information_schema.tables where table_name = 'made'"),
+        json!(0)
+    );
+    assert_eq!(
+        server.count("select name from customers where id = 1"),
+        json!("Ada")
+    );
     let state = tempfile::tempdir().unwrap();
     let service = server.service(state.path());
-    assert_eq!(service.run(request("server", "delete from customers")).unwrap_err().code, "refused");
-    let mut run = request("server", "select name from customers where id = :id and name <> :other and balance > :floor");
-    run.parameters = BTreeMap::from([("id".into(), json!(2)), ("other".into(), json!("x'; drop table customers; --")), ("floor".into(), json!(-10.5))]);
+    assert_eq!(
+        service
+            .run(request("server", "delete from customers"))
+            .unwrap_err()
+            .code,
+        "refused"
+    );
+    let mut run = request(
+        "server",
+        "select name from customers where id = :id and name <> :other and balance > :floor",
+    );
+    run.parameters = BTreeMap::from([
+        ("id".into(), json!(2)),
+        ("other".into(), json!("x'; drop table customers; --")),
+        ("floor".into(), json!(-10.5)),
+    ]);
     assert_eq!(service.run(run).unwrap().rows, vec![vec![json!("Grace")]]);
     assert_eq!(server.count("select count(*) from customers"), json!(3));
 }
@@ -716,30 +1122,56 @@ const SLOW_MYSQL: &str = "select /* notation-cancel-test */ count(*) from number
 #[test]
 fn mysql_limits_rows_times_out_and_cancels_on_the_server() {
     let Some(server) = mysql_server() else { return };
-    let limited = server.with(|profile| profile.row_limit = 100).direct("select a.n from numbers a, numbers b").unwrap();
+    let limited = server
+        .with(|profile| profile.row_limit = 100)
+        .direct("select a.n from numbers a, numbers b")
+        .unwrap();
     assert_eq!((limited.rows.len(), limited.truncated), (100, Some("rows")));
     let started = Instant::now();
-    let error = server.with(|profile| profile.timeout_seconds = 1).direct(SLOW_MYSQL).unwrap_err();
+    let error = server
+        .with(|profile| profile.timeout_seconds = 1)
+        .direct(SLOW_MYSQL)
+        .unwrap_err();
     assert_eq!(error.code, "timeout", "{error:?}");
-    assert!(started.elapsed() < Duration::from_secs(6), "{:?}", started.elapsed());
+    assert!(
+        started.elapsed() < Duration::from_secs(6),
+        "{:?}",
+        started.elapsed()
+    );
     let cancel = Arc::new(Cancel::default());
     let worker = {
-        let (profile, password, cancel) = (server.profile.clone(), server.password.clone(), cancel.clone());
-        std::thread::spawn(move || raw(&profile, Some(&password), SLOW_MYSQL, Vec::new(), cancel).map(|_| ()))
+        let (profile, password, cancel) = (
+            server.profile.clone(),
+            server.password.clone(),
+            cancel.clone(),
+        );
+        std::thread::spawn(move || {
+            raw(&profile, Some(&password), SLOW_MYSQL, Vec::new(), cancel).map(|_| ())
+        })
     };
     let running = "select count(*) from information_schema.processlist where info like '%notation-cancel-test%' and info not like '%processlist%'";
     let started = Instant::now();
     while server.count(running) != json!(1) {
-        assert!(started.elapsed() < Duration::from_secs(8), "the query never started");
+        assert!(
+            started.elapsed() < Duration::from_secs(8),
+            "the query never started"
+        );
         std::thread::sleep(Duration::from_millis(50));
     }
     let cancelled_at = Instant::now();
     cancel.cancel();
     assert_eq!(worker.join().unwrap().unwrap_err().code, "cancelled");
-    assert!(cancelled_at.elapsed() < Duration::from_secs(6), "{:?}", cancelled_at.elapsed());
+    assert!(
+        cancelled_at.elapsed() < Duration::from_secs(6),
+        "{:?}",
+        cancelled_at.elapsed()
+    );
     let stopped = Instant::now();
     while server.count(running) != json!(0) {
-        assert!(stopped.elapsed() < Duration::from_secs(5), "the query kept running on the server after cancel");
+        assert!(
+            stopped.elapsed() < Duration::from_secs(5),
+            "the query kept running on the server after cancel"
+        );
         std::thread::sleep(Duration::from_millis(50));
     }
 }
@@ -748,11 +1180,28 @@ fn mysql_limits_rows_times_out_and_cancels_on_the_server() {
 fn mysql_tls_modes() {
     let Some(server) = mysql_server() else { return };
     let cipher = "select variable_value from performance_schema.session_status where variable_name = 'Ssl_cipher'";
-    assert_eq!(server.count(cipher), json!(""), "disable connects in the clear");
-    assert_ne!(server.with(|profile| profile.tls_mode = TlsMode::Require).count(cipher), json!(""));
-    assert_ne!(server.with(|profile| profile.tls_mode = TlsMode::Prefer).count(cipher), json!(""));
+    assert_eq!(
+        server.count(cipher),
+        json!(""),
+        "disable connects in the clear"
+    );
+    assert_ne!(
+        server
+            .with(|profile| profile.tls_mode = TlsMode::Require)
+            .count(cipher),
+        json!("")
+    );
+    assert_ne!(
+        server
+            .with(|profile| profile.tls_mode = TlsMode::Prefer)
+            .count(cipher),
+        json!("")
+    );
     // The server's generated certificate is not signed by a public CA.
-    let untrusted = server.with(|profile| profile.tls_mode = TlsMode::VerifyFull).direct("select 1").unwrap_err();
+    let untrusted = server
+        .with(|profile| profile.tls_mode = TlsMode::VerifyFull)
+        .direct("select 1")
+        .unwrap_err();
     assert_eq!(untrusted.code, "connect", "{untrusted:?}");
 }
 
@@ -762,20 +1211,46 @@ fn mysql_tls_modes() {
 /// `cargo test` never prompts to unlock a keyring.
 #[test]
 fn the_real_keychain_stores_moves_and_deletes_a_password() {
-    let Ok(service_name) = std::env::var("NOTATION_SQL_TEST_REAL_KEYCHAIN") else { return };
-    assert!(service_name.starts_with("notation-test-"), "use an obviously named throwaway service");
+    let Ok(service_name) = std::env::var("NOTATION_SQL_TEST_REAL_KEYCHAIN") else {
+        return;
+    };
+    assert!(
+        service_name.starts_with("notation-test-"),
+        "use an obviously named throwaway service"
+    );
     let keychain = Arc::new(secrets::Keychain::new(service_name));
     keychain.availability().expect("the keychain is available");
     let state = tempfile::tempdir().unwrap();
     let service = service(state.path(), Box::new(keychain.clone()));
     assert!(service.list().unwrap().keychain_available);
-    service.save(network_profile("analytics", PasswordStorage::Keychain), Some(PASSWORD.into()), None).unwrap();
-    assert_eq!(keychain.get("analytics").unwrap().unwrap().expose(), PASSWORD);
-    service.save(network_profile("warehouse", PasswordStorage::Keychain), None, Some("analytics".into())).unwrap();
+    service
+        .save(
+            network_profile("analytics", PasswordStorage::Keychain),
+            Some(PASSWORD.into()),
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        keychain.get("analytics").unwrap().unwrap().expose(),
+        PASSWORD
+    );
+    service
+        .save(
+            network_profile("warehouse", PasswordStorage::Keychain),
+            None,
+            Some("analytics".into()),
+        )
+        .unwrap();
     assert!(keychain.get("analytics").unwrap().is_none());
-    assert_eq!(keychain.get("warehouse").unwrap().unwrap().expose(), PASSWORD);
+    assert_eq!(
+        keychain.get("warehouse").unwrap().unwrap().expose(),
+        PASSWORD
+    );
     assert!(!contains(&state_bytes(state.path()), PASSWORD));
     service.delete("warehouse").unwrap();
-    assert!(keychain.get("warehouse").unwrap().is_none(), "deleting the profile deletes its keychain entry");
+    assert!(
+        keychain.get("warehouse").unwrap().is_none(),
+        "deleting the profile deletes its keychain entry"
+    );
     keychain.delete("warehouse").unwrap();
 }

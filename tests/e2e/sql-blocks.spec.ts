@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { openSettings } from './commands';
+import { openSettings, runCommand } from './commands';
 
 const PASSWORD = 'dummy-Pa55word-7f3a91-do-not-leak';
 const NOTE = '---\nmin_id: 2\nlabel: "x\' or 1=1 --"\n---\n# Report\n\n```sql connection:analytics\nselect id, name, note from customers where id >= :min_id\n```\n\nAfter.\n';
@@ -33,6 +33,8 @@ async function desktop(page: Page, options: Options = {}) {
         // The native confirmation for the first run from a note.
         if (cmd === 'plugin:dialog|message') return state.confirm ? 'Allow and run' : 'Cancel';
         if (cmd === 'read_document_snapshot') return { path: args.path, content };
+        if (cmd === 'plugin:dialog|save') return '/exports/report.html';
+        if (cmd === 'write_export_file') return { path: args.path, content: args.content };
         if (cmd === 'sql_list_connections') return { connections: connections.map((item: Record<string, unknown>) => state.unlocked && item.passwordStorage === 'session' ? { ...item, passwordState: 'session' } : item), keychainAvailable: true, keychainReason: null, maxRowLimit: 10000, maxTimeoutSeconds: 600 };
         if (cmd === 'sql_unlock_connection') { state.unlocked = true; return null; }
         if (cmd === 'sql_cancel') { const run = state.pending.find(item => item.id === args.id); run?.reject({ code: 'cancelled', message: 'Query cancelled.' }); return !!run; }
@@ -52,6 +54,15 @@ async function desktop(page: Page, options: Options = {}) {
 const calls = (page: Page, cmd: string) => page.evaluate((name) => (window as unknown as { sqlMock: { calls: Call[] } }).sqlMock.calls.filter(call => call.cmd === name), cmd);
 const mode = (page: Page, value: string) => page.evaluate((next) => { (window as unknown as { sqlMock: { mode: string } }).sqlMock.mode = next; }, value);
 const block = (page: Page) => page.getByRole('region', { name: 'SQL query: analytics', exact: true });
+/** The cells of the first table in an exported page, parsed without running or loading anything. */
+class ExportedTable {
+  rows: string[][];
+  constructor(html: string) {
+    const table = /<table class="sql-snapshot">([\s\S]*?)<\/table>/u.exec(html)?.[1] ?? '';
+    const decode = (text: string) => text.replace(/&lt;/gu, '<').replace(/&gt;/gu, '>').replace(/&quot;/gu, '"').replace(/&amp;/gu, '&');
+    this.rows = [...table.matchAll(/<tr>([\s\S]*?)<\/tr>/gu)].map(row => [...row[1].matchAll(/<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/gu)].map(cell => decode(cell[1])));
+  }
+}
 const editorText = (page: Page) => page.evaluate(() => [...document.querySelectorAll('.editor-tab-host:not([hidden]) .cm-line')].map(line => line.textContent).join('\n'));
 
 test('rendering a note runs nothing; Run shows a sortable text-only table', async ({ page }) => {
@@ -296,4 +307,45 @@ test('the browser build says SQL blocks need the desktop app', async ({ page }) 
   await page.keyboard.insertText('```sql\nselect 1\n```\n');
   await expect(page.getByRole('region', { name: 'Document preview' }).locator('pre')).toContainText('select 1');
   await expect(page.getByRole('region', { name: /^SQL query/u })).toHaveCount(0);
+});
+
+const TWO_BLOCKS = '# Report\n\n```sql connection:analytics\nselect id, name, note from customers\n```\n\nNot run:\n\n```sql connection:analytics\nselect count(*) from orders\n```\n';
+async function exportHtml(page: Page) {
+  const panel = page.getByRole('region', { name: 'Export', exact: true });
+  if (!await panel.isVisible()) await runCommand(page, 'Export');
+  await panel.getByRole('combobox', { name: 'Export format' }).selectOption('self-contained');
+  const before = (await calls(page, 'write_export_file')).length;
+  await panel.getByRole('button', { name: 'Export document', exact: true }).click();
+  await expect.poll(async () => (await calls(page, 'write_export_file')).length).toBe(before + 1);
+  return String((await calls(page, 'write_export_file')).at(-1)!.args.content);
+}
+
+test('an export carries the session result as a captioned table, the SQL of blocks not run, and no connection details', async ({ page }) => {
+  await desktop(page, { content: TWO_BLOCKS });
+  // Before anything is run, both blocks export as their SQL.
+  const unrun = await exportHtml(page);
+  expect(unrun).toContain('select id, name, note from customers');
+  expect(unrun).toContain('select count(*) from orders');
+  expect(unrun).not.toContain('Results from');
+  expect(await calls(page, 'sql_run')).toHaveLength(0);
+
+  const first = page.getByRole('region', { name: 'SQL query: analytics', exact: true }).first();
+  await first.getByRole('button', { name: 'Run query: analytics' }).click();
+  await expect(first.locator('tbody tr')).toHaveCount(3);
+  // The export follows the order on screen.
+  await first.getByRole('button', { name: 'Sort by id' }).click();
+  const html = await exportHtml(page);
+  expect(await calls(page, 'sql_run')).toHaveLength(1);
+  const exported = new ExportedTable(html);
+  expect(html).toMatch(/<caption>Results from analytics at \d{4}-\d{2}-\d{2} \d{2}:\d{2}<\/caption>/u);
+  expect(exported.rows).toEqual([['id', 'name', 'note'], ['1', 'Ada', 'NULL'], ['2', 'Grace', '**bold** [link](http://example.test) <script>window.sqlXss=2</script>'], ['3', 'Linus', '<img src=x onerror="window.sqlXss=1">']]);
+  // Values are escaped text in the file; the run block's SQL is replaced by its table, the other block keeps its SQL.
+  expect(html).toContain('&lt;img src=x onerror="window.sqlXss=1"&gt;');
+  expect(html).not.toMatch(/<img|<script/u);
+  expect(html).not.toContain('select id, name, note from customers');
+  expect(html).toContain('select count(*) from orders');
+  // Nothing about the connection but its name, and no controls.
+  for (const secret of ['db.example.test', 'reader', '5432', 'Postgres', 'Run again', 'Copy CSV', 'Not run in this session']) expect(html).not.toContain(secret);
+  // An export is a plain file write: it is not saved as a document, so results are not copied into revision history.
+  expect(await calls(page, 'write_document')).toHaveLength(0);
 });

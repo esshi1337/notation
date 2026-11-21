@@ -365,9 +365,69 @@ limit: 50
 ```
 ````
 
-Use `view: list` for a list. Filters support `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `contains`, and `exists`; filters combine with AND. `tagMode: any` changes tag matching from all to any. Click a result to edit its source note; **Refresh** updates the view. The visible result limit is 200. Queries never execute SQL or JavaScript.
+Use `view: list` for a list. Filters support `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `contains`, and `exists`; filters combine with AND. `tagMode: any` changes tag matching from all to any. Click a result to edit its source note; **Refresh** updates the view. The visible result limit is 200. A `query` fence reads only this workspace index and never executes SQL or JavaScript; to query a real database, use a [SQL block](#sql-blocks).
 
 **Note graph** shows resolved connections and lists unresolved links. It follows the selected tool-panel width preset; drag the graph to pan, use the wheel or +/− to zoom, **Fit** for an overview, and **100%** to return to readable labels. Labels are separated instead of overlapping, and full titles/paths are available on hover and in the Notes list. Tab focuses a note and brings it into view; Enter or Space opens it. Filter by title/path or tag, or switch to the current note's neighborhood. Graph limits and omitted results are shown explicitly.
+
+## SQL blocks
+
+A `sql` fence that names a connection queries a real SQLite, Postgres or MySQL database, read-only, and shows the result as a table:
+
+````markdown
+```sql connection:analytics
+select id, name, created_at
+from customers
+where created_at >= :since
+order by created_at desc
+```
+````
+
+The note holds only the connection's name. Host, user, limits and the password live in **Settings → Databases**; a note you share or receive never contains or reveals them. A plain ```` ```sql ```` fence without `connection:` stays an ordinary code block.
+
+**Running.** A block runs only when you press **Run**, or Ctrl/Cmd+Enter in the block or with the cursor inside its fence. Opening, rendering, previewing or exporting a note never runs a query. The first time a note queries a connection in a session, Notation asks in a system dialog that names the connection and shows the query; after that the note can query that connection until you quit. **Cancel** stops a running query on the server. Each block shows when it last ran, how long it took and how many rows came back.
+
+**Results** are kept in memory until you quit; they are not written to the note, to drafts or to settings. Click a column header to sort (again to reverse, a third time for the returned order). `NULL` is shown as such, numbers are right-aligned, and dates, JSON and binary values are shown as text. Values are always displayed as text, never interpreted as HTML or Markdown. **Copy CSV** and **Export CSV** save the result; **Insert as table** adds it below the block as an escaped Markdown table, as one undoable edit.
+
+**Parameters.** `:name` in the query is bound to the note's property `name` as a real query parameter, not pasted into the SQL. Text, numbers, booleans and empty values can be bound. In Postgres, a parameter used as a date or another special type needs a cast such as `:since::text::date`.
+
+**Limits.** Each connection has a row limit (default 1 000, at most 10 000) and a timeout (default 30 s, at most 600 s). A result that is cut says "Showing the first N rows". A single value is shown up to 8 KiB and a whole result up to 8 MiB. Up to four queries run at once.
+
+### Connections and passwords
+
+**Settings → Databases** adds, edits, tests and deletes connections: a name, the kind, and either a SQLite file or host, port, database, user and TLS mode. *Prefer* encrypts when the server offers it, *Require* always encrypts, and *Verify full* also checks the server's certificate and host name against a CA file you choose or the public certificate authorities. Use *Require* or *Verify full* across a network; *Prefer* can be downgraded by someone on the path.
+
+Passwords are stored in the system keychain and nowhere else: not in notes, settings, recovery drafts, logs or exports. Notation never shows a stored password; the form says "stored in keychain" and lets you replace it. Deleting a connection deletes its keychain entry.
+
+- **Linux:** the Secret Service (GNOME Keyring, KWallet or KeePassXC). If the keyring is locked, your desktop asks you to unlock it when a query needs the password.
+- **macOS:** your login Keychain.
+- **No keychain available:** Notation says why and does not fall back to a file. Choose **Ask every session**: you enter the password once in Settings → Databases, it is kept in memory, and it is gone when you quit. Starting Notation with `NOTATION_KEYCHAIN=off` forces this behaviour.
+
+### Read-only, and why to use a read-only role anyway
+
+SQL blocks cannot change your data:
+
+- **SQLite** files are opened read-only and are never created; only reads and reporting `PRAGMA`s are authorised.
+- **Postgres** and **MySQL** run one statement inside a read-only transaction that is always rolled back. A statement the server reports as returning no rows (`CALL`, `DO`, `SET`, any write) is not run at all.
+- Obvious writes, schema changes and second statements are refused with a message before anything is sent.
+
+Still **connect with a database role that can only read** what you need. A read-only transaction stops changes to tables, but a powerful role can call server functions with side effects from inside a `SELECT`: ending other sessions, reading server files, taking locks, calling out to other servers. In Postgres, for example:
+
+```sql
+create role notes_reader login password '…';
+grant connect on database app to notes_reader;
+grant usage on schema public to notes_reader;
+grant select on all tables in schema public to notes_reader;
+```
+
+### Export
+
+HTML, PDF, DOCX and PPTX exports never run a query. A block you ran in this session is exported as its result table with the caption "Results from *connection* at *time*" (the first 1 000 rows, in the order shown); a block you did not run is exported as its SQL. Connection details are never included. Exporting writes only the file you choose; nothing is copied into revision history.
+
+SQL blocks need the desktop app; the browser build shows "Database queries require the desktop app."
+
+### Testing against real servers
+
+`cargo test` covers SQLite and credential handling with no server. `src-tauri/tests/sql-servers.sh start` starts throwaway Postgres and MySQL containers (podman or docker) on `127.0.0.1` with random ports and passwords and writes an `env` file; with it sourced, `cargo test --lib sql` also runs the Postgres and MySQL tests: writes refused for a superuser, TLS modes, timeout and server-side cancel. `src-tauri/tests/sql-servers.sh stop` removes the containers and their data.
 
 ## Executable cells, variables, and templates
 
@@ -513,6 +573,7 @@ npm run test:workspace
 npm run test:export
 npm run test:citations
 npm run test:hemingway
+npm run test:sql
 npm run build
 npx playwright install chromium
 npm run test:e2e
