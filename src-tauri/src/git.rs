@@ -71,7 +71,45 @@ fn capture(mut reader: impl Read + Send + 'static, limit: usize) -> thread::Join
         result
     })
 }
+/// The `git` a bare command name resolves to in this search path.
+fn first_git(paths: &std::ffi::OsStr) -> Option<PathBuf> {
+    std::env::split_paths(paths)
+        .map(|directory| directory.join("git"))
+        .find(|candidate| candidate.is_file())
+}
+/// On macOS `/usr/bin/git` is a stub for the Xcode Command Line Tools. When
+/// they are not installed, running it opens the system "install developer
+/// tools" dialog and fails. Any other Git in the search path is a real one.
+fn is_system_stub(found: Option<&Path>) -> bool {
+    found.is_none_or(|path| path == Path::new("/usr/bin/git"))
+}
+/// Decided once per session. Elsewhere than macOS a missing Git simply
+/// fails to start, which is reported as before.
+fn git_usable() -> bool {
+    static USABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *USABLE.get_or_init(|| {
+        if !cfg!(target_os = "macos") {
+            return true;
+        }
+        let found = std::env::var_os("PATH").and_then(|paths| first_git(&paths));
+        if !is_system_stub(found.as_deref()) {
+            return true;
+        }
+        // Prints the active developer directory; fails without one and never
+        // opens a dialog.
+        Command::new("xcode-select")
+            .arg("-p")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    })
+}
 fn run(cwd: &Path, args: &[&str]) -> Result<Output, String> {
+    if !git_usable() {
+        return Err("Git is unavailable: install the Xcode Command Line Tools (xcode-select --install) to use Git features.".into());
+    }
     let mut command = Command::new("git");
     // A desktop launched from a Git-aware shell must not inherit another
     // repository/index or injected Git configuration. Resolve only from cwd.
@@ -409,4 +447,39 @@ pub fn diff_for_document(
         diff: text,
         truncated: output.truncated,
     })
+}
+
+#[cfg(test)]
+mod stub_tests {
+    use super::*;
+
+    #[test]
+    fn the_first_git_in_the_search_path_decides_whether_it_is_the_system_stub() {
+        let temporary = tempfile::tempdir().unwrap();
+        let (empty, tools, other) = (
+            temporary.path().join("empty"),
+            temporary.path().join("tools"),
+            temporary.path().join("other"),
+        );
+        for directory in [&empty, &tools, &other] {
+            std::fs::create_dir(directory).unwrap();
+        }
+        std::fs::write(tools.join("git"), "").unwrap();
+        std::fs::write(other.join("git"), "").unwrap();
+        // A directory named git is not an executable.
+        std::fs::create_dir(empty.join("git")).unwrap();
+        let search = |directories: &[&PathBuf]| first_git(&std::env::join_paths(directories).unwrap());
+        assert_eq!(search(&[&empty, &tools, &other]), Some(tools.join("git")));
+        assert_eq!(search(&[&other, &tools]), Some(other.join("git")));
+        assert_eq!(search(&[&empty]), None);
+
+        assert!(is_system_stub(None));
+        assert!(is_system_stub(Some(Path::new("/usr/bin/git"))));
+        assert!(!is_system_stub(Some(Path::new("/opt/homebrew/bin/git"))));
+        assert!(!is_system_stub(Some(&tools.join("git"))));
+        // Only macOS has the stub; everywhere else Git is simply tried.
+        if !cfg!(target_os = "macos") {
+            assert!(git_usable());
+        }
+    }
 }
