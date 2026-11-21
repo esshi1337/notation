@@ -677,9 +677,13 @@ mod desktop {
             return existing.set_focus().map_err(|e| e.to_string());
         }
         // No parent/owner: these windows stay independent when main is minimized.
-        let result = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App(format!("index.html?sticky={id}").into()))
+        let builder = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App(format!("index.html?sticky={id}").into()))
             .title("Sticky note — Notation").inner_size(340.0, 380.0).min_inner_size(240.0, 200.0)
-            .decorations(false).resizable(true).always_on_top(true).background_color(tauri::window::Color(0, 0, 0, 255)).build();
+            .decorations(false).resizable(true).always_on_top(true).background_color(tauri::window::Color(0, 0, 0, 255));
+        // On macOS a note should follow the user across Spaces and read as a
+        // floating window; an undecorated window has no shadow by default.
+        let builder = if cfg!(target_os = "macos") { builder.visible_on_all_workspaces(true).shadow(true) } else { builder };
+        let result = builder.build();
         if let Err(error) = result {
             let cleanup = manager.lock()?.failed_open(database, id, created);
             return Err(match cleanup {
@@ -737,6 +741,104 @@ mod desktop {
         }).await.map_err(|error|error.to_string())?
     }
 
+    /// App commands offered in the macOS menu bar. The identifiers are the
+    /// frontend command ids; the main window runs them exactly like a
+    /// keyboard shortcut. They carry no key equivalents: shortcuts are
+    /// user-configurable and are handled (and shown) by the app itself, and a
+    /// native key equivalent would run before the webview sees the key.
+    const MENU_COMMAND_PREFIX: &str = "command:";
+    const MENU_QUIT: &str = "notation:quit";
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    fn application_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+        use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
+        let command = |id: &str| format!("{MENU_COMMAND_PREFIX}{id}");
+        // Quit asks the main window to close, so unsaved work is handled by
+        // the same guard as the window's close button.
+        let quit = MenuItem::with_id(app, MENU_QUIT, "Quit Notation", true, Some("CmdOrCtrl+Q"))?;
+        let application = SubmenuBuilder::new(app, "Notation")
+            .about(None)
+            .separator()
+            .text(command("app.settings"), "Settings…")
+            .separator()
+            .services()
+            .separator()
+            .hide()
+            .hide_others()
+            .show_all()
+            .separator()
+            .item(&quit)
+            .build()?;
+        // No "Close Window" item: its ⌘W would close the whole window before
+        // the app could close the current tab.
+        let file = SubmenuBuilder::new(app, "File")
+            .text(command("file.new"), "New")
+            .text(command("file.newCanvas"), "New Canvas")
+            .text(command("sticky.new"), "New Sticky Note")
+            .separator()
+            .text(command("file.open"), "Open…")
+            .separator()
+            .text(command("file.save"), "Save")
+            .text(command("file.saveAs"), "Save As…")
+            .text(command("file.rename"), "Rename…")
+            .text(command("panel.export"), "Export…")
+            .separator()
+            .text(command("tab.close"), "Close Tab")
+            .build()?;
+        // The system items give text fields in the webview their standard
+        // clipboard and undo behaviour.
+        let edit = SubmenuBuilder::new(app, "Edit")
+            .undo()
+            .redo()
+            .separator()
+            .cut()
+            .copy()
+            .paste()
+            .select_all()
+            .separator()
+            .text(command("edit.find"), "Find…")
+            .text(command("edit.replace"), "Find and Replace…")
+            .build()?;
+        let view = SubmenuBuilder::new(app, "View")
+            .text(command("view.source"), "Source")
+            .text(command("view.split"), "Split")
+            .text(command("view.preview"), "Preview")
+            .text(command("view.live"), "Live Preview")
+            .separator()
+            .text(command("view.focus"), "Focus Mode")
+            .text(command("app.commands"), "Command Palette…")
+            .separator()
+            .fullscreen()
+            .build()?;
+        let window = SubmenuBuilder::new(app, "Window")
+            .minimize()
+            .maximize()
+            .separator()
+            .text(command("tab.next"), "Show Next Tab")
+            .text(command("tab.previous"), "Show Previous Tab")
+            .build()?;
+        MenuBuilder::new(app)
+            .items(&[&application, &file, &edit, &view, &window])
+            .build()
+    }
+    fn handle_menu_event(app: &tauri::AppHandle, id: &str) {
+        if let Some(command) = id.strip_prefix(MENU_COMMAND_PREFIX) {
+            let _ = app.emit_to("main", "notation:menu-command", command);
+        } else if id == MENU_QUIT {
+            match app.get_webview_window("main") {
+                // The frontend close guard flushes state, asks about unsaved
+                // work and then destroys the window, which ends the app.
+                Some(main) => {
+                    let _ = main.unminimize();
+                    let _ = main.show();
+                    if main.close().is_err() {
+                        app.exit(0);
+                    }
+                }
+                None => app.exit(0),
+            }
+        }
+    }
+
     #[cfg(target_os = "linux")]
     fn activate_main(handle: tauri::AppHandle) -> Result<(), String> {
         let (response, completed) = std::sync::mpsc::sync_channel(1);
@@ -772,7 +874,13 @@ mod desktop {
                 std::process::exit(1);
             }
         }
-        let app = tauri::Builder::default()
+        let builder = tauri::Builder::default();
+        // Only macOS has an application menu bar; elsewhere a menu would add
+        // a menu bar to every window.
+        #[cfg(target_os = "macos")]
+        let builder = builder.menu(application_menu);
+        let app = builder
+            .on_menu_event(|app, event| handle_menu_event(app, event.id().as_ref()))
             .manage(automation::ScriptManager::default())
             .manage(launches.clone())
             .manage(sticky::StickyManager::default())

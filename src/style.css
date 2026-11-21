@@ -164,6 +164,8 @@
 }
 
 .identity-icon { display: block; flex: 0 0 auto; max-width: none; pointer-events: none; }
+/* macOS overlay title bar: leave room for the window controls. */
+.platform-mac .workspace-bar { padding-left: 78px; }
 .workspace-bar { display: flex; align-items: center; flex-shrink: 0; height: var(--chrome-height); min-height: var(--chrome-height); gap: 8px; padding: 0 12px 0 6px; border-bottom: 1px solid var(--border); background: var(--bar); }
 .workspace-control { display: flex; align-items: center; flex: 0 1 136px; width: 136px; min-width: 32px; height: var(--control-size); }
 .workspace-personal { flex: 1; min-width: 0; padding-left: 8px; overflow: hidden; color: var(--text); font-size: 13px; font-weight: 600; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
