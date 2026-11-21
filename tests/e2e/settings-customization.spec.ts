@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { runCommand, setSetting, expectSetting } from './commands';
+import { runCommand, setSetting, expectSetting, shortcutLabel } from './commands';
 
 const source = (page: Page) => page.getByRole('textbox', { name: 'Document source' });
 const settingsDialog = (page: Page) => page.getByRole('dialog', { name: 'Settings', exact: true });
@@ -159,21 +159,22 @@ test('shortcut remapping persists, conflicting bindings are rejected, and reset 
   const newBinding = settings.getByRole('textbox', { name: 'Shortcut for New', exact: true });
   await newBinding.fill('Ctrl+Shift+J');
   await newBinding.press('Enter');
-  await expect(newBinding).toHaveValue('Mod+Shift+J');
+  await expect(newBinding).toHaveValue(shortcutLabel('⇧⌘J', 'Ctrl+Shift+J'));
 
   const saveBinding = settings.getByRole('textbox', { name: 'Shortcut for Save', exact: true });
-  await saveBinding.fill('Ctrl+Shift+J');
+  // A rejected binding keeps the text as typed instead of the committed label.
+  await saveBinding.fill('ctrl + shift + j');
   await saveBinding.press('Enter');
   await expect(settings.getByRole('alert')).toContainText(/already assigned to New/i);
-  await expect(saveBinding).not.toHaveValue('Mod+Shift+J');
-  await expect(newBinding).toHaveValue('Mod+Shift+J');
+  await expect(saveBinding).not.toHaveValue(shortcutLabel('⇧⌘J', 'Ctrl+Shift+J'));
+  await expect(newBinding).toHaveValue(shortcutLabel('⇧⌘J', 'Ctrl+Shift+J'));
 
   await page.keyboard.press('Escape');
   await page.reload();
   await runCommand(page, 'Settings');
   settings = settingsDialog(page);
   await settingsTab(page, 'Shortcuts').click();
-  await expect(settings.getByRole('textbox', { name: 'Shortcut for New', exact: true })).toHaveValue('Mod+Shift+J');
+  await expect(settings.getByRole('textbox', { name: 'Shortcut for New', exact: true })).toHaveValue(shortcutLabel('⇧⌘J', 'Ctrl+Shift+J'));
 
   await page.keyboard.press('Escape');
   await source(page).focus();
@@ -182,11 +183,11 @@ test('shortcut remapping persists, conflicting bindings are rejected, and reset 
   await runCommand(page, 'Settings');
   settings = settingsDialog(page);
   await settingsTab(page, 'Shortcuts').click();
-  await expect(settings.getByRole('textbox', { name: 'Shortcut for New', exact: true })).toHaveValue('Mod+Shift+J');
+  await expect(settings.getByRole('textbox', { name: 'Shortcut for New', exact: true })).toHaveValue(shortcutLabel('⇧⌘J', 'Ctrl+Shift+J'));
   await settings.getByRole('button', { name: 'Reset shortcut: New', exact: true }).click();
-  await expect(settings.getByRole('textbox', { name: 'Shortcut for New', exact: true })).toHaveValue('Mod+N');
+  await expect(settings.getByRole('textbox', { name: 'Shortcut for New', exact: true })).toHaveValue(shortcutLabel('⌘N', 'Ctrl+N'));
   await settings.getByRole('button', { name: 'Reset shortcuts', exact: true }).click();
-  await expect(settings.getByRole('textbox', { name: 'Shortcut for Save', exact: true })).toHaveValue('Mod+S');
+  await expect(settings.getByRole('textbox', { name: 'Shortcut for Save', exact: true })).toHaveValue(shortcutLabel('⌘S', 'Ctrl+S'));
 });
 
 test('compact controls and document tabs fit a narrow desktop window without horizontal overflow', async ({ page }) => {

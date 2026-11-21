@@ -5,7 +5,7 @@ type PlatformSource = { platform?: string; userAgent?: string; userAgentData?: {
 
 export function detectMac(source: PlatformSource | undefined): boolean {
   if (!source) return false;
-  const platform = source.userAgentData?.platform || source.platform || '';
+  const platform = source.platform || source.userAgentData?.platform || '';
   if (platform) return /^(Mac|iPhone|iPad|iPod)/iu.test(platform);
   return /Macintosh|Mac OS X/u.test(source.userAgent ?? '');
 }

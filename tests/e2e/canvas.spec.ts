@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
-import { runCommand } from './commands';
+import { nextTabKey, previousTabKey, runCommand } from './commands';
 
 const source = (page: Page) => page.getByRole('textbox', { name: 'Document source' });
 const canvas = (page: Page) => page.getByRole('region', { name: 'Canvas', exact: true });
@@ -529,13 +529,13 @@ test('tab switch and content change during a drag discard the preview without co
   const start = (await canvasData(page)).nodes[0];
 
   await runCommand(page, 'New canvas');
-  await page.keyboard.press('ControlOrMeta+PageUp');
+  await page.keyboard.press(previousTabKey);
   await expect(view.getByRole('article', { name: 'Canvas card: Alpha', exact: true })).toBeVisible();
   const title = view.getByRole('button', { name: 'Move card: Alpha', exact: true });
   await startDrag(page, title, 80, 60);
-  await page.keyboard.press('ControlOrMeta+PageDown');
+  await page.keyboard.press(nextTabKey);
   await page.mouse.up();
-  await page.keyboard.press('ControlOrMeta+PageUp');
+  await page.keyboard.press(previousTabKey);
   await expect(view.getByRole('article', { name: 'Canvas card: Alpha', exact: true })).toBeVisible();
   let data = await canvasData(page);
   expect(data.nodes[0].x).toBe(start.x);

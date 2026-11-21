@@ -270,8 +270,8 @@ def run(app: Path) -> None:
             client.element_command(shortcuts_tab, "/click")
             new_binding = smoke.fill_control(client, "dialog[aria-label='Settings'] [aria-label='Shortcut for New']", "Ctrl+Shift+J")
             client.send_keys(new_binding, "\ue007")
-            smoke.require(client.execute("return arguments[0].value", [{smoke.ELEMENT_KEY: new_binding}]) == "Mod+Shift+J",
-                          "Native shortcut remap did not normalize to Mod+Shift+J")
+            smoke.require(client.execute("return arguments[0].value", [{smoke.ELEMENT_KEY: new_binding}]) == "Ctrl+Shift+J",
+                          "Native shortcut remap did not display as Ctrl+Shift+J")
             client.element_command(agents, "/click")
             mcp = McpStdio(command, env)
             initialized = mcp.request("initialize", {
@@ -446,7 +446,7 @@ def run(app: Path) -> None:
                           "Native density setting did not survive app restart")
             shortcuts_tab = client.find("//dialog[@aria-label='Settings']//button[@role='tab' and normalize-space(.)='Shortcuts']", using="xpath")
             client.element_command(shortcuts_tab, "/click")
-            smoke.require(client.execute("return document.querySelector('[aria-label=\\\"Shortcut for New\\\"]')?.value") == "Mod+Shift+J",
+            smoke.require(client.execute("return document.querySelector('[aria-label=\\\"Shortcut for New\\\"]')?.value") == "Ctrl+Shift+J",
                           "Native shortcut remap did not survive app restart")
             client.element_command(smoke.button(client, "Close settings"), "/click")
             smoke.require(smoke.editor_text(client) == close_text,

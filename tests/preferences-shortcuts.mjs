@@ -296,7 +296,7 @@ try {
   check('platform detection recognises Apple platforms from platform, client hints or user agent', () => {
     assert.equal(platform.detectMac({ platform: 'MacIntel' }), true);
     assert.equal(platform.detectMac({ platform: 'iPad' }), true);
-    assert.equal(platform.detectMac({ userAgentData: { platform: 'macOS' }, platform: 'Linux x86_64' }), true);
+    assert.equal(platform.detectMac({ userAgentData: { platform: 'macOS' }, platform: '' }), true);
     assert.equal(platform.detectMac({ platform: '', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' }), true);
     for (const source of [undefined, {}, { platform: 'Linux x86_64' }, { platform: 'Win32' }, { platform: 'linux' }, { platform: 'darwin' }]) assert.equal(platform.detectMac(source), false);
   });
