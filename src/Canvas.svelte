@@ -29,7 +29,7 @@
   type FlowEdge = Edge<{ edge: CanvasEdge; key: string; auto: boolean }>;
   type Point = { x: number; y: number };
   type Menu = { kind: 'pane' | 'node' | 'edge'; id: string; left: number; top: number; at: Point; canPaste: boolean };
-  const MAX_DROP_TEXT = 20_000, NUDGE_IDLE = 450, GUIDE_PIXELS = 6, VISIBLE_ONLY_ABOVE = 60;
+  const MAX_DROP_TEXT = 20_000, NUDGE_IDLE = 450, GUIDE_PIXELS = 6, VISIBLE_ONLY_ABOVE = 60, FAR_ZOOM = 0.4;
   const COLORS = ['1', '2', '3', '4', '5', '6'];
 
   let { content, documentId, path, apply, openNote, noteCandidates, renderCard, undo, redo }: { content: string; documentId: number; path?: string | null; apply: (next: string, snapshot: Snapshot) => boolean; openNote: (file: string, subpath?: string) => void; noteCandidates?: (query: string) => Promise<NoteCandidate[]>; renderCard?: RenderCard; undo?: () => void; redo?: () => void } = $props();
@@ -44,7 +44,9 @@
   let noteQuery = $state(''), noteResults = $state<NoteCandidate[]>([]), noteSearchError = $state(''), noteSearchBusy = $state(false), noteSerial = 0;
   let fileField = $state<HTMLInputElement>();
   let fromCard = $state(''), toCard = $state(''), edgeLabel = $state(''), connectOpen = $state(false);
-  let addOpen = $state(false), menu = $state<Menu | null>(null), guides = $state<Guides | null>(null);
+  let addOpen = $state(false), menu = $state<Menu | null>(null), guides = $state<Guides | null>(null), connecting = $state(false);
+  // Zoomed far out, cards are thumbnails: the grid and card shadows cost paint time and show nothing.
+  let far = $derived(viewport.zoom < FAR_ZOOM);
   let host: HTMLDivElement, addMenuHost: HTMLDivElement, addTrigger: HTMLButtonElement, menuHost = $state<HTMLDivElement>();
   const preference = (key: string, fallback: boolean) => { try { const value = localStorage.getItem('notation.canvas.' + key); return value === null ? fallback : value === '1'; } catch { return fallback; } };
   const remember = (key: string, value: boolean) => { try { localStorage.setItem('notation.canvas.' + key, value ? '1' : '0'); } catch { /* Preferences are a convenience. */ } };
@@ -504,6 +506,7 @@
   }
   /** A connection dropped on a card body enters by the side facing its source; dropped on empty space it makes a new card. */
   function connectEnd(event: MouseEvent | TouchEvent, state: { isValid: boolean | null; fromNode: { id: string } | null; fromHandle: { id?: string | null } | null }) {
+    connecting = false;
     if (state.isValid || !state.fromNode) return;
     const from = canvas.nodes.find((node) => node.id === state.fromNode!.id), touch = 'changedTouches' in event ? event.changedTouches[0] : event;
     if (!from || !touch) return;
@@ -588,19 +591,19 @@
   {#if error}<div class="app-error" role="alert">{error} Use Source to inspect the original JSON.</div>{/if}
   <div class="canvas-area">
     <!-- svelte-ignore a11y_no_static_element_interactions (The board inside handles focus; this wrapper adds wheel, pan and drop handling around it.) -->
-    <div class="canvas-board" class:panning={!!pan} class:easing={eased} bind:this={host} onkeydowncapture={boardKey} onpointerdowncapture={panStart} onmousedowncapture={mouseDownCapture} onpointermove={panMove} onpointerup={panEnd} onpointercancel={panEnd} onlostpointercapture={panEnd} onfocusout={(event) => { if (!(event.relatedTarget instanceof globalThis.Node) || !host.contains(event.relatedTarget)) flushNudge(); }} ondblclick={doubleClick} ondragover={dragover} ondrop={drop}>
+    <div class="canvas-board" class:panning={!!pan} class:easing={eased} class:connecting class:far bind:this={host} onkeydowncapture={boardKey} onpointerdowncapture={panStart} onmousedowncapture={mouseDownCapture} onpointermove={panMove} onpointerup={panEnd} onpointercancel={panEnd} onlostpointercapture={panEnd} onfocusout={(event) => { if (!(event.relatedTarget instanceof globalThis.Node) || !host.contains(event.relatedTarget)) flushNudge(); }} ondblclick={doubleClick} ondragover={dragover} ondrop={drop}>
       <SvelteFlow bind:nodes bind:edges bind:viewport {nodeTypes} {edgeTypes} class="canvas-viewport" aria-label="Canvas board" tabindex={0}
         minZoom={MIN_ZOOM} maxZoom={MAX_ZOOM} connectionMode={ConnectionMode.Loose} selectionMode={SelectionMode.Partial} snapGrid={snap ? [GRID, GRID] : undefined}
         zoomOnScroll={false} zoomOnPinch={false} zoomOnDoubleClick={false} panOnScroll={false} panOnDrag={marquee ? [1] : true} selectionOnDrag={marquee}
         nodeDragThreshold={0} onbeforedelete={async () => false} selectionKey="Shift" multiSelectionKey={['Shift', 'Meta', 'Control']} elevateNodesOnSelect={false} nodesConnectable={!parseError} connectionRadius={28}
         onlyRenderVisibleElements={nodes.length > VISIBLE_ONLY_ABOVE} defaultMarkerColor={null} attributionPosition="bottom-left"
         ariaLabelConfig={{ 'node.a11yDescription.default': 'Press Enter or Space to select a card. Arrow keys move the selection, Enter edits it and Delete removes it.', 'node.a11yDescription.keyboardDisabled': 'Press Enter or Space to select a card.' }}
-        isValidConnection={(connection) => connection.source !== connection.target} onbeforeconnect={handleConnect} onconnectend={connectEnd} oninit={() => setView(view)}
+        isValidConnection={(connection) => connection.source !== connection.target} onbeforeconnect={handleConnect} onconnectstart={() => connecting = true} onconnectend={connectEnd} oninit={() => setView(view)}
         onnodedragstart={({ nodes: dragged }) => dragStart(dragged)} onnodedrag={({ nodes: dragged }) => dragMove(dragged)} onnodedragstop={({ nodes: dragged }) => dragStop(dragged)}
         onselectiondragstart={(_event, dragged) => dragStart(dragged)} onselectiondrag={(_event, dragged) => dragMove(dragged)} onselectiondragstop={(_event, dragged) => dragStop(dragged)}
         onpanecontextmenu={({ event }) => openMenu(event, 'pane')} onnodecontextmenu={({ node, event }) => openMenu(event, 'node', node.id)} onselectioncontextmenu={({ nodes: chosen, event }) => openMenu(event, 'node', chosen[0]?.id)} onedgecontextmenu={({ edge, event }) => openMenu(event, 'edge', edge.id)}>
         <CanvasFlowBridge ready={(api) => flow = api} />
-        {#if snap}<Background variant={BackgroundVariant.Dots} gap={GRID} size={1} />{/if}
+        {#if snap && !far}<Background variant={BackgroundVariant.Dots} gap={GRID} size={1} />{/if}
         {#if minimap}<MiniMap pannable zoomable ariaLabel="Canvas minimap" nodeColor={(node) => canvasColor((node.data as CardData).node.color) ?? 'var(--muted)'} />{/if}
         {#if guides}<ViewportPortal target="front">{#if guides.vertical !== null}<div class="canvas-guide vertical" style={'left:' + guides.vertical + 'px;width:' + 1 / viewport.zoom + 'px'}></div>{/if}{#if guides.horizontal !== null}<div class="canvas-guide horizontal" style={'top:' + guides.horizontal + 'px;height:' + 1 / viewport.zoom + 'px'}></div>{/if}</ViewportPortal>{/if}
       </SvelteFlow>
