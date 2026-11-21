@@ -62,7 +62,9 @@ test('closing a shared dirty tab only closes that view and deleting a workspace 
   await page.getByRole('combobox', { name: 'Active workspace' }).selectOption({ label: 'First' });
   await expect(source(page)).toContainText('unsaved');
   await runCommand(page, 'Workspace');
-  // The panel may already be open; keep it visible before the deletion.
+  // The panel may already be open; keep it visible before the deletion. A
+  // toggled-off panel fades out briefly, so wait for it to leave first.
+  await expect(page.locator('.sidebar-panel.leaving')).toHaveCount(0);
   if (!await panel(page).isVisible()) await runCommand(page, 'Workspace');
   await panel(page).getByRole('button', { name: 'Delete workspace', exact: true }).click();
   await expect(page.getByRole('combobox', { name: 'Active workspace' }).locator('option:checked')).toHaveText('Second');

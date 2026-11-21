@@ -84,3 +84,17 @@ export function scrimExit(_node: HTMLElement) {
     },
   };
 }
+
+/** Svelte action: fade the element's content in whenever `key` changes, for
+    surfaces that swap what they show in place (the sidebar tool panel). */
+export function fadeOnChange(node: HTMLElement, key: unknown) {
+  let current = key;
+  return {
+    update(next: unknown) {
+      if (next === current) return;
+      current = next;
+      const duration = motionMs('fast');
+      if (duration) node.firstElementChild?.animate([{ opacity: 0 }, { opacity: 1 }], { duration, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+    },
+  };
+}

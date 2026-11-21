@@ -217,3 +217,82 @@ test('dialogs ease in, close without delaying focus and fade only their dim', as
   await page.keyboard.press('Escape');
   await expect(page.locator('.compact-menu')).toHaveCount(0);
 });
+
+test('sidebar panels slide from the rail side, leave the layout at once and get a scrim when narrow', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/');
+  // Record panel animations as they start and slow exits so they can be observed.
+  await page.evaluate(() => {
+    const original = Element.prototype.animate;
+    const state = window as unknown as { panelAnimations: { duration: number; from: string }[] };
+    state.panelAnimations = [];
+    Element.prototype.animate = function (keyframes, options) {
+      const animation = original.call(this, keyframes, options);
+      const duration = Number((options as KeyframeAnimationOptions).duration);
+      if (duration > 0 && this instanceof HTMLElement && this.classList.contains('sidebar-panel')) {
+        const frames = keyframes as Keyframe[];
+        state.panelAnimations.push({ duration, from: String(frames[0].transform ?? frames[0].opacity) });
+        if (this.classList.contains('leaving')) animation.playbackRate = 0.1;
+      }
+      return animation;
+    };
+  });
+  const animations = () => page.evaluate(() => (window as unknown as { panelAnimations: { duration: number; from: string }[] }).panelAnimations);
+  const rail = page.getByRole('navigation', { name: 'App sidebar' });
+  const panel = page.locator('.sidebar-panel');
+  const scrim = page.locator('.sidebar-scrim');
+  const workspaceWidth = () => page.locator('.content-area > .workspace').evaluate((element) => element.getBoundingClientRect().width);
+
+  const closedWidth = await workspaceWidth();
+  await rail.getByRole('button', { name: 'Templates panel', exact: true }).click();
+  await expect(panel).toBeVisible();
+  let recorded = await animations();
+  expect(recorded).toHaveLength(1);
+  expect(recorded[0].duration).toBe(240);
+  expect(recorded[0].from).toContain('translate(-16px');
+  await panel.evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)));
+  await expect(scrim).toBeHidden();
+  const openWidth = await workspaceWidth();
+  expect(openWidth).toBeLessThan(closedWidth - 200);
+
+  // Switching panels fades the incoming content, not the panel.
+  await rail.getByRole('button', { name: 'Table editor panel', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Table editor', exact: true })).toBeVisible();
+  expect(await animations()).toHaveLength(1);
+
+  await rail.getByRole('button', { name: 'Table editor panel', exact: true }).click();
+  await expect(panel).toHaveClass(/leaving/);
+  expect(await panel.evaluate((element) => ({ inert: (element as HTMLElement).inert, position: getComputedStyle(element).position, hasContent: element.childElementCount > 0 }))).toEqual({ inert: true, position: 'absolute', hasContent: true });
+  // The editor already has its full width while the panel fades over it.
+  expect(await workspaceWidth()).toBe(closedWidth);
+  recorded = await animations();
+  expect(recorded).toHaveLength(2);
+  expect(recorded[1].duration).toBeCloseTo(168, 3);
+  await expect(panel).toHaveCount(0);
+
+  // Right-hand sidebar slides from the right.
+  await page.evaluate(() => { (window as unknown as { panelAnimations: unknown[] }).panelAnimations.length = 0; });
+  await openSettings(page);
+  await page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('radiogroup', { name: 'Sidebar position', exact: true }).getByRole('radio', { name: 'Right', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await rail.getByRole('button', { name: 'Templates panel', exact: true }).click();
+  await expect(panel).toBeVisible();
+  await expect.poll(async () => (await animations())[0]?.from ?? '').toContain('translate(16px');
+  await panel.evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)));
+
+  // Narrow window: drawer with a scrim; the rail stays usable and the scrim closes.
+  await page.setViewportSize({ width: 720, height: 480 });
+  await expect(scrim).toBeVisible();
+  expect(await scrim.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgba(0, 0, 0, 0.55)');
+  const box = (await page.locator('.content-area > .workspace').boundingBox())!;
+  const covered = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.className, [box.x + 40, box.y + 200]);
+  expect(covered).toContain('sidebar-scrim');
+  await rail.getByRole('button', { name: 'Explorer panel', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Explorer', exact: true })).toBeVisible();
+  await page.mouse.click(box.x + 40, box.y + 200);
+  await expect(panel).toHaveCount(0);
+  await expect(scrim).toHaveCount(0);
+  // The click only dismissed the drawer; the next one reaches the editor.
+  await page.locator('.cm-content').first().click();
+  await expect(page.locator('.cm-content').first()).toBeFocused();
+});
