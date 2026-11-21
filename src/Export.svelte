@@ -75,4 +75,4 @@
   <div class="panel-actions"><button aria-label="Export document" disabled={busy} onclick={run}>{busy ? 'Exporting…' : 'Export document'}</button>{#if busy}<button onclick={() => void cancel()}>Cancel export</button>{/if}</div>
 </section>
 
-<style>.export-help summary{cursor:pointer;font-size:10px;color:var(--muted)}.export-help p{margin-top:8px}.export-panel button:disabled{cursor:default}</style>
+<style>.export-help summary{cursor:pointer;font-size:12px;color:var(--muted)}.export-help p{margin-top:8px}.export-panel button:disabled{cursor:default}</style>

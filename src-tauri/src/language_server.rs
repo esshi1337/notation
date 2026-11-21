@@ -361,7 +361,7 @@ impl Service {
         if message.len() > MAX_FRAME_BYTES {
             return Err("LSP message exceeds the 4 MiB limit.".into());
         }
-        serde_json::from_str::<serde_json::Value>(&message)
+        valid_json(&message)
             .map_err(|error| format!("LSP message must be one complete JSON value: {error}"))?;
         let server = self
             .inner
@@ -1142,9 +1142,57 @@ where
     }
     let message = String::from_utf8(body)
         .map_err(|_| "Language server frame body is not valid UTF-8 JSON.".to_string())?;
-    serde_json::from_str::<serde_json::Value>(&message)
-        .map_err(|error| format!("Language server sent invalid JSON: {error}"))?;
+    valid_json(&message).map_err(|error| format!("Language server sent invalid JSON: {error}"))?;
     Ok(Some(message))
+}
+
+/// Check that `message` is exactly one JSON value without building it:
+/// frames are forwarded as text, so the parsed tree was only thrown away.
+///
+/// `serde::de::IgnoredAny` would be faster still, but it skips values without
+/// the parser's nesting limit. This visitor walks the same grammar as a
+/// `serde_json::Value` parse, limit included, and allocates nothing.
+pub(crate) fn valid_json(message: &str) -> Result<(), serde_json::Error> {
+    serde_json::from_str::<Skipped>(message).map(|_| ())
+}
+struct Skipped;
+impl<'de> serde::Deserialize<'de> for Skipped {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = Skipped;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("any JSON value")
+            }
+            fn visit_bool<E>(self, _: bool) -> Result<Skipped, E> {
+                Ok(Skipped)
+            }
+            fn visit_i64<E>(self, _: i64) -> Result<Skipped, E> {
+                Ok(Skipped)
+            }
+            fn visit_u64<E>(self, _: u64) -> Result<Skipped, E> {
+                Ok(Skipped)
+            }
+            fn visit_f64<E>(self, _: f64) -> Result<Skipped, E> {
+                Ok(Skipped)
+            }
+            fn visit_str<E>(self, _: &str) -> Result<Skipped, E> {
+                Ok(Skipped)
+            }
+            fn visit_unit<E>(self) -> Result<Skipped, E> {
+                Ok(Skipped)
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Skipped, A::Error> {
+                while seq.next_element::<Skipped>()?.is_some() {}
+                Ok(Skipped)
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Skipped, A::Error> {
+                while map.next_entry::<Skipped, Skipped>()?.is_some() {}
+                Ok(Skipped)
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
 }
 
 fn remaining(deadline: Option<Instant>) -> Result<Option<Duration>, String> {
@@ -1248,5 +1296,45 @@ fn polled_read(
                 return Err(error);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod json_validation_tests {
+    use super::valid_json;
+
+    #[test]
+    fn validation_accepts_one_complete_value_and_rejects_everything_else() {
+        for valid in [
+            r#"{"jsonrpc":"2.0","id":1,"result":{"items":[{"label":"é\u00e9","n":1.5e3,"x":null,"y":[true,false]}]}}"#,
+            "[]",
+            "  {\"a\": {\"b\": [1, 2, {\"c\": \"\\\"\"}]}}  ",
+            "\"text\"",
+            "0",
+            "null",
+        ] {
+            assert!(valid_json(valid).is_ok(), "{valid}");
+            assert!(serde_json::from_str::<serde_json::Value>(valid).is_ok(), "{valid}");
+        }
+        for invalid in [
+            "",
+            "{",
+            r#"{"a":1"#,
+            r#"{"a":1} {"b":2}"#,
+            r#"{"a":1}x"#,
+            r#"{"a":}"#,
+            r#"{'a':1}"#,
+            "[1,]",
+            r#"{"a":"\x"}"#,
+            "NaN",
+            r#"{"a":1,}"#,
+        ] {
+            assert!(valid_json(invalid).is_err(), "{invalid}");
+            // Same verdict as the value-tree parse it replaces.
+            assert!(serde_json::from_str::<serde_json::Value>(invalid).is_err(), "{invalid}");
+        }
+        // Deep nesting is refused by both, without overflowing the stack.
+        let deep = "[".repeat(200_000) + &"]".repeat(200_000);
+        assert!(valid_json(&deep).is_err());
     }
 }

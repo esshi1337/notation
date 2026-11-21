@@ -616,19 +616,29 @@ mod desktop {
         database_work(database.get()?, |db| db.list_stickies()).await
     }
     #[tauri::command]
-    async fn create_sticky_note(window: tauri::WebviewWindow, database: State<'_, DatabaseState>, manager: State<'_, sticky::StickyManager>) -> Result<sticky::Metadata, String> {
+    async fn create_sticky_note(window: tauri::WebviewWindow, database: State<'_, DatabaseState>) -> Result<sticky::Metadata, String> {
         sticky::authorize_main(window.label())?;
-        let admission = manager.lock()?;
-        admission.check_open()?;
-        database.get()?.create_sticky()
+        let database = database.get()?;
+        // The admission lock is held across the database call; do that on the
+        // blocking pool, never on an async worker or the UI thread.
+        sticky_work(&window, move |manager| {
+            let admission = manager.lock()?;
+            admission.check_open()?;
+            database.create_sticky()
+        })
+        .await
     }
     #[tauri::command]
-    async fn delete_sticky_note(window: tauri::WebviewWindow, id: String, database: State<'_, DatabaseState>, manager: State<'_, sticky::StickyManager>) -> Result<(), String> {
+    async fn delete_sticky_note(window: tauri::WebviewWindow, id: String, database: State<'_, DatabaseState>) -> Result<(), String> {
         sticky::authorize_main(window.label())?;
+        let database = database.get()?;
         // Serialize deletion with reservation. Never hold this lock across window APIs.
-        let admission = manager.lock()?;
-        admission.check_delete(&id)?;
-        database.get()?.delete_sticky(&id)
+        sticky_work(&window, move |manager| {
+            let admission = manager.lock()?;
+            admission.check_delete(&id)?;
+            database.delete_sticky(&id)
+        })
+        .await
     }
     #[tauri::command]
     async fn read_sticky_note(window: tauri::WebviewWindow, id: String, database: State<'_, DatabaseState>) -> Result<sticky::Note, String> {
@@ -648,22 +658,31 @@ mod desktop {
     #[tauri::command]
     async fn open_sticky_note(window: tauri::WebviewWindow, id: String, app: tauri::AppHandle, database: State<'_, DatabaseState>, manager: State<'_, sticky::StickyManager>) -> Result<(), String> {
         sticky::authorize_main(window.label())?;
+        let db = database.get()?;
         let reserved = {
-            let mut admission = manager.lock()?;
-            // Existence and reservation are atomic with respect to deletion.
-            database.get()?.read_sticky(&id)?;
-            admission.reserve(&id)?
+            let (db, id) = (db.clone(), id.clone());
+            sticky_work(&window, move |manager| {
+                let mut admission = manager.lock()?;
+                // Existence and reservation are atomic with respect to deletion.
+                db.read_sticky(&id)?;
+                admission.reserve(&id)
+            })
+            .await?
         };
-        build_sticky_window(&app, &database.get()?, &manager, &id, reserved, false)
+        build_sticky_window(&app, &db, &manager, &id, reserved, false)
     }
     #[tauri::command]
     async fn new_sticky_note(window: tauri::WebviewWindow, id: String, app: tauri::AppHandle, database: State<'_, DatabaseState>, manager: State<'_, sticky::StickyManager>) -> Result<(), String> {
         sticky::authorize_note(window.label(), &id)?;
         let db = database.get()?;
         let note = {
-            let mut admission = manager.lock()?;
-            db.read_sticky(&id)?;
-            admission.reserve_new(&db)?
+            let db = db.clone();
+            sticky_work(&window, move |manager| {
+                let mut admission = manager.lock()?;
+                db.read_sticky(&id)?;
+                admission.reserve_new(&db)
+            })
+            .await?
         };
         build_sticky_window(&app, &db, &manager, &note.id, true, true)
     }
@@ -671,6 +690,16 @@ mod desktop {
     async fn drag_sticky_note(window: tauri::WebviewWindow, id: String) -> Result<(), String> {
         sticky::authorize_note(window.label(), &id)?;
         window.start_dragging().map_err(|error| error.to_string())
+    }
+    /// Run a section that takes the sticky admission lock on the blocking pool.
+    async fn sticky_work<T: Send + 'static>(
+        window: &tauri::WebviewWindow,
+        operation: impl FnOnce(&sticky::StickyManager) -> Result<T, String> + Send + 'static,
+    ) -> Result<T, String> {
+        let app = window.app_handle().clone();
+        tauri::async_runtime::spawn_blocking(move || operation(&app.state::<sticky::StickyManager>()))
+            .await
+            .map_err(|error| format!("Sticky note task failed: {error}"))?
     }
     // Main-list opens and the sticky plus button share focus, construction and cleanup.
     fn build_sticky_window(app: &tauri::AppHandle, database: &storage::Database, manager: &sticky::StickyManager, id: &str, reserved: bool, created: bool) -> Result<(), String> {
@@ -705,15 +734,20 @@ mod desktop {
     ) -> Result<Vec<launch::LaunchRequest>, String> {
         launches.set_ready(ready)
     }
+    // Asynchronous so it does not run on the UI thread: a sticky command may
+    // hold the admission lock while it waits for the database.
     #[tauri::command]
-    fn set_launch_closing(
+    async fn set_launch_closing(
         window: tauri::WebviewWindow,
         closing: bool,
         launches: State<'_, launch::LaunchQueue>,
-        stickies: State<'_, sticky::StickyManager>,
     ) -> Result<(), String> {
         sticky::authorize_main(window.label())?;
-        stickies.lock()?.close_with(closing, || launches.set_closing(closing))
+        let launches = launches.inner().clone();
+        sticky_work(&window, move |manager| {
+            manager.lock()?.close_with(closing, || launches.set_closing(closing))
+        })
+        .await
     }
     #[tauri::command]
     fn complete_launch_request(
@@ -956,8 +990,16 @@ mod desktop {
             .on_window_event(|window, event| {
                 if matches!(event, tauri::WindowEvent::Destroyed) {
                     if let Some(id) = window.label().strip_prefix("sticky-") {
-                        if let Ok(mut admission) = window.state::<sticky::StickyManager>().lock() {
-                            admission.release(id);
+                        // This handler runs on the UI thread. If a sticky
+                        // command holds the admission lock (it may be waiting
+                        // for the database), release from a worker instead.
+                        if !window.state::<sticky::StickyManager>().try_release(id) {
+                            let (app, id) = (window.app_handle().clone(), id.to_string());
+                            std::thread::spawn(move || {
+                                if let Ok(mut admission) = app.state::<sticky::StickyManager>().lock() {
+                                    admission.release(&id);
+                                }
+                            });
                         }
                     }
                 }

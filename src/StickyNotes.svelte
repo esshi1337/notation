@@ -59,14 +59,14 @@
   .panel-actions { display: flex; flex-wrap: wrap; gap: 6px; }
   .panel-actions button { min-height: 30px; }
   .new-note { flex: 1; font-weight: 600; }
-  .list-heading { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; font-size: 11px; }
+  .list-heading { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; font-size:12px; }
   .list-heading span { color: var(--muted); font-variant-numeric: tabular-nums; }
   .notes-list { display: flex; flex-direction: column; gap: 6px; }
   .notes-list:empty { display: none; }
   .sticky-row { display: flex; gap: 4px; padding: 5px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
   .sticky-row button:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; text-align: left; border-color: transparent; background: transparent; padding: 7px; line-height: 1.4; }
   .sticky-row button:first-child:hover { background: var(--hover); }
-  .delete-note { align-self: center; color: var(--muted); border-color: transparent; font-size: 10px; }
+  .delete-note { align-self: center; color: var(--muted); border-color: transparent; font-size:12px; }
   .delete-note:hover { color: var(--text); }
   .empty-notes { padding: 20px 12px; border: 1px dashed var(--border); border-radius: 6px; text-align: center; line-height: 1.5; }
   .empty-notes p { margin: 6px 0 0; color: var(--muted); }
