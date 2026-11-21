@@ -76,9 +76,11 @@ def main():
     CACHE.mkdir(parents=True,exist_ok=True);DEST.mkdir(parents=True,exist_ok=True)
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
         for name in pool.map(fetch,[item for item in lock['artifacts'] if item['id'] not in args.skip]):print('Bundled',name,flush=True)
-    for package in ['@fontsource/geist','@fontsource/geist-mono','katex']:
+    # typst.ts (Apache-2.0) covers the in-app Typst math compiler and renderer packages.
+    for package in ['@fontsource/geist','@fontsource/geist-mono','katex','@myriaddreamin/typst.ts']:
         notice=ROOT/'node_modules'/package/'LICENSE'
         if notice.is_file(): shutil.copyfile(notice,DEST/'licenses'/(package.replace('/','-').replace('@','')+'-LICENSE'))
+    shutil.copyfile(ROOT/'src/assets/typst/NewCMMath-LICENSE.txt',DEST/'licenses'/'NewCMMath-LICENSE.txt')
     shutil.copyfile(LOCK,DEST/'manifest.json')
     if not (DEST/'jre/bin/java').is_file(): raise ValueError('Private JRE is missing; run without --skip jre')
     print('Offline engines ready at',DEST)

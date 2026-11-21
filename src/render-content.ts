@@ -3,6 +3,8 @@ import { orderedCitationGroups } from './citations';
 import { parseFrontmatter } from './frontmatter';
 import DOMPurify from 'dompurify';
 import { renderMathInto } from './math';
+import { resolveMathMode } from './math-syntax';
+import type { MathMode } from './math-syntax';
 import { renderMermaidInto } from './mermaid';
 import type { DiagramTheme } from './mermaid';
 import { taskName } from './markdown-features';
@@ -31,6 +33,8 @@ export async function renderContent(target: HTMLElement, result: ReturnType<type
   prepareHtml?: (html: string, sourcePath?: string) => string;
   cells?: CellSession;
   documentSource?: string; citationScope?: string; citationGroups?: string[]; includeBibliography?: boolean;
+  /** Math syntax of this content; defaults to its `math:` property, then the Settings default. */
+  mathMode?: MathMode;
 }) {
   const focusedTask = target.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.taskFrom : undefined;
   clearRenderedContent(target);
@@ -101,9 +105,13 @@ export async function renderContent(target: HTMLElement, result: ReturnType<type
       if (context.current()) context.openWiki?.(span.target, context.sourcePath);
     });
   }
+  // Typst equations that are not cached yet compile off the main thread; the
+  // render is complete (for export and scroll anchors) once they settle.
+  const mathMode = context.mathMode ?? resolveMathMode(source);
+  const mathWork: Promise<void>[] = [];
   for (const element of target.querySelectorAll<HTMLElement>('[data-math-index]')) {
     const math = result.maths[Number(element.dataset.mathIndex)];
-    if (math) renderMathInto(element, math.content, math.display);
+    if (math) mathWork.push(renderMathInto(element, math.content, math.display, mathMode));
   }
   for (const link of target.querySelectorAll<HTMLAnchorElement>('a:not([data-wiki-index]):not([data-footnote-ref]):not([data-footnote-back])')) { link.target = '_blank'; link.rel = 'noopener noreferrer'; }
   for(const [index,cell] of (result.cells??[]).entries()){const element=target.querySelector<HTMLElement>(`[data-cell-index="${index}"]`);if(element)cleanups.set(element,renderCell(element,cell.id,cell.runnable?context.cells:undefined,context.current));}
@@ -133,7 +141,7 @@ export async function renderContent(target: HTMLElement, result: ReturnType<type
         if (!current()) return;
         if (trail.includes(loaded.key)) throw new Error('Circular embed: ' + embed.label);
         await renderContent(body, renderEmbeddedMarkdown(loaded.content,true,0,loaded.variables), {
-          ...context, current, cells: undefined, sourcePath: loaded.path, embedTrail: [...trail,loaded.key],
+          ...context, current, cells: undefined, sourcePath: loaded.path, embedTrail: [...trail,loaded.key], mathMode: resolveMathMode(loaded.fullContent ?? loaded.content),
           toggle: () => false, edit: () => context.openPath?.(loaded.path), editProperties: () => context.openPath?.(loaded.path),
         });
         for (const input of body.querySelectorAll<HTMLInputElement>('input.task-checkbox')) input.disabled = true;
@@ -154,5 +162,6 @@ export async function renderContent(target: HTMLElement, result: ReturnType<type
   }
   if(!context.prepareHtml)for(const element of mediaElements){if(!context.current())return;cleanups.set(element,await renderMedia(element,context.sourcePath,context.current));}
   await citationWork;
+  await Promise.all(mathWork);
   if (context.current()) context.measure?.();
 }

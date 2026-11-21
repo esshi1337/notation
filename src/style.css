@@ -596,6 +596,18 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .cm-live-math .katex-display { margin: 0; padding: 8px 0; }
 .rendered-math { overflow-wrap: normal; }
 .rendered-math .katex-display { overflow-x: auto; overflow-y: hidden; padding: 6px 0; }
+.cm-live-math .typst-math { font-size: .909em; }
+.cm-live-math .typst-display { margin: 0; padding: 8px 0; }
+/* Typst math is an SVG in the text colour, sized in em and offset so its
+   baseline sits on the text baseline (see typst-math.ts). */
+.typst-math { white-space: nowrap; }
+.typst-math-svg { display: inline-block; max-width: none; flex: none; }
+.typst-display { display: block; margin: 1em 0; text-align: center; }
+.rendered-math .typst-display { overflow-x: auto; overflow-y: hidden; padding: 6px 0; }
+/* An equation waiting for the Typst worker shows its source. A warm compile
+   answers within a frame or two, so the source appears only after a delay. */
+.math-pending { color: var(--muted); font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: .85em; overflow-wrap: anywhere; animation: math-pending-reveal 1ms linear 200ms both; }
+@keyframes math-pending-reveal { from { opacity: 0; } to { opacity: 1; } }
 .math-error { color: var(--error); font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; overflow-wrap: anywhere; }
 .content-area { display: flex; flex: 1; min-height: 0; min-width: 0; }
 .content-area .workspace { flex: 1; min-width: 0; }

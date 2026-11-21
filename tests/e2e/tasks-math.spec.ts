@@ -139,7 +139,8 @@ test('reveals inline math for editing then renders the changed expression', asyn
   await source(page).press('Shift+End');
   await page.keyboard.insertText('Value $y^3$.');
   await blurEditor(page);
-  await expect(page.locator('.cm-live-math .katex')).toHaveCount(1);
+  // `y^3` is valid Typst, the default engine.
+  await expect(page.locator('.cm-live-math svg.typst-math-svg')).toHaveAttribute('aria-label', 'y^3');
   expect(await savedText(page)).toBe('# Math\n\nValue $y^3$.\n\nEnd.');
 });
 
@@ -195,16 +196,20 @@ test('keeps math, Mermaid and tasks together across mode changes and reload', as
   const text = '# Mixed note\n\n- [ ] Check result\n\n$E=mc^2$\n\n$$a^2+b^2=c^2$$\n\n```mermaid\nflowchart LR\n A --> B\n```\n\nEnd.';
   await source(page).fill(text);
   await runCommand(page, 'Live Preview');
-  await expect(page.locator('.cm-live-math .katex')).toHaveCount(2);
+  // `E=mc^2` is plain TeX (KaTeX fallback); `a^2+b^2=c^2` is valid Typst.
+  await expect(page.locator('.cm-live-math .katex')).toHaveCount(1);
+  await expect(page.locator('.cm-live-math svg.typst-math-svg')).toHaveCount(1);
   await expect(page.locator('.cm-live-mermaid svg')).toHaveCount(1);
   await task(page, 'Check result').check();
   await runCommand(page, 'Preview');
-  await expect(reading(page).locator('.katex')).toHaveCount(2);
+  await expect(reading(page).locator('.katex')).toHaveCount(1);
+  await expect(reading(page).locator('.typst-display svg.typst-math-svg')).toHaveCount(1);
   await expect(task(page, 'Check result')).toBeChecked();
   await runCommand(page, 'Live Preview');
   await page.reload();
   await expect(task(page, 'Check result')).toBeChecked();
-  await expect(page.locator('.cm-live-math .katex')).toHaveCount(2);
+  await expect(page.locator('.cm-live-math .katex')).toHaveCount(1);
+  await expect(page.locator('.cm-live-math svg.typst-math-svg')).toHaveCount(1);
   expect(await savedText(page)).toBe(text.replace('[ ] Check', '[x] Check'));
 });
 

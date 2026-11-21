@@ -8,6 +8,8 @@ import type { DiagramTheme } from './mermaid';
 import { analyzeCallouts, analyzeMarkdown, analyzeQuotes, containsCallout, featureParser, taskName } from './markdown-features';
 import type { CalloutSpan, MathSpan, QuoteSpan, TaskSpan } from './markdown-features';
 import { renderMathInto } from './math';
+import { resolveMathMode } from './math-syntax';
+import type { MathMode } from './math-syntax';
 import { toggleTask } from './tasks';
 import { frontmatterMarkup, renderCallout, renderMarkdown } from './render-markdown';
 import { renderContent, clearRenderedContent } from './render-content';
@@ -26,7 +28,7 @@ import { inlineVariables } from './variables';
 import type { VariableSpan } from './variables';
 import { formattingStatus } from './reduced-formatting';
 
-export type LiveNavigation = { openWiki?: (target: string, sourcePath?: string) => void; editProperties?: () => void; sourcePath?: string; loadEmbed?: (target: string, sourcePath?: string) => Promise<EmbedDocument>; openPath?: (path: string) => void; cells?: CellSession; variables?:Record<string,unknown>; citationScope?:string; citationGroups?:string[]; documentSource?:string; includeBibliography?:boolean; variableSource?:string };
+export type LiveNavigation = { mathMode?: MathMode; openWiki?: (target: string, sourcePath?: string) => void; editProperties?: () => void; sourcePath?: string; loadEmbed?: (target: string, sourcePath?: string) => Promise<EmbedDocument>; openPath?: (path: string) => void; cells?: CellSession; variables?:Record<string,unknown>; citationScope?:string; citationGroups?:string[]; documentSource?:string; includeBibliography?:boolean; variableSource?:string };
 
 function citationNavigate(view: EditorView, id: string, scope: string) {
   const from = id.startsWith(scope + 'cite-') ? Number(id.slice((scope + 'cite-').length)) : view.state.doc.length;
@@ -77,7 +79,7 @@ class FootnoteWidget extends WidgetType {
 
 class DocumentWidget extends WidgetType {
   constructor(readonly raw: string, readonly from: number, readonly theme: DiagramTheme, readonly navigation: LiveNavigation, readonly kind: string) { super(); }
-  eq(other: DocumentWidget) { return this.raw === other.raw && this.from === other.from && this.theme === other.theme && this.navigation.sourcePath === other.navigation.sourcePath && (!(this.kind === 'footnote' || /\[[^\]\r\n]*@/u.test(this.raw)) || this.navigation.documentSource === other.navigation.documentSource) && this.navigation.variableSource === other.navigation.variableSource; }
+  eq(other: DocumentWidget) { return this.raw === other.raw && this.from === other.from && this.theme === other.theme && this.navigation.sourcePath === other.navigation.sourcePath && (!(this.kind === 'footnote' || /\[[^\]\r\n]*@/u.test(this.raw)) || this.navigation.documentSource === other.navigation.documentSource) && this.navigation.variableSource === other.navigation.variableSource && this.navigation.mathMode === other.navigation.mathMode; }
   toDOM(view: EditorView) {
     const dom = document.createElement('div'); dom.className = 'markdown-body cm-live-document cm-live-' + this.kind;
     const token = { alive: true }; lifecycle.set(dom,token);
@@ -142,7 +144,7 @@ function revealSource(view: EditorView, at: number, event: Event) {
 
 class CalloutWidget extends WidgetType {
   constructor(readonly callout: CalloutSpan, readonly theme: DiagramTheme, readonly folds: Map<string, boolean>, readonly navigation: LiveNavigation) { super(); }
-  eq(other: CalloutWidget) { return JSON.stringify(this.callout) === JSON.stringify(other.callout) && this.theme === other.theme && this.navigation.sourcePath === other.navigation.sourcePath && (!/\[[^\]\r\n]*@/u.test(this.callout.body) || this.navigation.documentSource === other.navigation.documentSource) && this.navigation.variableSource === other.navigation.variableSource; }
+  eq(other: CalloutWidget) { return JSON.stringify(this.callout) === JSON.stringify(other.callout) && this.theme === other.theme && this.navigation.sourcePath === other.navigation.sourcePath && (!/\[[^\]\r\n]*@/u.test(this.callout.body) || this.navigation.documentSource === other.navigation.documentSource) && this.navigation.variableSource === other.navigation.variableSource && this.navigation.mathMode === other.navigation.mathMode; }
   updateDOM(dom: HTMLElement, view: EditorView) {
     const previous = lifecycle.get(dom); if (previous) previous.alive = false;
     const token = { alive: true }; lifecycle.set(dom, token);
@@ -168,7 +170,7 @@ class CalloutWidget extends WidgetType {
 
 class RichQuoteWidget extends WidgetType {
   constructor(readonly quote: QuoteSpan, readonly theme: DiagramTheme, readonly folds: Map<string, boolean>, readonly navigation: LiveNavigation) { super(); }
-  eq(other: RichQuoteWidget) { return this.quote.raw === other.quote.raw && this.quote.from === other.quote.from && this.theme === other.theme && this.navigation.sourcePath === other.navigation.sourcePath && (!/\[[^\]\r\n]*@/u.test(this.quote.raw) || this.navigation.documentSource === other.navigation.documentSource) && this.navigation.variableSource === other.navigation.variableSource; }
+  eq(other: RichQuoteWidget) { return this.quote.raw === other.quote.raw && this.quote.from === other.quote.from && this.theme === other.theme && this.navigation.sourcePath === other.navigation.sourcePath && (!/\[[^\]\r\n]*@/u.test(this.quote.raw) || this.navigation.documentSource === other.navigation.documentSource) && this.navigation.variableSource === other.navigation.variableSource && this.navigation.mathMode === other.navigation.mathMode; }
   toDOM(view: EditorView) {
     const dom = document.createElement('div'); dom.className = 'cm-live-rich-quote markdown-body';
     const token = { alive: true }; lifecycle.set(dom, token);
@@ -241,15 +243,17 @@ class TaskWidget extends WidgetType {
 }
 
 class MathWidget extends WidgetType {
-  constructor(readonly span: MathSpan) { super(); }
-  eq(other: MathWidget) { return JSON.stringify(this.span) === JSON.stringify(other.span); }
+  constructor(readonly span: MathSpan, readonly mode: MathMode) { super(); }
+  eq(other: MathWidget) { return this.mode === other.mode && JSON.stringify(this.span) === JSON.stringify(other.span); }
   toDOM(view: EditorView) {
     const element: HTMLElement = document.createElement(this.span.block ? 'div' : 'span');
     element.className = `cm-live-math${this.span.display ? ' cm-live-math-display' : ''}${this.span.block ? ' cm-live-math-block' : ''}`;
     element.setAttribute('role', 'button');
     element.setAttribute('aria-label', this.span.display ? 'Edit block equation' : 'Edit inline equation');
     element.tabIndex = 0;
-    renderMathInto(element, this.span.content, this.span.display);
+    // Cached Typst and LaTeX render at once; a new Typst expression arrives
+    // from the worker, and its size is only known then.
+    void renderMathInto(element, this.span.content, this.span.display, this.mode, () => { if (element.isConnected) view.requestMeasure(); });
     const edit = (event: Event) => revealSource(view, this.span.from + (this.span.display ? 2 : 1), event);
     element.addEventListener('mousedown', edit);
     element.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') edit(event); });
@@ -418,7 +422,7 @@ function decorationsFor(state: EditorState, theme: DiagramTheme, standalone: boo
 
   const analysis = documentAnalysis(state.doc);
   const { text, frontmatter, citations, footnotes, features, callouts, tables, variables } = analysis;
-  navigation={...navigation,variables:frontmatter?.values??{},documentSource:text,variableSource:frontmatter?.raw??'',citationGroups:analysis.citationGroups,includeBibliography:false};
+  navigation={...navigation,mathMode:resolveMathMode(text,navigation.mathMode),variables:frontmatter?.values??{},documentSource:text,variableSource:frontmatter?.raw??'',citationGroups:analysis.citationGroups,includeBibliography:false};
   const tree = analysis.occludedTree ?? ensureSyntaxTree(state, state.doc.length, 50) ?? syntaxTree(state);
   for (const block of analysis.blocks) hide(block.markerFrom,block.markerTo);
   for (const table of tables) if (!widgetHidden(table.from, table.to)) decorations.push(Decoration.replace({ widget:new DocumentWidget(text.slice(table.from,table.to),table.from,theme,navigation,'table'),block:true }).range(table.from,table.to));
@@ -448,7 +452,7 @@ function decorationsFor(state: EditorState, theme: DiagramTheme, standalone: boo
   }
   for (const span of features.maths) {
     if (insideCallout(span.from)) continue;
-    if (!widgetHidden(span.from, span.to)) decorations.push(Decoration.replace({ widget: new MathWidget(span), block: span.block, inclusive: false }).range(span.from, span.to));
+    if (!widgetHidden(span.from, span.to)) decorations.push(Decoration.replace({ widget: new MathWidget(span, navigation.mathMode!), block: span.block, inclusive: false }).range(span.from, span.to));
   }
   tree.iterate({
     enter(node) {
