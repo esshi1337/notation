@@ -23,6 +23,8 @@ async function fixture({ cachedDraft = baseDraft, cachedScript = baseScript, cac
     ['notation.script-library', JSON.stringify(scriptLibrary)],
   ]);
   const commits = [];
+  const wire = [];
+  let storedTabs = new Map((database.session?.tabs ?? []).map((tab) => [tab.id, structuredClone(tab)]));
   const commands = [];
   const cacheAttempts = [];
   let writeGate, writeStarted;
@@ -40,7 +42,20 @@ async function fixture({ cachedDraft = baseDraft, cachedScript = baseScript, cac
         if (Buffer.byteLength(JSON.stringify(args.state.session ?? null)) > 32 * 1024 * 1024) throw new Error('Session exceeds the 32 MiB recovery limit. No tabs were dropped or replaced.');
         if (writeGate) { const gate = writeGate; writeGate = null; writeStarted(); await gate; }
         if (failWrites) throw new Error('Simulated database write failure');
-        commits.push(structuredClone(args.state)); return null;
+        // Like the real backend: a tab marked unchanged keeps its stored row,
+        // and an unknown one is refused. `commits` records what the database
+        // then holds; `wire` records what was actually sent.
+        wire.push(structuredClone(args.state));
+        const state = structuredClone(args.state);
+        if (state.session) {
+          state.session.tabs = state.session.tabs.map((tab) => {
+            if (!tab.unchanged) return tab;
+            if (!storedTabs.has(tab.id)) throw new Error('Session marks a tab as unchanged that is not stored. Send the full session.');
+            return structuredClone(storedTabs.get(tab.id));
+          });
+          storedTabs = new Map(state.session.tabs.map((tab) => [tab.id, structuredClone(tab)]));
+        } else if ('session' in state) storedTabs = new Map();
+        commits.push(state); return null;
       }
       throw new Error('Unexpected command ' + command);
     },
@@ -48,7 +63,7 @@ async function fixture({ cachedDraft = baseDraft, cachedScript = baseScript, cac
   const store = await server.ssrLoadModule('/src/store.ts?recovery-test=' + ++sequence);
   const state = await store.bootstrapMetadata();
   const currentStatus = () => { let value; const unsubscribe = store.observePersistence((status) => value = status); unsubscribe(); return value; };
-  return { store, state, data, commits, commands, cacheAttempts, status: currentStatus, allowWrites: () => { failWrites = false; },
+  return { store, state, data, commits, wire, commands, cacheAttempts, forgetStoredTabs: () => { storedTabs = new Map(); }, status: currentStatus, allowWrites: () => { failWrites = false; },
     blockNextWrite: () => {
       let release;
       const started = new Promise(resolve => { writeStarted = resolve; });
@@ -355,7 +370,62 @@ try {
     const browser = await fixture({ native: false, pendingRecovery: { draft: newer, failedAt: 200 } });
     assert.equal(browser.status().recoveryOffered, true, 'browser mode offers an inherited copy');
   }
-  console.log('Store recovery: 21 scenario groups passed (including 9 content comparisons)');
+  {
+    // Autosave sends only the tabs that changed since the last successful save.
+    const big = 'x'.repeat(200000);
+    const tabs = [0, 1, 2].map((index) => ({ id: 'tab-' + index, name: index + '.md', path: null, content: big + index, savedContent: big, savedName: index + '.md', selection: { anchor: index, head: index } }));
+    const session = (edit) => ({ activeTabId: 'tab-1', updatedAt: 1000 + edit, tabs: tabs.map((tab, index) => index === 1 ? { ...tab, content: tab.content + ' edit ' + edit } : { ...tab }) });
+    const test = await fixture({ cachedSession: null, database: { ...baseState, session: null } });
+    test.store.persistMetadata({ session: session(0) });
+    assert.equal(await test.store.flushPersistence(), true);
+    assert.deepEqual(test.wire.at(-1).session, session(0), 'the first save sends every tab');
+    test.store.persistMetadata({ session: session(1) });
+    assert.equal(await test.store.flushPersistence(), true);
+    const sent = test.wire.at(-1).session;
+    assert.deepEqual(sent.tabs.map((tab) => tab.unchanged === true), [true, false, true]);
+    assert.deepEqual(sent.tabs[0], { id: 'tab-0', unchanged: true });
+    assert.deepEqual(sent.tabs[1], session(1).tabs[1]);
+    assert.ok(JSON.stringify(test.wire.at(-1)).length < JSON.stringify({ session: session(1) }).length * 0.4, 'the payload is about one tab');
+    assert.deepEqual(test.commits.at(-1).session, session(1), 'the database holds the full session');
+    // Metadata-only changes (selection, name) count as changes.
+    const moved = session(1); moved.tabs[2].selection = { anchor: 9, head: 9 }; moved.tabs[0].name = 'renamed.md';
+    test.store.persistMetadata({ session: moved });
+    await test.store.flushPersistence();
+    assert.deepEqual(test.wire.at(-1).session.tabs.map((tab) => tab.unchanged === true), [false, true, false]);
+    assert.deepEqual(test.commits.at(-1).session, moved);
+    // A database that no longer holds a tab gets the full session instead.
+    test.forgetStoredTabs();
+    const later = session(3);
+    test.store.persistMetadata({ session: later });
+    assert.equal(await test.store.flushPersistence(), true);
+    assert.deepEqual(test.wire.at(-1).session, later, 'full resend after the backend refused a marker');
+    assert.deepEqual(test.commits.at(-1).session, later);
+    assert.equal(test.status().state, 'saved');
+    // Session size check: small sessions are not oversized; a real overflow still is.
+    const huge = { activeTabId: 'a', updatedAt: 1, tabs: Array.from({ length: 9 }, (_, index) => ({ id: 'h' + index, name: 'h.md', path: null, content: 'y'.repeat(4 * 1024 * 1024 - 8), savedContent: '' })) };
+    huge.tabs[0].id = 'a';
+    test.store.persistMetadata({ session: huge });
+    await test.store.flushPersistence();
+    assert.match(test.status().error, /Session too large to autosave/);
+    test.store.persistMetadata({ session: later });
+    await test.store.flushPersistence();
+    assert.equal(test.status().state, 'saved');
+    // A save that is overtaken while in flight still ends with only the change resent.
+    // (Last: a new fixture replaces the mocked backend for every store.)
+    const failing = await fixture({ cachedSession: null, database: { ...baseState, session: null } });
+    failing.store.persistMetadata({ session: session(0) });
+    await failing.store.flushPersistence();
+    const blocked = failing.blockNextWrite();
+    failing.store.persistMetadata({ session: session(1) });
+    const first = failing.store.flushPersistence();
+    await blocked.started;
+    failing.store.persistMetadata({ session: session(2) });
+    blocked.release();
+    await first; await failing.store.flushPersistence();
+    assert.deepEqual(failing.commits.at(-1).session, session(2));
+    assert.deepEqual(failing.wire.at(-1).session.tabs.map((tab) => tab.unchanged === true), [true, false, true]);
+  }
+  console.log('Store recovery: 22 scenario groups passed (including 9 content comparisons)');
 } finally {
   await server.close();
 }
