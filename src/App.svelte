@@ -48,7 +48,7 @@
   import RenameDocument from './RenameDocument.svelte';
   import { migrateSettings, preferencesStyle, readUIPreferences, UI_SETTINGS_VERSION } from './preferences';
   import { smoothScrolling } from './smooth-scroll';
-  import { fadeOnChange, pop } from './motion';
+  import { fadeOnChange, pop, publishMotionPreference } from './motion';
   import WorkspaceSwitcher from './WorkspaceSwitcher.svelte';
   import { isMac } from './platform';
   import { COMMANDS, commandForEvent, formatShortcut, readShortcutOverrides, shortcutFor } from './shortcuts';
@@ -228,7 +228,7 @@
     document.documentElement.dataset.darkPreset = customTheme && theme === 'dark' ? customTheme.base.split('/')[1] : ui.darkPreset;
     document.documentElement.dataset.lightPreset = customTheme && theme === 'light' ? customTheme.base.split('/')[1] : ui.lightPreset;
     document.documentElement.dataset.density = ui.density;
-    document.documentElement.dataset.motion = ui.reduceMotion || ui.performanceMode ? 'reduce' : 'full';
+    publishMotionPreference(ui.reduceMotion || ui.performanceMode);
   });
   $effect(() => {
     persistMetadata({ settings: { uiSettingsVersion: UI_SETTINGS_VERSION, theme: builtInTheme, fontSize, wrap, layout, agentEditsEnabled, ...ui, shortcuts } });

@@ -122,3 +122,29 @@ export function collapseX(node: Element, { token = 'base', gap = 0, exit = false
     css: (t: number) => `overflow:hidden;min-width:0;max-width:${t * width}px;margin-inline-end:${-(1 - t) * gap}px;opacity:${t}`,
   };
 }
+
+// Sticky-note windows are separate webviews that do not load UI preferences.
+// The main window publishes its effective motion preference to the origin's
+// local storage, which those windows share, and they follow it.
+const MOTION_STORAGE_KEY = 'notation.motion';
+
+/** Main window: apply the preference to this document and publish it. */
+export function publishMotionPreference(reduce: boolean, root: HTMLElement = document.documentElement) {
+  root.dataset.motion = reduce ? 'reduce' : 'full';
+  try { localStorage.setItem(MOTION_STORAGE_KEY, reduce ? 'reduce' : 'full'); } catch { /* Storage can be unavailable; motion then follows the system setting only. */ }
+}
+
+/** Sticky window: apply the published preference now, when it changes, and
+    when the window regains focus. Returns a function that stops following. */
+export function followMotionPreference(root: HTMLElement = document.documentElement): () => void {
+  const apply = () => {
+    let stored: string | null = null;
+    try { stored = localStorage.getItem(MOTION_STORAGE_KEY); } catch { /* Keep the default. */ }
+    root.dataset.motion = stored === 'reduce' ? 'reduce' : 'full';
+  };
+  const changed = (event: StorageEvent) => { if (event.key === null || event.key === MOTION_STORAGE_KEY) apply(); };
+  apply();
+  window.addEventListener('storage', changed);
+  window.addEventListener('focus', apply);
+  return () => { window.removeEventListener('storage', changed); window.removeEventListener('focus', apply); };
+}
