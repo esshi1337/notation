@@ -9,7 +9,7 @@ test('code files preserve filenames, source layout, highlighting, comments, fold
   await expect(page.getByRole('button',{name:'Change document language',exact:true})).toHaveText('TypeScript');
   await expect(page.getByRole('combobox',{name:'Language',exact:true})).toHaveCount(0);
   await expect(source(page).locator('span').filter({hasText:/^function$/})).toBeVisible();
-  await source(page).click();await page.keyboard.press('Control+Home');
+  await source(page).click();await page.keyboard.press('ControlOrMeta+Home');
   await runCommand(page,'Toggle line comment');await expect(source(page)).toContainText('// function greet');
   await runCommand(page,'Undo');
   await runCommand(page,'Fold all');await expect(page.locator('.cm-foldPlaceholder:visible')).toHaveCount(1);
@@ -40,7 +40,7 @@ test('code buffers stay usable with many tabs and a large source file',async({pa
   const largeStart=Date.now();await page.locator('input[type=file]').setInputFiles({name:'large.ts',mimeType:'text/plain',buffer:Buffer.from(content)});
   await expect(page.getByRole('tab',{name:'large.ts',exact:true})).toHaveAttribute('aria-selected','true');
   const largeOpenMs=Date.now()-largeStart;
-  await source(page).click();await page.keyboard.press('Control+Home');const typing=Date.now();await page.keyboard.type('// edited\n');await expect(source(page)).toContainText('// edited');const typingMs=Date.now()-typing;
+  await source(page).click();await page.keyboard.press('ControlOrMeta+Home');const typing=Date.now();await page.keyboard.type('// edited\n');await expect(source(page)).toContainText('// edited');const typingMs=Date.now()-typing;
   const session=await page.context().newCDPSession(page);await session.send('Performance.enable');
   const before=await session.send('Performance.getMetrics');await page.waitForTimeout(2000);const after=await session.send('Performance.getMetrics');
   const value=(metrics:any,name:string)=>metrics.metrics.find((item:any)=>item.name===name)?.value??0;

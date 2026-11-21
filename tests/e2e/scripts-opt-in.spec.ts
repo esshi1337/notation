@@ -27,7 +27,7 @@ test('invalid stored values keep scripts off and the disabled command explains h
   const option = commandResults(page).getByRole('option', { name: 'Scripts (enable in Settings → Editor)', exact: true });
   await expect(option).toBeDisabled();
   await page.keyboard.press('Escape');
-  await page.keyboard.press('Control+Alt+s');
+  await page.keyboard.press('ControlOrMeta+Alt+s');
   await expect(scripts(page)).toHaveCount(0);
   await expect(page.locator('.status-message')).toContainText('Enable scripts in Settings → Editor');
 });
@@ -105,7 +105,7 @@ test('script recovery cannot bypass the toggle and becomes available when enable
   const banner = page.locator('.recovery-banner');
   await expect(banner).toContainText('Enable scripts in Settings → Editor to restore these edits.');
   await expect(banner.getByRole('button', { name: 'Restore script edits' })).toHaveCount(0);
-  await page.keyboard.press('Control+Alt+s');
+  await page.keyboard.press('ControlOrMeta+Alt+s');
   await expect(scripts(page)).toHaveCount(0);
 
   await enableScripts(page);

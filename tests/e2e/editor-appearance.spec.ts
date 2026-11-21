@@ -38,13 +38,13 @@ test.beforeEach(async ({ page }) => {
 test('zoom shortcuts adjust the editor font size', async ({ page }) => {
   await expect.poll(() => editorFontSize(page)).toBe('14');
   await source(page).click();
-  await page.keyboard.press('Control+=');
+  await page.keyboard.press('ControlOrMeta+=');
   await expect.poll(() => editorFontSize(page)).toBe('15');
-  await page.keyboard.press('Control+Shift+=');
+  await page.keyboard.press('ControlOrMeta+Shift+=');
   await expect.poll(() => editorFontSize(page)).toBe('16');
-  await page.keyboard.press('Control+-');
+  await page.keyboard.press('ControlOrMeta+-');
   await expect.poll(() => editorFontSize(page)).toBe('15');
-  await page.keyboard.press('Control+0');
+  await page.keyboard.press('ControlOrMeta+0');
   await expect.poll(() => editorFontSize(page)).toBe('14');
 });
 

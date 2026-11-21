@@ -239,15 +239,15 @@ test('small toolbar preserves selection for pointer and keyboard, native undo an
   await selectText(page);
   await page.getByRole('button', { name: 'Bold', exact: true }).click();
   await expect(text.locator('b,strong')).toHaveText('Format these words');
-  await page.keyboard.press('Control+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await expect(text.locator('b,strong')).toHaveCount(0);
-  await page.keyboard.press('Control+b');
+  await page.keyboard.press('ControlOrMeta+b');
   await expect(text.locator('b,strong')).toHaveText('Format these words');
   // Keyboard activation moves focus out of the editor but must retain its range.
   await page.getByRole('button', { name: 'Italic', exact: true }).focus();
   await page.keyboard.press('Enter');
   await expect(text.locator('i,em')).toHaveText('Format these words');
-  await page.keyboard.press('Control+i');
+  await page.keyboard.press('ControlOrMeta+i');
   await expect(text.locator('i,em')).toHaveCount(0);
   await page.getByRole('button', { name: 'Bullets', exact: true }).click();
   await expect(text.locator('ul > li')).toHaveText('Format these words');
@@ -382,9 +382,9 @@ test('typing, paragraphs and line breaks retain the native editor and undo histo
   await text.press('Shift+Enter'); await page.keyboard.type('Third');
   await expect.poll(async () => (await mockState(page)).updates.at(-1)?.text).toBe('First line\nSecond\nThird');
   expect(await original!.evaluate(element => element === document.querySelector('[aria-label="Sticky text"]'))).toBe(true);
-  await text.press('Control+z');
+  await text.press('ControlOrMeta+z');
   await expect(text).not.toContainText('Third');
-  await text.press('Control+Shift+z');
+  await text.press('ControlOrMeta+Shift+z');
   await expect(text).toContainText('Third');
 });
 
@@ -563,9 +563,9 @@ for (const modifier of ['Control', 'Meta']) {
       await page.keyboard.press(`${modifier}+${shortcut}`);
       await expect(text.locator(selector)).toHaveText('All formatting');
       // Undo/redo use the host browser shortcut even when testing Cmd formatting.
-      await page.keyboard.press('Control+z');
+      await page.keyboard.press('ControlOrMeta+z');
       await expect(text.locator(selector)).toHaveCount(0);
-      await page.keyboard.press('Control+Shift+z');
+      await page.keyboard.press('ControlOrMeta+Shift+z');
       await expect(text.locator(selector)).toHaveText('All formatting');
     }
     await expect.poll(async () => (await mockState(page)).updates.at(-1)?.html).toMatch(/<u>/);
@@ -604,10 +604,10 @@ test('Shift+8 handles the actual star key and partial selection survives every t
   await page.evaluate(() => document.querySelector('[aria-label="Sticky text"]')!.addEventListener('keydown', event => {
     if ((event as KeyboardEvent).code === 'Digit8') Object.assign(window, { bulletKey: (event as KeyboardEvent).key });
   }));
-  await page.keyboard.press('Control+Shift+Digit8');
+  await page.keyboard.press('ControlOrMeta+Shift+Digit8');
   expect(await page.evaluate(() => (window as unknown as { bulletKey: string }).bulletKey)).toBe('*');
   await expect(text.locator('ul > li')).toHaveText('left selected right');
-  await page.keyboard.press('Control+Shift+Digit8');
+  await page.keyboard.press('ControlOrMeta+Shift+Digit8');
   await expect(text.locator('ul')).toHaveCount(0);
   await expect(text).toHaveText('left selected right');
 });

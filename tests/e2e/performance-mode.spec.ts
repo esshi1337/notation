@@ -11,7 +11,7 @@ test('performance mode suspends expensive views and restores settings and undo',
   await page.goto('/');
   await runCommand(page, 'Source');
   await source(page).click();
-  await page.keyboard.press('Control+End');
+  await page.keyboard.press('ControlOrMeta+End');
   await page.keyboard.type('\nPreserve this edit');
   await runCommand(page, 'Split');
   await editorSettings(page);
@@ -26,7 +26,7 @@ test('performance mode suspends expensive views and restores settings and undo',
   await expect(page.locator('.preview-pane')).toBeHidden();
   await expect(page.locator('.preview-pane')).not.toContainText('Preserve this edit');
   await expect(source(page)).toContainText('Preserve this edit');
-  await page.keyboard.press('Control+Alt+3');
+  await page.keyboard.press('ControlOrMeta+Alt+3');
   await expect(page.locator('.preview-pane')).toBeHidden();
   await editorSettings(page);
   await page.getByRole('checkbox', { name: 'Performance mode', exact: true }).uncheck();
@@ -47,7 +47,7 @@ test('persisted performance mode skips code syntax loading and remains editable'
   await page.locator('input[type=file]').setInputFiles({ name: 'low-memory.ts', mimeType: 'text/plain', buffer: Buffer.from('export const answer: number = 42;\n') });
   await expect(source(page)).toContainText('export const answer');
   await source(page).click();
-  await page.keyboard.press('Control+End');
+  await page.keyboard.press('ControlOrMeta+End');
   await page.keyboard.type('// still editable');
   await expect(source(page)).toContainText('// still editable');
   await expect(page.locator('.cm-editor')).toHaveCount(1);

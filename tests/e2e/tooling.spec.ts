@@ -11,7 +11,7 @@ test.beforeEach(async ({ page }) => {
 
 test('Settings traps focus, closes with Escape, restores focus, and persists preferences', async ({ page }) => {
   await source(page).focus();
-  await page.keyboard.press('Control+,');
+  await page.keyboard.press('ControlOrMeta+,');
   const panel = settings(page);
   await expect(panel).toBeVisible();
   const appearance = panel.getByRole('tab', { name: 'Appearance', exact: true });
@@ -59,7 +59,7 @@ test('Explorer explains its native requirement and Git is unavailable in browser
   await page.keyboard.press('Escape');
   await source(page).focus();
   const text = await source(page).textContent();
-  await page.keyboard.press('Control+Shift+g');
+  await page.keyboard.press('ControlOrMeta+Shift+g');
   const git = page.getByRole('region', { name: 'Git', exact: true });
   await expect(git).toHaveCount(0);
   await expect(source(page)).toHaveText(text!);

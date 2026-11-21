@@ -63,7 +63,7 @@ test('Git follows the saved file, not workspace, and hides for outside/untitled/
   await tab(page, 'outside.md').click();
   await expect(icon(page)).toHaveCount(0);
   await expect(panel(page)).toHaveCount(0);
-  await page.keyboard.press('Control+Shift+g');
+  await page.keyboard.press('ControlOrMeta+Shift+g');
   await expect(panel(page)).toHaveCount(0);
   await tab(page, 'untitled.md').click();
   await expect(icon(page)).toHaveCount(0);

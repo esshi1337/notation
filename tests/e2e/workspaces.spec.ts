@@ -20,13 +20,13 @@ test('workspaces share file edits while retaining separate tabs, cursors and lay
   await importShared(page);
   await runCommand(page, 'Source');
   await source(page).focus();
-  await page.keyboard.press('Control+Home');
+  await page.keyboard.press('ControlOrMeta+Home');
   await page.keyboard.press('ArrowRight');
   await create(page, 'Writing');
   await expect(source(page)).toHaveText('');
   await importShared(page);
   await source(page).focus();
-  await page.keyboard.press('Control+End');
+  await page.keyboard.press('ControlOrMeta+End');
   await page.keyboard.type(' shared edit');
   await runCommand(page, 'Live Preview');
   const switcher = page.getByRole('combobox', { name: 'Active workspace' });
@@ -54,7 +54,7 @@ test('closing a shared dirty tab only closes that view and deleting a workspace 
   await importShared(page);
   await create(page, 'Second');
   await importShared(page);
-  await source(page).focus(); await page.keyboard.press('Control+End'); await page.keyboard.type(' unsaved');
+  await source(page).focus(); await page.keyboard.press('ControlOrMeta+End'); await page.keyboard.type(' unsaved');
   let dialogs = 0;
   page.on('dialog', async dialog => { dialogs++; await dialog.accept(); });
   await runCommand(page, 'Close tab');

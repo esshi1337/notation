@@ -34,7 +34,7 @@ test('sidebar moves the active tool with it, preserves edits and undo, and persi
   await page.goto('/');
   await runCommand(page, 'Source');
   await source(page).fill('Original text');
-  await source(page).press('Control+End');
+  await source(page).press('ControlOrMeta+End');
   await page.keyboard.type(' appended');
   await sidebar(page).getByRole('button', { name: 'Workspace panel', exact: true }).click();
   await expect(sidebar(page).getByRole('button', { name: 'Workspace panel' })).toHaveAttribute('aria-pressed', 'true');
@@ -44,7 +44,7 @@ test('sidebar moves the active tool with it, preserves edits and undo, and persi
   await checkGeometry(page, 'right');
   await expect(page.getByRole('textbox', { name: 'Workspace name', exact: true })).toHaveValue('Unsubmitted workspace');
   await expect(source(page)).toHaveText('Original text appended');
-  await source(page).focus(); await page.keyboard.press('Control+z');
+  await source(page).focus(); await page.keyboard.press('ControlOrMeta+z');
   await expect(source(page)).toHaveText('Original text');
   await page.screenshot({ path: 'test-results/sidebar-right.png' });
   await page.reload();
@@ -75,7 +75,7 @@ test('sidebar supports keyboard navigation, panel toggling and Focus mode', asyn
   await runCommand(page, 'Focus mode');
   await expect(sidebar(page)).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'Explorer', exact: true })).toHaveCount(0);
-  await page.keyboard.press('Control+Shift+f');
+  await page.keyboard.press('ControlOrMeta+Shift+f');
   await expect(sidebar(page)).toBeVisible();
   await expect(page.getByRole('region', { name: 'Explorer', exact: true })).toBeVisible();
 });
