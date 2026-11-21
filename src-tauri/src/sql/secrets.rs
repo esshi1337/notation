@@ -53,7 +53,9 @@ pub struct Keychain {
 impl Keychain {
     /// Entries are stored under `service`, one per connection name.
     pub fn new(service: impl Into<String>) -> Self {
-        Self { service: service.into() }
+        Self {
+            service: service.into(),
+        }
     }
     fn entry(&self, account: &str) -> Result<keyring::Entry, String> {
         keyring::Entry::new(&self.service, account).map_err(describe)
@@ -83,7 +85,8 @@ fn unavailable() -> String {
     if cfg!(target_os = "macos") {
         "The macOS Keychain is not available to this app.".into()
     } else {
-        "No Secret Service keychain is running (GNOME Keyring, KWallet or KeePassXC provide one).".into()
+        "No Secret Service keychain is running (GNOME Keyring, KWallet or KeePassXC provide one)."
+            .into()
     }
 }
 
@@ -97,7 +100,9 @@ impl SecretStore for Keychain {
     }
     fn set(&self, account: &str, secret: &Secret) -> Result<(), String> {
         self.availability()?;
-        self.entry(account)?.set_password(secret.expose()).map_err(describe)
+        self.entry(account)?
+            .set_password(secret.expose())
+            .map_err(describe)
     }
     fn get(&self, account: &str) -> Result<Option<Secret>, String> {
         self.availability()?;
@@ -143,14 +148,25 @@ impl SecretStore for MemoryStore {
         Ok(())
     }
     fn set(&self, account: &str, secret: &Secret) -> Result<(), String> {
-        self.0.lock().map_err(|_| "Password store failed.".to_string())?.insert(account.into(), secret.clone());
+        self.0
+            .lock()
+            .map_err(|_| "Password store failed.".to_string())?
+            .insert(account.into(), secret.clone());
         Ok(())
     }
     fn get(&self, account: &str) -> Result<Option<Secret>, String> {
-        Ok(self.0.lock().map_err(|_| "Password store failed.".to_string())?.get(account).cloned())
+        Ok(self
+            .0
+            .lock()
+            .map_err(|_| "Password store failed.".to_string())?
+            .get(account)
+            .cloned())
     }
     fn delete(&self, account: &str) -> Result<(), String> {
-        self.0.lock().map_err(|_| "Password store failed.".to_string())?.remove(account);
+        self.0
+            .lock()
+            .map_err(|_| "Password store failed.".to_string())?
+            .remove(account);
         Ok(())
     }
 }
@@ -159,7 +175,9 @@ impl SecretStore for MemoryStore {
 /// Drivers do not echo passwords; this is a second line of defence.
 pub fn scrub(message: &str, secret: Option<&Secret>) -> String {
     match secret.map(Secret::expose) {
-        Some(value) if !value.is_empty() && message.contains(value) => message.replace(value, "•••"),
+        Some(value) if !value.is_empty() && message.contains(value) => {
+            message.replace(value, "•••")
+        }
         _ => message.to_string(),
     }
 }

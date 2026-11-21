@@ -18,8 +18,14 @@ fn failure(error: rusqlite::Error) -> SqlError {
 /// The only operations a block may perform.
 fn authorize(context: AuthContext<'_>) -> Authorization {
     match context.action {
-        AuthAction::Select | AuthAction::Read { .. } | AuthAction::Function { .. } | AuthAction::Recursive => Authorization::Allow,
-        AuthAction::Pragma { pragma_name, pragma_value } => {
+        AuthAction::Select
+        | AuthAction::Read { .. }
+        | AuthAction::Function { .. }
+        | AuthAction::Recursive => Authorization::Allow,
+        AuthAction::Pragma {
+            pragma_name,
+            pragma_value,
+        } => {
             if guard::reporting_pragma(pragma_name, pragma_value.is_some()) {
                 Authorization::Allow
             } else {
@@ -38,18 +44,36 @@ pub(crate) fn open(path: &str, busy: Duration) -> Result<Connection, SqlError> {
         Ok(metadata) if metadata.is_file() => {}
         Ok(_) => return Err(SqlError::new("connect", "The SQLite path is not a file.")),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(SqlError::new("connect", "The SQLite file does not exist. It is never created from a SQL block."));
+            return Err(SqlError::new(
+                "connect",
+                "The SQLite file does not exist. It is never created from a SQL block.",
+            ));
         }
-        Err(error) => return Err(SqlError::new("connect", format!("The SQLite file cannot be read: {error}"))),
+        Err(error) => {
+            return Err(SqlError::new(
+                "connect",
+                format!("The SQLite file cannot be read: {error}"),
+            ))
+        }
     }
     // No SQLITE_OPEN_CREATE, no SQLITE_OPEN_READ_WRITE, and no
     // SQLITE_OPEN_URI: a path is a path, never `file:…?mode=rwc`.
-    let connection = Connection::open_with_flags(file, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
-        .map_err(|error| SqlError::new("connect", format!("SQLite could not open the file: {}", failure(error).message)))?;
+    let connection = Connection::open_with_flags(
+        file,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|error| {
+        SqlError::new(
+            "connect",
+            format!("SQLite could not open the file: {}", failure(error).message),
+        )
+    })?;
     connection.busy_timeout(busy).map_err(failure)?;
     // Views and triggers in a file from someone else cannot call
     // side-effecting functions.
-    connection.execute_batch("PRAGMA query_only=1; PRAGMA trusted_schema=OFF;").map_err(failure)?;
+    connection
+        .execute_batch("PRAGMA query_only=1; PRAGMA trusted_schema=OFF;")
+        .map_err(failure)?;
     Ok(connection)
 }
 
@@ -58,15 +82,27 @@ pub(crate) fn run(job: &Job<'_>, out: &mut Collector) -> Result<(), SqlError> {
     let connection = open(&job.profile.path, job.timeout.min(Duration::from_secs(5)))?;
     let cancel = job.cancel.clone();
     // Runs every few thousand VM steps; returning true interrupts the query.
-    connection.progress_handler(2000, Some(move || cancel.is_cancelled() || Instant::now() >= deadline)).map_err(failure)?;
+    connection
+        .progress_handler(
+            2000,
+            Some(move || cancel.is_cancelled() || Instant::now() >= deadline),
+        )
+        .map_err(failure)?;
     connection.authorizer(Some(authorize)).map_err(failure)?;
     let stopped = |error: rusqlite::Error| -> SqlError {
         let interrupted = matches!(&error, rusqlite::Error::SqliteFailure(code, _) if code.code == rusqlite::ErrorCode::OperationInterrupted);
         if interrupted && job.cancel.is_cancelled() {
             SqlError::new("cancelled", "Query cancelled.")
         } else if interrupted {
-            SqlError::new("timeout", format!("The query was stopped after {} s (the connection's timeout).", job.timeout.as_secs()))
-        } else if matches!(&error, rusqlite::Error::SqliteFailure(code, _) if code.code == rusqlite::ErrorCode::AuthorizationForStatementDenied) {
+            SqlError::new(
+                "timeout",
+                format!(
+                    "The query was stopped after {} s (the connection's timeout).",
+                    job.timeout.as_secs()
+                ),
+            )
+        } else if matches!(&error, rusqlite::Error::SqliteFailure(code, _) if code.code == rusqlite::ErrorCode::AuthorizationForStatementDenied)
+        {
             SqlError::new("refused", "SQL blocks are read-only. This statement would change the database or its settings.")
         } else {
             failure(error)
@@ -74,10 +110,18 @@ pub(crate) fn run(job: &Job<'_>, out: &mut Collector) -> Result<(), SqlError> {
     };
     let mut statement = connection.prepare(job.sql).map_err(stopped)?;
     if !statement.readonly() {
-        return Err(SqlError::new("refused", "SQL blocks are read-only. SQLite reports that this statement writes."));
+        return Err(SqlError::new(
+            "refused",
+            "SQL blocks are read-only. SQLite reports that this statement writes.",
+        ));
     }
     for (name, value) in &job.parameters {
-        let Some(index) = statement.parameter_index(&format!(":{name}")).map_err(failure)? else { continue };
+        let Some(index) = statement
+            .parameter_index(&format!(":{name}"))
+            .map_err(failure)?
+        else {
+            continue;
+        };
         match value {
             Parameter::Null => statement.raw_bind_parameter(index, rusqlite::types::Null),
             Parameter::Bool(value) => statement.raw_bind_parameter(index, value),
@@ -93,7 +137,13 @@ pub(crate) fn run(job: &Job<'_>, out: &mut Collector) -> Result<(), SqlError> {
     }
     out.set_columns(
         (0..count)
-            .map(|index| Column { name: statement.column_name(index).map(str::to_string).unwrap_or_default(), type_name: String::new() })
+            .map(|index| Column {
+                name: statement
+                    .column_name(index)
+                    .map(str::to_string)
+                    .unwrap_or_default(),
+                type_name: String::new(),
+            })
             .collect(),
     )?;
     let mut rows = statement.raw_query();

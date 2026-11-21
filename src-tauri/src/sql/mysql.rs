@@ -69,7 +69,9 @@ async fn connect(job: &Job<'_>) -> Result<Conn, mysql_async::Error> {
         TlsMode::Prefer => match Conn::new(options(job, true)).await {
             // Only when the server has no TLS at all; a failed handshake or
             // a wrong password is reported, not retried in the clear.
-            Err(mysql_async::Error::Driver(DriverError::NoClientSslFlagFromServer)) => Conn::new(options(job, false)).await,
+            Err(mysql_async::Error::Driver(DriverError::NoClientSslFlagFromServer)) => {
+                Conn::new(options(job, false)).await
+            }
             other => other,
         },
         TlsMode::Require | TlsMode::VerifyFull => Conn::new(options(job, true)).await,
@@ -82,26 +84,54 @@ fn decode(value: mysql_async::Value, column: &mysql_async::Column) -> Value {
     match value {
         Sql::NULL => Value::Null,
         Sql::Int(value) => cell::integer(value),
-        Sql::UInt(value) => i64::try_from(value).map_or_else(|_| cell::tagged("number", value.to_string()), cell::integer),
+        Sql::UInt(value) => i64::try_from(value)
+            .map_or_else(|_| cell::tagged("number", value.to_string()), cell::integer),
         // Through text, so 0.1 reads 0.1 and not 0.10000000149.
-        Sql::Float(value) => cell::float(value.to_string().parse::<f64>().unwrap_or(f64::from(value))),
+        Sql::Float(value) => {
+            cell::float(value.to_string().parse::<f64>().unwrap_or(f64::from(value)))
+        }
         Sql::Double(value) => cell::float(value),
         Sql::Date(year, month, day, hour, minute, second, micros) => {
-            if matches!(kind, ColumnType::MYSQL_TYPE_DATE | ColumnType::MYSQL_TYPE_NEWDATE) {
+            if matches!(
+                kind,
+                ColumnType::MYSQL_TYPE_DATE | ColumnType::MYSQL_TYPE_NEWDATE
+            ) {
                 cell::tagged("date", format!("{year:04}-{month:02}-{day:02}"))
             } else {
-                cell::tagged("datetime", format!("{year:04}-{month:02}-{day:02} {}", clock(i64::from(hour), u32::from(minute), u32::from(second), micros)))
+                cell::tagged(
+                    "datetime",
+                    format!(
+                        "{year:04}-{month:02}-{day:02} {}",
+                        clock(
+                            i64::from(hour),
+                            u32::from(minute),
+                            u32::from(second),
+                            micros
+                        )
+                    ),
+                )
             }
         }
         Sql::Time(negative, days, hours, minutes, seconds, micros) => cell::tagged(
             "time",
-            format!("{}{}", if negative { "-" } else { "" }, clock(i64::from(days) * 24 + i64::from(hours), u32::from(minutes), u32::from(seconds), micros)),
+            format!(
+                "{}{}",
+                if negative { "-" } else { "" },
+                clock(
+                    i64::from(days) * 24 + i64::from(hours),
+                    u32::from(minutes),
+                    u32::from(seconds),
+                    micros
+                )
+            ),
         ),
         Sql::Bytes(bytes) => match kind {
-            ColumnType::MYSQL_TYPE_DECIMAL | ColumnType::MYSQL_TYPE_NEWDECIMAL => match std::str::from_utf8(&bytes) {
-                Ok(text) => cell::tagged("number", text),
-                Err(_) => cell::bytes(&bytes),
-            },
+            ColumnType::MYSQL_TYPE_DECIMAL | ColumnType::MYSQL_TYPE_NEWDECIMAL => {
+                match std::str::from_utf8(&bytes) {
+                    Ok(text) => cell::tagged("number", text),
+                    Err(_) => cell::bytes(&bytes),
+                }
+            }
             ColumnType::MYSQL_TYPE_JSON => match std::str::from_utf8(&bytes) {
                 Ok(text) => cell::tagged_text("json", text),
                 Err(_) => cell::bytes(&bytes),
@@ -115,19 +145,37 @@ fn decode(value: mysql_async::Value, column: &mysql_async::Column) -> Value {
 }
 
 fn type_name(column: &mysql_async::Column) -> String {
-    format!("{:?}", column.column_type()).trim_start_matches("MYSQL_TYPE_").to_ascii_lowercase()
+    format!("{:?}", column.column_type())
+        .trim_start_matches("MYSQL_TYPE_")
+        .to_ascii_lowercase()
 }
 
 /// Returns `true` when every row was read.
 async fn query(conn: &mut Conn, job: &Job<'_>, out: &mut Collector) -> Result<bool, SqlError> {
     let fail = |error: mysql_async::Error| failure(&error);
-    conn.query_drop("SET SESSION TRANSACTION READ ONLY").await.map_err(fail)?;
+    conn.query_drop("SET SESSION TRANSACTION READ ONLY")
+        .await
+        .map_err(fail)?;
     // MySQL takes milliseconds; MariaDB has a different variable, in
     // seconds. Either may be missing: the client-side timer still applies.
-    if conn.query_drop(format!("SET SESSION MAX_EXECUTION_TIME={}", job.timeout.as_millis())).await.is_err() {
-        let _ = conn.query_drop(format!("SET SESSION max_statement_time={}", job.timeout.as_secs())).await;
+    if conn
+        .query_drop(format!(
+            "SET SESSION MAX_EXECUTION_TIME={}",
+            job.timeout.as_millis()
+        ))
+        .await
+        .is_err()
+    {
+        let _ = conn
+            .query_drop(format!(
+                "SET SESSION max_statement_time={}",
+                job.timeout.as_secs()
+            ))
+            .await;
     }
-    conn.query_drop("START TRANSACTION READ ONLY").await.map_err(fail)?;
+    conn.query_drop("START TRANSACTION READ ONLY")
+        .await
+        .map_err(fail)?;
     let statement = conn.prep(job.sql).await.map_err(fail)?;
     // The server says, before anything runs, whether the statement returns
     // rows. One that does not (CALL, DO, SET, any write, SELECT … INTO
@@ -137,7 +185,10 @@ async fn query(conn: &mut Conn, job: &Job<'_>, out: &mut Collector) -> Result<bo
     // first keyword instead.
     if statement.columns().is_empty() {
         let reports = super::guard::mysql_leading_keyword(job.sql);
-        if !matches!(reports.as_deref(), Some("SHOW" | "DESCRIBE" | "DESC" | "EXPLAIN")) {
+        if !matches!(
+            reports.as_deref(),
+            Some("SHOW" | "DESCRIBE" | "DESC" | "EXPLAIN")
+        ) {
             return Err(not_a_query());
         }
     }
@@ -159,10 +210,23 @@ async fn query(conn: &mut Conn, job: &Job<'_>, out: &mut Collector) -> Result<bo
     };
     let mut result = conn.exec_iter(&statement, parameters).await.map_err(fail)?;
     let columns: Vec<mysql_async::Column> = result.columns_ref().to_vec();
-    out.set_columns(columns.iter().map(|column| Column { name: column.name_str().into_owned(), type_name: type_name(column) }).collect())?;
+    out.set_columns(
+        columns
+            .iter()
+            .map(|column| Column {
+                name: column.name_str().into_owned(),
+                type_name: type_name(column),
+            })
+            .collect(),
+    )?;
     let mut complete = true;
     while let Some(row) = result.next().await.map_err(fail)? {
-        let values = row.unwrap().into_iter().zip(&columns).map(|(value, column)| decode(value, column)).collect();
+        let values = row
+            .unwrap()
+            .into_iter()
+            .zip(&columns)
+            .map(|(value, column)| decode(value, column))
+            .collect();
         if !out.push(values) {
             complete = false;
             break;
@@ -189,7 +253,15 @@ async fn kill(job: &Job<'_>, id: u32) {
 
 pub(crate) async fn run(job: &Job<'_>, out: &mut Collector) -> Result<(), SqlError> {
     let deadline = tokio::time::Instant::now() + job.timeout;
-    let timed_out = || SqlError::new("timeout", format!("The query was stopped after {} s (the connection's timeout).", job.timeout.as_secs()));
+    let timed_out = || {
+        SqlError::new(
+            "timeout",
+            format!(
+                "The query was stopped after {} s (the connection's timeout).",
+                job.timeout.as_secs()
+            ),
+        )
+    };
     let cancelled = || SqlError::new("cancelled", "Query cancelled.");
     let mut conn = tokio::select! {
         conn = connect(job) => conn.map_err(|error| {
@@ -223,7 +295,11 @@ pub(crate) async fn run(job: &Job<'_>, out: &mut Collector) -> Result<(), SqlErr
                 kill(job, id).await;
             }
             drop(conn);
-            Err(if error.code == "timeout" { timed_out() } else { error })
+            Err(if error.code == "timeout" {
+                timed_out()
+            } else {
+                error
+            })
         }
     }
 }

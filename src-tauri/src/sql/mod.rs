@@ -15,9 +15,9 @@ mod mysql;
 mod postgres;
 pub mod secrets;
 mod sqlite;
-mod tls;
 #[cfg(test)]
 mod tests;
+mod tls;
 
 use crate::storage::Database;
 use rusqlite::{params, OptionalExtension};
@@ -146,7 +146,10 @@ pub struct SqlError {
 }
 impl SqlError {
     pub(crate) fn new(code: &'static str, message: impl Into<String>) -> Self {
-        Self { code, message: message.into() }
+        Self {
+            code,
+            message: message.into(),
+        }
     }
 }
 impl std::fmt::Display for SqlError {
@@ -261,7 +264,13 @@ pub(crate) struct Collector {
 }
 impl Collector {
     fn new(limit: u32) -> Self {
-        Self { columns: Vec::new(), rows: Vec::new(), truncated: None, limit: limit as usize, bytes: 0 }
+        Self {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            truncated: None,
+            limit: limit as usize,
+            bytes: 0,
+        }
     }
     /// How many more rows are worth fetching: one past the limit, to know
     /// whether more exist.
@@ -285,7 +294,10 @@ impl Collector {
     }
     pub(crate) fn set_columns(&mut self, columns: Vec<Column>) -> Result<(), SqlError> {
         if columns.len() > MAX_COLUMNS {
-            return Err(SqlError::new("query", format!("The result has more than {MAX_COLUMNS} columns.")));
+            return Err(SqlError::new(
+                "query",
+                format!("The result has more than {MAX_COLUMNS} columns."),
+            ));
         }
         self.columns = columns;
         Ok(())
@@ -338,7 +350,11 @@ pub(crate) mod cell {
         }
     }
     pub fn bytes(value: &[u8]) -> Value {
-        let preview: String = value.iter().take(MAX_BLOB_PREVIEW).map(|byte| format!("{byte:02x}")).collect();
+        let preview: String = value
+            .iter()
+            .take(MAX_BLOB_PREVIEW)
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         json!({ "t": "bytes", "v": preview, "n": value.len() })
     }
     /// Integers JavaScript can hold exactly are numbers; larger ones text.
@@ -351,7 +367,18 @@ pub(crate) mod cell {
     }
     pub fn float(value: f64) -> Value {
         serde_json::Number::from_f64(value).map_or_else(
-            || tagged("number", if value.is_nan() { "NaN".to_string() } else if value > 0.0 { "Infinity".into() } else { "-Infinity".into() }),
+            || {
+                tagged(
+                    "number",
+                    if value.is_nan() {
+                        "NaN".to_string()
+                    } else if value > 0.0 {
+                        "Infinity".into()
+                    } else {
+                        "-Infinity".into()
+                    },
+                )
+            },
             Value::Number,
         )
     }
@@ -362,11 +389,16 @@ pub(crate) fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let shifted = days + 719_468;
     let era = shifted.div_euclid(146_097);
     let day_of_era = shifted.rem_euclid(146_097);
-    let year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
     let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
     let month_index = (5 * day_of_year + 2) / 153;
     let day = (day_of_year - (153 * month_index + 2) / 5 + 1) as u32;
-    let month = if month_index < 10 { month_index + 3 } else { month_index - 9 } as u32;
+    let month = if month_index < 10 {
+        month_index + 3
+    } else {
+        month_index - 9
+    } as u32;
     let year = year_of_era + era * 400 + i64::from(month <= 2);
     (year, month, day)
 }
@@ -393,7 +425,12 @@ pub(crate) fn runtime() -> Result<&'static tokio::runtime::Runtime, SqlError> {
                 .map_err(|error| error.to_string())
         })
         .as_ref()
-        .map_err(|error| SqlError::new("internal", format!("Could not start the database runtime: {error}")))
+        .map_err(|error| {
+            SqlError::new(
+                "internal",
+                format!("Could not start the database runtime: {error}"),
+            )
+        })
 }
 
 fn valid_name(name: &str) -> bool {
@@ -401,11 +438,16 @@ fn valid_name(name: &str) -> bool {
     !bytes.is_empty()
         && bytes.len() <= 64
         && bytes[0].is_ascii_alphabetic()
-        && bytes.iter().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 fn plain(field: &str, value: &str, limit: usize) -> Result<(), SqlError> {
     if value.len() > limit || value.chars().any(char::is_control) {
-        return Err(SqlError::new("invalid", format!("{field} is too long or contains control characters.")));
+        return Err(SqlError::new(
+            "invalid",
+            format!("{field} is too long or contains control characters."),
+        ));
     }
     Ok(())
 }
@@ -446,19 +488,30 @@ impl Profile {
                 return invalid("Enter the database user name.");
             }
             if self.port == 0 {
-                self.port = if self.kind == Kind::Postgres { 5432 } else { 3306 };
+                self.port = if self.kind == Kind::Postgres {
+                    5432
+                } else {
+                    3306
+                };
             }
             if self.tls_mode != TlsMode::VerifyFull {
                 self.ca_file.clear();
-            } else if !self.ca_file.is_empty() && !std::path::Path::new(&self.ca_file).is_absolute() {
+            } else if !self.ca_file.is_empty() && !std::path::Path::new(&self.ca_file).is_absolute()
+            {
                 return invalid("The CA file must be an absolute path to a PEM file.");
             }
         }
         if self.row_limit == 0 || self.row_limit > MAX_ROW_LIMIT {
-            return Err(SqlError::new("invalid", format!("The row limit must be between 1 and {MAX_ROW_LIMIT}.")));
+            return Err(SqlError::new(
+                "invalid",
+                format!("The row limit must be between 1 and {MAX_ROW_LIMIT}."),
+            ));
         }
         if self.timeout_seconds == 0 || self.timeout_seconds > MAX_TIMEOUT_SECONDS {
-            return Err(SqlError::new("invalid", format!("The timeout must be between 1 and {MAX_TIMEOUT_SECONDS} seconds.")));
+            return Err(SqlError::new(
+                "invalid",
+                format!("The timeout must be between 1 and {MAX_TIMEOUT_SECONDS} seconds."),
+            ));
         }
         Ok(self)
     }
@@ -482,27 +535,54 @@ impl Service {
     /// other's passwords. `NOTATION_KEYCHAIN=off` turns the keychain off:
     /// passwords are then only ever held in memory.
     pub fn new(database: Result<Database, String>) -> Self {
-        let keychain: Box<dyn SecretStore> = if std::env::var("NOTATION_KEYCHAIN").is_ok_and(|value| value == "off") {
-            Box::new(secrets::NoKeychain("The system keychain is turned off for this session (NOTATION_KEYCHAIN=off).".into()))
+        let keychain: Box<dyn SecretStore> = if std::env::var("NOTATION_KEYCHAIN")
+            .is_ok_and(|value| value == "off")
+        {
+            Box::new(secrets::NoKeychain(
+                "The system keychain is turned off for this session (NOTATION_KEYCHAIN=off)."
+                    .into(),
+            ))
         } else {
-            match database.as_ref().map_err(Clone::clone).and_then(keychain_scope) {
-                Ok(scope) => Box::new(secrets::Keychain::new(format!("app.notation.database.{scope}"))),
-                Err(error) => Box::new(secrets::NoKeychain(format!("The keychain cannot be used because local settings are unavailable: {error}"))),
+            match database
+                .as_ref()
+                .map_err(Clone::clone)
+                .and_then(keychain_scope)
+            {
+                Ok(scope) => Box::new(secrets::Keychain::new(format!(
+                    "app.notation.database.{scope}"
+                ))),
+                Err(error) => Box::new(secrets::NoKeychain(format!(
+                    "The keychain cannot be used because local settings are unavailable: {error}"
+                ))),
             }
         };
         Self::with_keychain(database, keychain)
     }
-    pub fn with_keychain(database: Result<Database, String>, keychain: Box<dyn SecretStore>) -> Self {
-        Self { database, keychain, session: secrets::MemoryStore::default(), running: Mutex::new(HashMap::new()) }
+    pub fn with_keychain(
+        database: Result<Database, String>,
+        keychain: Box<dyn SecretStore>,
+    ) -> Self {
+        Self {
+            database,
+            keychain,
+            session: secrets::MemoryStore::default(),
+            running: Mutex::new(HashMap::new()),
+        }
     }
     fn database(&self) -> Result<&Database, SqlError> {
-        self.database.as_ref().map_err(|error| SqlError::new("internal", error.clone()))
+        self.database
+            .as_ref()
+            .map_err(|error| SqlError::new("internal", error.clone()))
     }
 
     fn profiles(&self) -> Result<Vec<Profile>, SqlError> {
         let connection = self.database()?.lock().map_err(storage_error)?;
-        let mut statement = connection.prepare("SELECT json FROM sql_connections ORDER BY name COLLATE NOCASE").map_err(storage_error)?;
-        let rows = statement.query_map([], |row| row.get::<_, String>(0)).map_err(storage_error)?;
+        let mut statement = connection
+            .prepare("SELECT json FROM sql_connections ORDER BY name COLLATE NOCASE")
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(storage_error)?;
         let mut profiles = Vec::new();
         for row in rows {
             // A row this version cannot read is skipped, not fatal.
@@ -517,12 +597,21 @@ impl Service {
             .database()?
             .lock()
             .map_err(storage_error)?
-            .query_row("SELECT json FROM sql_connections WHERE name=?1", [name], |row| row.get(0))
+            .query_row(
+                "SELECT json FROM sql_connections WHERE name=?1",
+                [name],
+                |row| row.get(0),
+            )
             .optional()
             .map_err(storage_error)?;
         stored
             .and_then(|json| serde_json::from_str::<Profile>(&json).ok())
-            .ok_or_else(|| SqlError::new("unknown_connection", format!("No connection named {name} — add it in Settings → Databases.")))
+            .ok_or_else(|| {
+                SqlError::new(
+                    "unknown_connection",
+                    format!("No connection named {name} — add it in Settings → Databases."),
+                )
+            })
     }
 
     fn view(&self, profile: Profile) -> ConnectionView {
@@ -534,14 +623,21 @@ impl Service {
                 _ => "needed",
             },
         };
-        ConnectionView { profile, password_state }
+        ConnectionView {
+            profile,
+            password_state,
+        }
     }
 
     /// Profiles and whether the keychain can be used. Reads no password.
     pub fn list(&self) -> Result<ConnectionList, SqlError> {
         let availability = self.keychain.availability();
         Ok(ConnectionList {
-            connections: self.profiles()?.into_iter().map(|profile| self.view(profile)).collect(),
+            connections: self
+                .profiles()?
+                .into_iter()
+                .map(|profile| self.view(profile))
+                .collect(),
             keychain_available: availability.is_ok(),
             keychain_reason: availability.err(),
             max_row_limit: MAX_ROW_LIMIT,
@@ -553,23 +649,46 @@ impl Service {
     /// `profile.password_storage` and never written to the state database;
     /// `None` keeps the password already stored. `original` is the name
     /// being edited, when the profile already exists.
-    pub fn save(&self, profile: Profile, password: Option<String>, original: Option<String>) -> Result<ConnectionView, SqlError> {
+    pub fn save(
+        &self,
+        profile: Profile,
+        password: Option<String>,
+        original: Option<String>,
+    ) -> Result<ConnectionView, SqlError> {
         let password = password.filter(|value| !value.is_empty()).map(Secret::new);
-        if password.as_ref().is_some_and(|secret| secret.expose().len() > MAX_PASSWORD_BYTES) {
+        if password
+            .as_ref()
+            .is_some_and(|secret| secret.expose().len() > MAX_PASSWORD_BYTES)
+        {
             return Err(SqlError::new("invalid", "The password is too long."));
         }
         let profile = profile.validated()?;
         let existing = self.profiles()?;
-        let previous = original.as_deref().and_then(|name| existing.iter().find(|item| item.name == name));
+        let previous = original
+            .as_deref()
+            .and_then(|name| existing.iter().find(|item| item.name == name));
         if original.is_some() && previous.is_none() {
-            return Err(SqlError::new("invalid", "The connection being edited no longer exists."));
+            return Err(SqlError::new(
+                "invalid",
+                "The connection being edited no longer exists.",
+            ));
         }
         let renamed = previous.is_some_and(|item| item.name != profile.name);
-        if (previous.is_none() || renamed) && existing.iter().any(|item| item.name.eq_ignore_ascii_case(&profile.name)) {
-            return Err(SqlError::new("invalid", format!("A connection named {} already exists.", profile.name)));
+        if (previous.is_none() || renamed)
+            && existing
+                .iter()
+                .any(|item| item.name.eq_ignore_ascii_case(&profile.name))
+        {
+            return Err(SqlError::new(
+                "invalid",
+                format!("A connection named {} already exists.", profile.name),
+            ));
         }
         if previous.is_none() && existing.len() >= MAX_CONNECTIONS {
-            return Err(SqlError::new("invalid", format!("At most {MAX_CONNECTIONS} connections can be saved.")));
+            return Err(SqlError::new(
+                "invalid",
+                format!("At most {MAX_CONNECTIONS} connections can be saved."),
+            ));
         }
         let keychain_error = |error: String| SqlError::new("keychain", error);
         let previous_storage = previous.map_or(PasswordStorage::None, |item| item.password_storage);
@@ -579,17 +698,28 @@ impl Service {
                 let secret = match password {
                     Some(secret) => Some(secret),
                     // Keep the stored password; move it when the name changed.
-                    None if previous_storage == PasswordStorage::Keychain && renamed => self.keychain.get(previous_name).map_err(keychain_error)?,
+                    None if previous_storage == PasswordStorage::Keychain && renamed => {
+                        self.keychain.get(previous_name).map_err(keychain_error)?
+                    }
                     None if previous_storage == PasswordStorage::Keychain => None,
-                    None => return Err(SqlError::new("invalid", "Enter the password to store in the keychain.")),
+                    None => {
+                        return Err(SqlError::new(
+                            "invalid",
+                            "Enter the password to store in the keychain.",
+                        ))
+                    }
                 };
                 if let Some(secret) = secret {
-                    self.keychain.set(&profile.name, &secret).map_err(keychain_error)?;
+                    self.keychain
+                        .set(&profile.name, &secret)
+                        .map_err(keychain_error)?;
                 }
             }
             PasswordStorage::Session => {
                 if let Some(secret) = password {
-                    self.session.set(&profile.name, &secret).map_err(keychain_error)?;
+                    self.session
+                        .set(&profile.name, &secret)
+                        .map_err(keychain_error)?;
                 } else if renamed {
                     if let Ok(Some(secret)) = self.session.get(previous_name) {
                         let _ = self.session.set(&profile.name, &secret);
@@ -603,16 +733,23 @@ impl Service {
             let mut connection = self.database()?.lock().map_err(storage_error)?;
             let transaction = connection.transaction().map_err(storage_error)?;
             if let Some(name) = &original {
-                transaction.execute("DELETE FROM sql_connections WHERE name=?1", [name]).map_err(storage_error)?;
+                transaction
+                    .execute("DELETE FROM sql_connections WHERE name=?1", [name])
+                    .map_err(storage_error)?;
             }
             transaction
-                .execute("INSERT INTO sql_connections(name,json) VALUES(?1,?2)", params![profile.name, stored])
+                .execute(
+                    "INSERT INTO sql_connections(name,json) VALUES(?1,?2)",
+                    params![profile.name, stored],
+                )
                 .map_err(storage_error)?;
             transaction.commit().map_err(storage_error)?;
         }
         // Remove what the new settings no longer use. A keychain that is
         // gone cannot hold an entry to remove.
-        if previous_storage == PasswordStorage::Keychain && (renamed || profile.password_storage != PasswordStorage::Keychain) {
+        if previous_storage == PasswordStorage::Keychain
+            && (renamed || profile.password_storage != PasswordStorage::Keychain)
+        {
             let _ = self.keychain.delete(previous_name);
         }
         if renamed || profile.password_storage != PasswordStorage::Session {
@@ -644,12 +781,17 @@ impl Service {
     pub fn unlock(&self, name: &str, password: String) -> Result<(), SqlError> {
         let profile = self.profile(name)?;
         if profile.password_storage != PasswordStorage::Session {
-            return Err(SqlError::new("invalid", "This connection does not ask for its password each session."));
+            return Err(SqlError::new(
+                "invalid",
+                "This connection does not ask for its password each session.",
+            ));
         }
         if password.len() > MAX_PASSWORD_BYTES {
             return Err(SqlError::new("invalid", "The password is too long."));
         }
-        self.session.set(name, &Secret::new(password)).map_err(|error| SqlError::new("internal", error))
+        self.session
+            .set(name, &Secret::new(password))
+            .map_err(|error| SqlError::new("internal", error))
     }
 
     fn password(&self, profile: &Profile) -> Result<Option<Secret>, SqlError> {
@@ -673,7 +815,10 @@ impl Service {
         if id.is_empty() || id.len() > 64 {
             return Err(SqlError::new("invalid", "Invalid run id."));
         }
-        let mut running = self.running.lock().map_err(|_| SqlError::new("internal", "Query registry failed."))?;
+        let mut running = self
+            .running
+            .lock()
+            .map_err(|_| SqlError::new("internal", "Query registry failed."))?;
         if running.contains_key(id) {
             return Err(SqlError::new("busy", "This query is already running."));
         }
@@ -692,7 +837,12 @@ impl Service {
 
     /// Ask a running query to stop. The driver cancels it on the server.
     pub fn cancel(&self, id: &str) -> bool {
-        match self.running.lock().ok().and_then(|running| running.get(id).cloned()) {
+        match self
+            .running
+            .lock()
+            .ok()
+            .and_then(|running| running.get(id).cloned())
+        {
             Some(cancel) => {
                 cancel.cancel();
                 true
@@ -701,8 +851,16 @@ impl Service {
         }
     }
 
-    fn execute(&self, id: &str, profile: &Profile, password: Option<&Secret>, sql: &str, supplied: &BTreeMap<String, Value>) -> Result<QueryResult, SqlError> {
-        let checked = guard::check(sql, profile.kind).map_err(|message| SqlError::new("refused", message))?;
+    fn execute(
+        &self,
+        id: &str,
+        profile: &Profile,
+        password: Option<&Secret>,
+        sql: &str,
+        supplied: &BTreeMap<String, Value>,
+    ) -> Result<QueryResult, SqlError> {
+        let checked =
+            guard::check(sql, profile.kind).map_err(|message| SqlError::new("refused", message))?;
         let mut parameters = Vec::with_capacity(checked.parameters.len());
         for name in &checked.parameters {
             let value = match supplied.get(name) {
@@ -719,16 +877,30 @@ impl Service {
             parameters.push((name.clone(), value));
         }
         let cancel = self.register(id)?;
-        let job = Job { profile, password, sql: &checked.sql, parameters, timeout: Duration::from_secs(u64::from(profile.timeout_seconds)), cancel };
+        let job = Job {
+            profile,
+            password,
+            sql: &checked.sql,
+            parameters,
+            timeout: Duration::from_secs(u64::from(profile.timeout_seconds)),
+            cancel,
+        };
         let mut collector = Collector::new(profile.row_limit);
         let started = Instant::now();
         let outcome = match profile.kind {
             Kind::Sqlite => sqlite::run(&job, &mut collector),
-            Kind::Postgres => runtime().and_then(|runtime| runtime.block_on(postgres::run(&job, &mut collector))),
-            Kind::Mysql => runtime().and_then(|runtime| runtime.block_on(mysql::run(&job, &mut collector))),
+            Kind::Postgres => {
+                runtime().and_then(|runtime| runtime.block_on(postgres::run(&job, &mut collector)))
+            }
+            Kind::Mysql => {
+                runtime().and_then(|runtime| runtime.block_on(mysql::run(&job, &mut collector)))
+            }
         };
         self.finish(id);
-        outcome.map_err(|error| SqlError { code: error.code, message: scrub(&error.message, password) })?;
+        outcome.map_err(|error| SqlError {
+            code: error.code,
+            message: scrub(&error.message, password),
+        })?;
         Ok(QueryResult {
             connection: profile.name.clone(),
             kind: profile.kind,
@@ -747,12 +919,23 @@ impl Service {
     pub fn run(&self, request: RunRequest) -> Result<QueryResult, SqlError> {
         let profile = self.profile(&request.connection)?;
         let password = self.password(&profile)?;
-        self.execute(&request.id, &profile, password.as_ref(), &request.sql, &request.parameters)
+        self.execute(
+            &request.id,
+            &profile,
+            password.as_ref(),
+            &request.sql,
+            &request.parameters,
+        )
     }
 
     /// Try a profile as entered in Settings, saved or not. `password` is
     /// what was typed; without it the stored password of `original` is used.
-    pub fn test(&self, profile: Profile, password: Option<String>, original: Option<String>) -> Result<TestResult, SqlError> {
+    pub fn test(
+        &self,
+        profile: Profile,
+        password: Option<String>,
+        original: Option<String>,
+    ) -> Result<TestResult, SqlError> {
         let mut profile = profile.validated()?;
         profile.row_limit = 1;
         profile.timeout_seconds = profile.timeout_seconds.min(15);
@@ -760,10 +943,20 @@ impl Service {
             Some(typed) => Some(Secret::new(typed)),
             None if profile.password_storage == PasswordStorage::None => None,
             None => {
-                let stored = original.as_deref().map(|name| self.profile(name)).transpose()?;
+                let stored = original
+                    .as_deref()
+                    .map(|name| self.profile(name))
+                    .transpose()?;
                 match stored {
-                    Some(stored) if stored.password_storage == profile.password_storage => self.password(&stored)?,
-                    _ => return Err(SqlError::new("password_required", "Enter the password to test this connection.")),
+                    Some(stored) if stored.password_storage == profile.password_storage => {
+                        self.password(&stored)?
+                    }
+                    _ => {
+                        return Err(SqlError::new(
+                            "password_required",
+                            "Enter the password to test this connection.",
+                        ))
+                    }
                 }
             }
         };
@@ -774,9 +967,22 @@ impl Service {
         };
         let id = format!("test-{}", crate::storage::now());
         let result = self.execute(&id, &profile, password.as_ref(), sql, &BTreeMap::new())?;
-        let reported = result.rows.first().and_then(|row| row.first()).and_then(Value::as_str).unwrap_or("").to_string();
-        let server = if profile.kind == Kind::Mysql { format!("MySQL {reported}") } else { reported };
-        Ok(TestResult { server, duration_ms: result.duration_ms })
+        let reported = result
+            .rows
+            .first()
+            .and_then(|row| row.first())
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let server = if profile.kind == Kind::Mysql {
+            format!("MySQL {reported}")
+        } else {
+            reported
+        };
+        Ok(TestResult {
+            server,
+            duration_ms: result.duration_ms,
+        })
     }
 }
 
@@ -785,10 +991,14 @@ fn keychain_scope(database: &Database) -> Result<String, String> {
     const KEY: &str = "sql_keychain_scope";
     let connection = database.lock()?;
     let known: Option<String> = connection
-        .query_row("SELECT value FROM app_meta WHERE key=?1", [KEY], |row| row.get(0))
+        .query_row("SELECT value FROM app_meta WHERE key=?1", [KEY], |row| {
+            row.get(0)
+        })
         .optional()
         .map_err(|error| error.to_string())?;
-    if let Some(scope) = known.filter(|scope| scope.len() == 16 && scope.bytes().all(|byte| byte.is_ascii_hexdigit())) {
+    if let Some(scope) = known
+        .filter(|scope| scope.len() == 16 && scope.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    {
         return Ok(scope);
     }
     let mut bytes = [0u8; 8];
@@ -797,7 +1007,10 @@ fn keychain_scope(database: &Database) -> Result<String, String> {
         .map_err(|error| format!("Could not read random bytes: {error}"))?;
     let scope: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
     connection
-        .execute("INSERT OR REPLACE INTO app_meta(key,value) VALUES(?1,?2)", params![KEY, scope])
+        .execute(
+            "INSERT OR REPLACE INTO app_meta(key,value) VALUES(?1,?2)",
+            params![KEY, scope],
+        )
         .map_err(|error| error.to_string())?;
     Ok(scope)
 }
