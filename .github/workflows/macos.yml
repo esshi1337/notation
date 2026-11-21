@@ -59,8 +59,13 @@ jobs:
       - name: Svelte and TypeScript check
         run: npm run check
 
+      # macOS temporary directories live under /var, a symlink to
+      # /private/var. The setup script refuses symlinked resource paths, so
+      # the suites get a symlink-free temporary directory.
       - name: Native Python suites
         run: |
+          export TMPDIR="$RUNNER_TEMP/python-suites"
+          mkdir -p "$TMPDIR"
           python3 tests/native/macos_platform_test.py
           python3 tests/native/packaging_test.py
           python3 tests/native/language_packaging_test.py
@@ -130,8 +135,14 @@ jobs:
         with:
           workspaces: src-tauri
           key: core-tests
+      # Workspace operations reject paths with symlinked components, and the
+      # default macOS TMPDIR is under the /var symlink. Until that is handled
+      # in the app, give the tests a symlink-free temporary directory.
       - name: Rust tests (core, no desktop feature)
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        run: |
+          export TMPDIR="$RUNNER_TEMP/rust-tests"
+          mkdir -p "$TMPDIR"
+          cargo test --manifest-path src-tauri/Cargo.toml --no-fail-fast
 
   webkit-e2e:
     name: Playwright WebKit e2e
