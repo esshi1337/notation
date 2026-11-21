@@ -7,6 +7,7 @@
   import type { TaskToggle } from './markdown-features';
   import { reducedFormatting } from './reduced-formatting';
   import { buildAnchors, lineForOffset, offsetForLine, sourceHeadingLines } from './scroll-anchor';
+  import { motionMs } from './motion';
 
   let { documentId, content, standalone, theme, folds, onToggleTask, onEditSource, onOpenWiki, onEditProperties, sourcePath, loadEmbed, onOpenPath, cells }: { documentId: number; content: string; standalone: boolean; theme: 'dark' | 'light'; folds: Map<string, boolean>; onToggleTask: (request: TaskToggle) => boolean; onEditSource: (from: number) => void; onOpenWiki?: (target: string, sourcePath?: string) => void; onEditProperties?: () => void; sourcePath?: string; loadEmbed?: (target: string, sourcePath?: string) => Promise<EmbedDocument>; onOpenPath?: (path: string) => void; cells?: CellSession } = $props();
   let container: HTMLDivElement;
@@ -41,7 +42,7 @@
     scroller.scrollTop = offsetForLine(anchors(), line);
   }
 
-  async function renderPreview(text: string, raw: boolean, palette: 'dark' | 'light', ticket: number) {
+  async function renderPreview(text: string, raw: boolean, palette: 'dark' | 'light', ticket: number, identity: number) {
     if (!container || ticket !== generation) return;
     const reduced = !raw && reducedFormatting(text).reduced;
     if (reduced) {
@@ -67,11 +68,31 @@
       tasks: [], maths: [], diagrams: [text], callouts: [], links: [], frontmatter: null,
     } : renderMarkdown(text);
     if (ticket !== generation) return;
+    const before = blockKeys(identity);
     await renderContent(container, result, {
       theme: palette, folds, current: () => ticket === generation,
       toggle: (task) => onToggleTask({ task, snapshot: text }), edit: onEditSource, openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, cells, openPath: onOpenPath, embedTrail: sourcePath ? [sourcePath + "#"] : [],
     });
-    if (ticket === generation) { rendering = false; applyPendingLine(); }
+    if (ticket === generation) { rendering = false; applyPendingLine(); fadeChangedBlocks(before, identity); }
+  }
+
+  // After an edit only the blocks whose content changed fade back in, so the
+  // debounced re-render does not read as a flicker. Skipped entirely with
+  // reduced motion, on document switches and for large changes.
+  const BLOCK_LIMIT = 600, CHANGE_LIMIT = 6;
+  let renderedIdentity: number | null = null;
+  const blockKey = (block: Element) => block.tagName + '\u0000' + block.textContent;
+  function blockKeys(identity: number): Set<string> | null {
+    if (!motionMs('fast') || renderedIdentity !== identity || container.childElementCount > BLOCK_LIMIT) return null;
+    return new Set(Array.from(container.children, blockKey));
+  }
+  function fadeChangedBlocks(before: Set<string> | null, identity: number) {
+    renderedIdentity = identity;
+    const duration = motionMs('fast');
+    if (!before || !duration) return;
+    const changed = Array.from(container.children).filter((block) => !before.has(blockKey(block)));
+    if (!changed.length || changed.length > CHANGE_LIMIT) return;
+    for (const block of changed) block.animate([{ opacity: .6 }, { opacity: 1 }], { duration, easing: 'cubic-bezier(.2, .8, .2, 1)' });
   }
 
   $effect(() => {
@@ -86,7 +107,7 @@
     for (const input of container?.querySelectorAll<HTMLInputElement>('input.task-checkbox') ?? []) input.disabled = true;
     clearTimeout(timer);
     timer = setTimeout(() => {
-      queue = queue.catch(() => {}).then(() => renderPreview(text, raw, palette, ticket)).catch((error: unknown) => {
+      queue = queue.catch(() => {}).then(() => renderPreview(text, raw, palette, ticket, identity)).catch((error: unknown) => {
         if (ticket !== generation || !container) return;
         container.textContent = `Preview error: ${error instanceof Error ? error.message : String(error)}`;
         rendering = false;

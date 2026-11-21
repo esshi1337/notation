@@ -447,3 +447,45 @@ test('the canvas has a centered empty state, eases toolbar zoom and animates onl
   await expect(view.locator('.canvas-node')).toHaveCount(2);
   await expect.poll(async () => (await animations()).length).toBe(2);
 });
+
+test('only the edited block fades in the Split preview, and document switches fade nothing', async ({ page }) => {
+  await page.goto('/');
+  const source = page.getByRole('textbox', { name: 'Document source' });
+  await source.fill('# Title\n\nFirst paragraph.\n\nSecond paragraph.\n\nThird paragraph.');
+  const preview = page.locator('.preview-pane .markdown-body');
+  await expect(preview.locator('p')).toHaveCount(3);
+  await expect(page.getByRole('region', { name: 'Document preview' })).toHaveAttribute('aria-busy', 'false');
+  await page.evaluate(() => {
+    const original = Element.prototype.animate;
+    const state = window as unknown as { blockFades: string[] };
+    state.blockFades = [];
+    Element.prototype.animate = function (keyframes, options) {
+      if (this.parentElement?.classList.contains('markdown-body')) state.blockFades.push(`${this.tagName}:${this.textContent}:${(keyframes as Keyframe[])[0].opacity}:${(options as KeyframeAnimationOptions).duration}`);
+      return original.call(this, keyframes, options);
+    };
+  });
+  const fades = () => page.evaluate(() => (window as unknown as { blockFades: string[] }).blockFades);
+  await source.focus();
+  await page.keyboard.press('Control+End');
+  await page.keyboard.type(' More.');
+  await expect(preview.locator('p').last()).toHaveText('Third paragraph. More.');
+  await expect.poll(fades).toEqual(['P:Third paragraph. More.:0.6:120']);
+
+  // A new document is a different identity: nothing fades.
+  await page.getByRole('button', { name: 'New document', exact: true }).click();
+  await expect(page.getByRole('tablist', { name: 'Documents', exact: true }).getByRole('tab')).toHaveCount(2);
+  // Let the debounced render for the new document run before switching back.
+  await page.waitForTimeout(450);
+  await page.getByRole('tab', { name: 'welcome.md', exact: true }).click();
+  await expect(page.locator('.preview-pane .markdown-body p')).toHaveCount(3);
+  await page.waitForTimeout(450);
+  expect(await fades()).toHaveLength(1);
+
+  // Reduced motion: no fade at all.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.getByRole('textbox', { name: 'Document source' }).focus();
+  await page.keyboard.press('Control+End');
+  await page.keyboard.type(' Again.');
+  await expect(page.locator('.preview-pane .markdown-body p').last()).toHaveText('Third paragraph. More. Again.');
+  expect(await fades()).toHaveLength(1);
+});
