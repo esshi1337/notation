@@ -39,10 +39,24 @@ export function calloutMarkup(callout: CalloutSpan, index: number, body: string)
   return `<section class="callout callout-${calloutKind(callout.type)}" role="region" aria-label="${escapeHtml(`Callout: ${callout.title}`)}" data-callout-index="${index}" data-callout-type="${escapeHtml(callout.type)}"><div class="callout-heading"><button class="callout-toggle" data-callout-toggle><span class="callout-icon" data-callout-icon aria-hidden="true"></span><span class="callout-type">${escapeHtml(callout.type)}</span><span class="callout-title">${escapeHtml(callout.title)}</span><span class="callout-chevron">⌄</span></button><button class="callout-edit" data-callout-edit aria-label="Edit callout">Edit</button></div><div class="callout-body" data-callout-body>${body}</div></section>`;
 }
 
+const FRONTMATTER_TAG_KEYS = new Set(['tags', 'tag', 'keywords']);
+const FRONTMATTER_CHIP_LIMIT = 24;
+
 export function frontmatterMarkup(frontmatter: Frontmatter): string {
   if (frontmatter.error) return `<section class="frontmatter-properties" aria-label="Frontmatter"><div role="alert" class="frontmatter-error">${escapeHtml(frontmatter.error)}</div><button data-edit-properties>Edit properties</button></section>`;
   const entries = Object.entries(frontmatter.values);
   const rows = entries.slice(0, 8).map(([key, value]) => {
+    // Lists of plain values read as chips; tag-like keys get their "#".
+    if (Array.isArray(value) && value.length && value.every((item) => item === null || ['string', 'number', 'boolean'].includes(typeof item))) {
+      const prefix = FRONTMATTER_TAG_KEYS.has(key.toLowerCase()) ? '#' : '';
+      const chips = value.slice(0, FRONTMATTER_CHIP_LIMIT).map((item) => {
+        const text = String(item);
+        const shown = text.length > 60 ? text.slice(0, 60) + '…' : text;
+        return `<li class="frontmatter-chip"${shown === text ? '' : ` title="${escapeHtml(text)}"`}>${escapeHtml(prefix && !text.startsWith('#') ? prefix + shown : shown)}</li>`;
+      }).join('');
+      const more = value.length > FRONTMATTER_CHIP_LIMIT ? `<li class="frontmatter-chip frontmatter-chip-more">+${value.length - FRONTMATTER_CHIP_LIMIT} more</li>` : '';
+      return `<dt>${escapeHtml(key)}</dt><dd><ul class="frontmatter-chips">${chips}${more}</ul></dd>`;
+    }
     let label: string;
     try { label = typeof value === 'string' ? value : JSON.stringify(value) ?? 'null'; } catch { label = '[complex value]'; }
     return `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(label.length > 180 ? label.slice(0, 180) + '…' : label)}</dd>`;
