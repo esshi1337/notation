@@ -177,3 +177,38 @@ test('the Settings editor specimen is fully visible by default and scrolls only 
     expect(await settings.locator('.settings-editor-controls').evaluate((element) => element.clientHeight)).toBeGreaterThanOrEqual(110);
   }
 });
+
+test('file navigator dialogs share the Settings surface and the frontmatter button reads as a button', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/');
+  await source(page).fill(sample);
+  const surface = (name: string) => page.getByRole('dialog', { name, exact: true }).evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { background: style.backgroundColor, radius: style.borderTopLeftRadius, shadow: style.boxShadow !== 'none', backdrop: getComputedStyle(element, '::backdrop').backgroundColor };
+  });
+  await openSettings(page);
+  const reference = await surface('Settings');
+  await page.keyboard.press('Escape');
+  for (const [command, name, field] of [['Go to file', 'Go to file', 'File name'], ['Search workspace files', 'Search workspace files', 'Search text']] as const) {
+    await runCommand(page, command);
+    const dialog = page.getByRole('dialog', { name, exact: true });
+    await settled(dialog);
+    expect(await surface(name), name).toEqual(reference);
+    const input = dialog.getByRole('textbox', { name: field, exact: true });
+    await expect(input).toBeFocused();
+    expect((await input.boundingBox())!.height).toBeGreaterThanOrEqual(32);
+    const close = (await dialog.getByRole('button', { name: 'Close file navigator', exact: true }).boundingBox())!;
+    expect([Math.round(close.width), Math.round(close.height)]).toEqual([28, 28]);
+    await expect(dialog.getByRole('button', { name: 'Close file navigator', exact: true })).not.toHaveCSS('border-top-color', 'rgba(0, 0, 0, 0)');
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+  }
+  for (const [mode, locator] of [['Split', '.preview-pane .frontmatter-properties [data-edit-properties]'], ['Live Preview', '.cm-live-frontmatter [data-edit-properties]']] as const) {
+    await runCommand(page, mode);
+    const button = page.locator(locator).first();
+    await expect(button).toBeVisible();
+    expect((await button.boundingBox())!.height, mode).toBeGreaterThanOrEqual(24);
+    await expect(button).toHaveCSS('border-top-style', 'solid');
+    await expect(button).not.toHaveCSS('border-top-color', 'rgba(0, 0, 0, 0)');
+  }
+});

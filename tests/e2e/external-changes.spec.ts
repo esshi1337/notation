@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { openSettings, renameDocument, runCommand } from './commands';
+import { openSettings, renameDocument, runCommand, settled } from './commands';
 
 const original = '# Original one\n\nInitial text.';
 const source = (page: Page) => page.getByRole('textbox', { name: 'Document source' });
@@ -280,4 +280,22 @@ test('saving a dirty conflict still uses the checked write and preserves both ve
   await expect(page.locator('.app-error')).toContainText('Changed on disk');
   await expectSource(page, 'My unsaved text');
   expect(await page.evaluate(() => (window as unknown as { externalMock: Mock }).externalMock.disk['/one.md'])).toBe('# External version');
+});
+
+test('the file-changed comparison uses the shared dialog styling', async ({ page }) => {
+  await setup(page);
+  await source(page).fill('My unsaved text');
+  await change(page, '# External version');
+  await banner(page).getByRole('button', { name: 'Compare / reload' }).click();
+  const dialog = page.getByRole('dialog', { name: 'File changed on disk', exact: true });
+  await settled(dialog);
+  await expect(dialog.locator('pre')).toBeVisible();
+  expect(await dialog.evaluate((element) => {
+    const style = getComputedStyle(element), close = element.querySelector('.navigator-heading button')!.getBoundingClientRect();
+    const actions = [...element.querySelectorAll('.dialog-actions button')].map((button) => Math.round(button.getBoundingClientRect().height));
+    return { radius: style.borderTopLeftRadius, shadow: style.boxShadow !== 'none', backdrop: getComputedStyle(element, '::backdrop').backgroundColor, close: [Math.round(close.width), Math.round(close.height)], actions: Math.min(...actions) >= 32 };
+  })).toEqual({ radius: '16px', shadow: true, backdrop: 'rgba(0, 0, 0, 0.48)', close: [28, 28], actions: true });
+  await page.screenshot({ path: 'test-results/file-changed-dialog.png' });
+  await dialog.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
 });
