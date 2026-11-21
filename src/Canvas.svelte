@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import CanvasCard from './CanvasCard.svelte';
+  import { pinchZoom, wheelZoomFactor } from './wheel';
   import { canvasAnchor, canvasNodeTitle, mutateCanvas, parseCanvas, removeCanvasNode } from './canvas';
   import type { CanvasDocument, CanvasNode } from './canvas';
   type Snapshot = { text: string; documentId: number };
@@ -181,7 +182,8 @@
     const left = Math.min(...canvas.nodes.map((node) => node.x)), top = Math.min(...canvas.nodes.map((node) => node.y)), right = Math.max(...canvas.nodes.map((node) => node.x + node.width)), bottom = Math.max(...canvas.nodes.map((node) => node.y + node.height));
     zoom = Math.max(.1, Math.min(2, ((viewport?.clientWidth ?? 800) - 80) / (right - left), ((viewport?.clientHeight ?? 500) - 80) / (bottom - top))); panX = 40 - left * zoom; panY = 40 - top * zoom;
   }
-  function wheel(event: WheelEvent) { event.preventDefault(); if (drag) return; if (event.ctrlKey || event.metaKey) zoom = Math.max(.1, Math.min(3, zoom * (event.deltaY < 0 ? 1.1 : .9))); else { panX -= event.deltaX; panY -= event.deltaY; } }
+  function wheel(event: WheelEvent) { event.preventDefault(); if (drag) return; if (event.ctrlKey || event.metaKey) zoomBy(wheelZoomFactor(event, { in: 1.1, out: .9 })); else { panX -= event.deltaX; panY -= event.deltaY; } }
+  function zoomBy(factor: number) { if (!drag) zoom = Math.max(.1, Math.min(3, zoom * factor)); }
   function historyKey(event: KeyboardEvent) {
     const target = event.target as HTMLElement;
     if (target.closest('input,textarea,select,[contenteditable=true]')) return;
@@ -264,7 +266,7 @@
   {#if error}<div class="app-error" role="alert">{error} Use Source to inspect the original JSON.</div>{/if}
   <div class="canvas-area">
     <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions (Interactive canvas supports panning, card movement, and keyboard history.) -->
-    <div class="canvas-viewport" role="application" aria-label="Canvas board" tabindex="0" bind:this={viewport} onpointerdown={(event) => { if (event.target === viewport) begin(event); }} onpointermove={move} onpointerup={end} onpointercancel={pointerCancel} onlostpointercapture={pointerCancel} onwheel={wheel} onkeydown={keyboard} ondragover={dragover} ondrop={drop}>
+    <div class="canvas-viewport" role="application" aria-label="Canvas board" tabindex="0" bind:this={viewport} use:pinchZoom={zoomBy} onpointerdown={(event) => { if (event.target === viewport) begin(event); }} onpointermove={move} onpointerup={end} onpointercancel={pointerCancel} onlostpointercapture={pointerCancel} onwheel={wheel} onkeydown={keyboard} ondragover={dragover} ondrop={drop}>
       <div class="canvas-plane" style={'transform:translate(' + panX + 'px,' + panY + 'px) scale(' + zoom + ')'}>
         <svg class="canvas-edges" width="1" height="1" aria-label="Canvas connections"><defs><marker id={'canvas-arrow-' + documentId} markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto-start-reverse"><path d="M0,0 L6,3 L0,6" fill="var(--muted)" /></marker></defs>{#each canvas.edges as edge}<g>{#if canvas.nodes.some((node) => node.id === edge.fromNode) && canvas.nodes.some((node) => node.id === edge.toNode)}{@const from = canvasAnchor(placed(canvas.nodes.find((node) => node.id === edge.fromNode)!), edge.fromSide || 'right')}{@const to = canvasAnchor(placed(canvas.nodes.find((node) => node.id === edge.toNode)!), edge.toSide || 'left')}<line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="var(--muted)" stroke-width="1.5" marker-start={edge.fromEnd === 'arrow' ? 'url(#canvas-arrow-' + documentId + ')' : undefined} marker-end={edge.toEnd === 'none' ? undefined : 'url(#canvas-arrow-' + documentId + ')'} /><text x={(from.x + to.x) / 2} y={(from.y + to.y) / 2 - 7} fill="var(--muted)" font-size="11">{edge.label || ''}</text>{/if}</g>{/each}</svg>
         {#each canvas.nodes as node (node.id)}<article class="canvas-node" class:canvas-group={node.type === 'group'} class:selected={selectedId === node.id} class:connecting={connectSource === node.id} aria-label={'Canvas card: ' + canvasNodeTitle(node)} style={'left:' + placed(node).x + 'px;top:' + placed(node).y + 'px;width:' + placed(node).width + 'px;height:' + placed(node).height + 'px'} onpointerdown={(event) => cardPointer(event,node)}>

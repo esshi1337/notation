@@ -49,6 +49,7 @@
   import { migrateSettings, preferencesStyle, readUIPreferences, UI_SETTINGS_VERSION } from './preferences';
   import { smoothScrolling } from './smooth-scroll';
   import { fadeOnChange, pop } from './motion';
+  import { isMac } from './platform';
   import { COMMANDS, commandForEvent, formatShortcut, readShortcutOverrides, shortcutFor } from './shortcuts';
   import type { CommandId } from './shortcuts';
   import type { CommandItem } from './ui-commands';
@@ -200,7 +201,7 @@
   let counts = $derived(documentCounts(active.content));
   let lineCount = $derived(counts.lines);
   let wordCount = $derived(counts.words);
-  const mac = /Mac|iPhone|iPad/u.test(navigator.platform);
+  const mac = isMac;
   let commandItems = $derived<CommandItem[]>(COMMANDS.map((command) => ({
     ...command,
     ...(command.id === 'panel.scripts' && !scriptsEnabled ? { label: 'Scripts (enable in Settings → Editor)' } : {}),

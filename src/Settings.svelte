@@ -11,7 +11,8 @@
   import NumberControl from './NumberControl.svelte';
   import ThemeEditor from './ThemeEditor.svelte';
   import type { UserTheme } from './themes';
-  import { COMMANDS, formatShortcut, normalizeShortcut, shortcutFor, shortcutFromEvent, validateShortcut } from './shortcuts';
+  import { COMMANDS, defaultShortcut, formatShortcut, normalizeShortcut, shortcutFor, shortcutFromEvent, validateShortcut } from './shortcuts';
+  import { isMac } from './platform';
   import type { CommandId, ShortcutOverrides } from './shortcuts';
 
   type Layout = 'split' | 'source' | 'preview' | 'live';
@@ -41,7 +42,7 @@
     '- Observe',
     '- Connect',
   ];
-  const mac = /Mac|iPhone|iPad/u.test(navigator.platform);
+  const mac = isMac;
   let section = $state<Section>('Appearance');
   // Fade the incoming section; the previous one leaves at once.
   let content: HTMLDivElement;
@@ -143,17 +144,18 @@
     prefs.scriptsEnabled = DEFAULT_UI_PREFERENCES.scriptsEnabled;
     prefs.automaticallyReloadExternalChanges = DEFAULT_UI_PREFERENCES.automaticallyReloadExternalChanges;
   }
-  function resetDrafts() { drafts = Object.fromEntries(COMMANDS.map((item) => [item.id, shortcutFor(item.id, shortcuts)])); }
+  // Fields show the platform label (Ctrl+N, ⌘N); storage keeps the Mod form.
+  function resetDrafts() { drafts = Object.fromEntries(COMMANDS.map((item) => [item.id, formatShortcut(shortcutFor(item.id, shortcuts), mac)])); }
   function commitShortcut(id: CommandId) {
     const value = drafts[id] ?? '', invalid = validateShortcut(id, value, shortcuts);
     if (invalid) { shortcutError = invalid; return; }
     const binding = normalizeShortcut(value)!;
     const next = { ...shortcuts };
-    if (binding === COMMANDS.find((item) => item.id === id)!.defaultShortcut) delete next[id]; else next[id] = binding;
-    shortcuts = next; drafts[id] = binding; shortcutError = '';
+    if (binding === defaultShortcut(id, mac)) delete next[id]; else next[id] = binding;
+    shortcuts = next; drafts[id] = formatShortcut(binding, mac); shortcutError = '';
   }
   function capture(id: CommandId, event: KeyboardEvent) {
-    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); drafts[id] = shortcutFor(id, shortcuts); shortcutError = ''; (event.currentTarget as HTMLElement).blur(); return; }
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); drafts[id] = formatShortcut(shortcutFor(id, shortcuts), mac); shortcutError = ''; (event.currentTarget as HTMLElement).blur(); return; }
     if (event.key === 'Enter') { event.preventDefault(); commitShortcut(id); (event.currentTarget as HTMLElement).blur(); return; }
     const value = shortcutFromEvent(event);
     if (value && ['Mod+A', 'Mod+C', 'Mod+V', 'Mod+X', 'Mod+Z', 'Mod+Shift+Z', 'Mod+Y'].includes(value)) return;
@@ -163,7 +165,7 @@
     const next = { ...shortcuts }; delete next[id];
     const invalid = validateShortcut(id, shortcutFor(id, next), next);
     if (invalid) { shortcutError = invalid; return; }
-    shortcuts = next; drafts[id] = shortcutFor(id, next); shortcutError = '';
+    shortcuts = next; drafts[id] = formatShortcut(shortcutFor(id, next), mac); shortcutError = '';
   }
   function sectionKey(event: KeyboardEvent, index: number) {
     if (!['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft'].includes(event.key)) return;
@@ -237,7 +239,7 @@
             <label class="settings-checkbox"><input type="checkbox" bind:checked={wrap} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Word wrap</label>
             <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.showLineNumbers} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Show line numbers</label>
           </div>
-          <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.smoothScrolling} disabled={prefs.performanceMode} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Smooth scrolling</label>
+          <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.smoothScrolling} disabled={prefs.performanceMode || mac} title={mac ? 'macOS scrolls smoothly on its own' : undefined} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Smooth scrolling</label>
         </div>
 
         <p class="settings-help settings-scroll-help">Smooth mouse-wheel scrolling in documents and panels. Turn off for immediate scrolling. Your system’s reduced-motion preference takes priority.</p>
@@ -265,11 +267,11 @@
           <div class="settings-preview-meta"><span>{prefs.readingWidth} px reading width</span><span>{wrap ? 'Wrap on' : 'Wrap off'} · {prefs.showLineNumbers ? 'Line numbers on' : 'Line numbers off'}</span></div>
         </section>
       {:else if section === 'Shortcuts'}
-        <p class="settings-help">Focus a field and press a shortcut, or type Ctrl/Cmd with a key. Clear a field to remove its app shortcut. Standard text-editing shortcuts still work in text fields. Desktop shortcuts may take precedence; change those in your system settings.</p>
+        <p class="settings-help">Focus a field and press a shortcut, or type {mac ? 'Cmd' : 'Ctrl'} with a key. Clear a field to remove its app shortcut. Standard text-editing shortcuts still work in text fields. Desktop shortcuts may take precedence; change those in your system settings.</p>
         {#if shortcutError}<div class="script-error shortcut-error" role="alert">{shortcutError}</div>{/if}
         <input class="shortcut-search" type="search" aria-label="Search shortcuts" placeholder="Search commands or groups…" bind:value={shortcutQuery} />
         <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable list needs keyboard access.) -->
-        <div class="shortcut-list" role="region" aria-label="Keyboard shortcuts" tabindex="0">{#each filteredCommands as item}<div class="shortcut-row"><label for={'shortcut-' + item.id}>{item.label}<span>{item.group}</span></label><input id={'shortcut-' + item.id} data-shortcut-capture aria-label={'Shortcut for ' + item.label} bind:value={drafts[item.id]} placeholder="Unassigned" spellcheck="false" onkeydown={(event) => capture(item.id, event)} onchange={() => commitShortcut(item.id)} /><button type="button" aria-label={'Reset shortcut: ' + item.label} title={'Default: ' + formatShortcut(item.defaultShortcut, mac)} onclick={() => resetShortcut(item.id)}>↺</button></div>{/each}{#if !filteredCommands.length}<p class="panel-note">No matching shortcuts.</p>{/if}</div>
+        <div class="shortcut-list" role="region" aria-label="Keyboard shortcuts" tabindex="0">{#each filteredCommands as item}<div class="shortcut-row"><label for={'shortcut-' + item.id}>{item.label}<span>{item.group}</span></label><input id={'shortcut-' + item.id} data-shortcut-capture aria-label={'Shortcut for ' + item.label} bind:value={drafts[item.id]} placeholder="Unassigned" spellcheck="false" onkeydown={(event) => capture(item.id, event)} onchange={() => commitShortcut(item.id)} /><button type="button" aria-label={'Reset shortcut: ' + item.label} title={'Default: ' + formatShortcut(defaultShortcut(item.id, mac), mac)} onclick={() => resetShortcut(item.id)}>↺</button></div>{/each}{#if !filteredCommands.length}<p class="panel-note">No matching shortcuts.</p>{/if}</div>
         <button type="button" class="settings-reset" onclick={() => { shortcuts = {}; resetDrafts(); shortcutError = ''; }}>Reset shortcuts</button>
       {:else}
         <div class="settings-intro"><strong>Connect your agents.</strong><p>Read open documents and apply guarded, undoable edits. Agent edits stay in the editor until you save.</p></div>

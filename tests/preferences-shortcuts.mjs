@@ -291,5 +291,98 @@ try {
     assert.deepEqual(keys.readShortcutOverrides({ 'file.new': 'Ctrl+S', 'file.open': 'Ctrl+S', 'file.save': 'Ctrl+Z', garbage: 'Ctrl+J' }), {});
     assert.deepEqual(keys.readShortcutOverrides(['Ctrl+J']), {});
   });
+  const platform = await server.ssrLoadModule('/src/platform.ts');
+  const wheel = await server.ssrLoadModule('/src/wheel.ts');
+  check('platform detection recognises Apple platforms from platform, client hints or user agent', () => {
+    assert.equal(platform.detectMac({ platform: 'MacIntel' }), true);
+    assert.equal(platform.detectMac({ platform: 'iPad' }), true);
+    assert.equal(platform.detectMac({ userAgentData: { platform: 'macOS' }, platform: 'Linux x86_64' }), true);
+    assert.equal(platform.detectMac({ platform: '', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' }), true);
+    for (const source of [undefined, {}, { platform: 'Linux x86_64' }, { platform: 'Win32' }, { platform: 'linux' }, { platform: 'darwin' }]) assert.equal(platform.detectMac(source), false);
+  });
+  check('on macOS only Command is the modifier and Control is left to the text system', () => {
+    const mac = true;
+    for (const key of ['a', 'e', 'k', 'n', 'p', 'f', 'b', 'd', 'h', 'o', 's']) assert.equal(keys.commandForEvent(event(key, { ctrlKey: true }), {}, mac), null, 'Ctrl+' + key);
+    assert.equal(keys.shortcutFromEvent(event('n', { ctrlKey: true }), mac), null);
+    assert.equal(keys.shortcutFromEvent(event('n', { ctrlKey: true, metaKey: true }), mac), null);
+    assert.equal(keys.commandForEvent(event('n', { metaKey: true }), {}, mac), 'file.new');
+    assert.equal(keys.commandForEvent(event('k', { metaKey: true }), {}, mac), 'app.commands');
+    assert.equal(keys.commandForEvent(event('S', { metaKey: true, shiftKey: true }), {}, mac), 'file.saveAs');
+    assert.equal(keys.commandForEvent(event(',', { code: 'Comma', metaKey: true }), {}, mac), 'app.settings');
+    assert.equal(keys.commandForEvent(event('F2', { code: 'F2' }), {}, mac), 'file.rename');
+    // Other platforms keep accepting both Ctrl and Meta.
+    assert.equal(keys.commandForEvent(event('n', { ctrlKey: true }), {}, false), 'file.new');
+    assert.equal(keys.commandForEvent(event('n', { metaKey: true }), {}, false), 'file.new');
+  });
+  check('macOS defaults avoid system shortcuts and missing keys, and stay valid and unique', () => {
+    const mac = true;
+    assert.equal(keys.defaultShortcut('edit.replace', mac), 'Mod+Alt+F');
+    assert.equal(keys.defaultShortcut('edit.replace', false), 'Mod+H');
+    assert.equal(keys.defaultShortcut('tab.next', mac), 'Mod+Alt+ArrowRight');
+    assert.equal(keys.defaultShortcut('tab.next', false), 'Mod+PageDown');
+    assert.equal(keys.commandForEvent(event('h', { metaKey: true }), {}, mac), null);
+    assert.equal(keys.commandForEvent(event('f', { metaKey: true, altKey: true }), {}, mac), 'edit.replace');
+    assert.equal(keys.commandForEvent(event('ArrowRight', { code: 'ArrowRight', metaKey: true, altKey: true }), {}, mac), 'tab.next');
+    const defaults = keys.COMMANDS.map((command) => keys.defaultShortcut(command.id, mac)).filter(Boolean);
+    assert.equal(new Set(defaults).size, defaults.length);
+    for (const command of keys.COMMANDS) assert.equal(keys.validateShortcut(command.id, keys.defaultShortcut(command.id, mac), {}, mac), null, command.id);
+    assert.match(keys.validateShortcut('file.new', 'Cmd+H', {}, mac), /reserved/i);
+    assert.equal(keys.validateShortcut('file.new', 'Ctrl+M', {}, false), null);
+    assert.deepEqual(keys.readShortcutOverrides({ 'file.new': 'Mod+H', 'file.open': 'Mod+Shift+J' }, mac), { 'file.open': 'Mod+Shift+J' });
+  });
+  check('one formatter produces Apple glyph labels on macOS and Ctrl labels elsewhere', () => {
+    const cases = [['Mod+Shift+S', '⇧⌘S', 'Ctrl+Shift+S'], ['Mod+,', '⌘,', 'Ctrl+,'], ['Mod+Alt+1', '⌥⌘1', 'Ctrl+Alt+1'], ['Mod+Alt+Shift+K', '⌥⇧⌘K', 'Ctrl+Alt+Shift+K'],
+      ['F2', 'F2', 'F2'], ['Shift+F12', '⇧F12', 'Shift+F12'], ['Mod+PageDown', '⌘⇟', 'Ctrl+PgDn'], ['Mod+Alt+ArrowRight', '⌥⌘→', 'Ctrl+Alt+ArrowRight'], ['Mod+=', '⌘=', 'Ctrl+='], ['Mod+-', '⌘-', 'Ctrl+-'], ['', '', '']];
+    for (const [binding, mac, other] of cases) {
+      assert.equal(keys.formatShortcut(binding, true), mac, binding);
+      assert.equal(keys.formatShortcut(binding, false), other, binding);
+      assert.ok(!keys.formatShortcut(binding, true).includes('Mod') && !keys.formatShortcut(binding, false).includes('Mod'));
+    }
+  });
+  check('every displayed label parses back to its stored binding on both platforms', () => {
+    for (const mac of [true, false]) for (const command of keys.COMMANDS) {
+      const binding = keys.defaultShortcut(command.id, mac);
+      assert.equal(keys.normalizeShortcut(keys.formatShortcut(binding, mac)), binding, command.id + (mac ? ' (mac)' : ''));
+    }
+    assert.equal(keys.normalizeShortcut('⇧⌘J'), 'Mod+Shift+J');
+    assert.equal(keys.normalizeShortcut('⌘ + J'), 'Mod+J');
+    assert.equal(keys.normalizeShortcut('⌘'), null);
+  });
+  check('smooth scrolling defaults follow the platform and stored choices win', () => {
+    assert.equal(preferences.DEFAULT_UI_PREFERENCES.smoothScrolling, !platform.isMac);
+    assert.equal(preferences.readUIPreferences({ smoothScrolling: false }).smoothScrolling, false);
+  });
+  check('wheel zoom keeps notch steps and scales continuous pinch input proportionally', () => {
+    const step = { in: 1.1, out: 0.9 };
+    assert.equal(wheel.wheelZoomFactor({ deltaY: -120, deltaMode: 0 }, step), 1.1);
+    assert.equal(wheel.wheelZoomFactor({ deltaY: 100, deltaMode: 0 }, step), 0.9);
+    assert.equal(wheel.wheelZoomFactor({ deltaY: -3, deltaMode: 1 }, step), 1.1);
+    assert.equal(wheel.wheelZoomFactor({ deltaY: 1, deltaMode: 2 }, step), 0.9);
+    assert.equal(wheel.wheelZoomFactor({ deltaY: 0, deltaMode: 0 }, step), 1);
+    assert.equal(wheel.isContinuousWheel({ deltaY: 2.5, deltaMode: 0 }), true);
+    assert.equal(wheel.isContinuousWheel({ deltaY: 120, deltaMode: 0 }), false);
+    assert.equal(wheel.isContinuousWheel({ deltaY: 1, deltaMode: 1 }), false);
+    // Twenty small pinch events: proportional to the total delta, in either direction.
+    let zoom = 1;
+    for (let index = 0; index < 20; index++) zoom *= wheel.wheelZoomFactor({ deltaY: -1.5, deltaMode: 0 }, step);
+    assert.ok(Math.abs(zoom - Math.exp(0.3)) < 1e-9, String(zoom));
+    assert.ok(zoom < 1.1 ** 20 / 4);
+    for (let index = 0; index < 20; index++) zoom *= wheel.wheelZoomFactor({ deltaY: 1.5, deltaMode: 0 }, step);
+    assert.ok(Math.abs(zoom - 1) < 1e-9, String(zoom));
+  });
+  check('WebKit pinch gestures report incremental factors and detach their listeners', () => {
+    const listeners = new Map();
+    const node = { addEventListener: (type, handler) => listeners.set(type, handler), removeEventListener: (type, handler) => { if (listeners.get(type) === handler) listeners.delete(type); } };
+    const seen = [];
+    const action = wheel.pinchZoom(node, (factor, x, y) => seen.push([Number(factor.toFixed(6)), x, y]));
+    let prevented = 0;
+    const gesture = (type, scale) => listeners.get(type)({ scale, clientX: 10, clientY: 20, preventDefault: () => { prevented++; } });
+    gesture('gesturestart', 1); gesture('gesturechange', 1.2); gesture('gesturechange', 1.5); gesture('gesturechange', 1.5); gesture('gesturechange', Number.NaN); gesture('gestureend', 1.5);
+    gesture('gesturestart', 1); gesture('gesturechange', 0.5);
+    assert.deepEqual(seen, [[1.2, 10, 20], [1.25, 10, 20], [0.5, 10, 20]]);
+    assert.equal(prevented, 8);
+    action.destroy();
+    assert.equal(listeners.size, 0);
+  });
   console.log(`Preferences and shortcuts: ${passed} scenarios passed`);
 } finally { await server.close(); }

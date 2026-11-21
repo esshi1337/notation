@@ -2,6 +2,7 @@
   import { invoke, isTauri } from '@tauri-apps/api/core';
   import { onDestroy, untrack } from 'svelte';
   import { layoutGraph, type LayoutPoint } from './graph-layout';
+  import { pinchZoom, wheelZoomFactor } from './wheel';
   type Node = { id: string; path: string; name: string; title: string; tags: string[] };
   type Edge = { source: string; target: string; kind: string };
   type Graph = { nodes: Node[]; edges: Edge[]; unresolved: {source:string;target:string;status:string}[]; totals:{nodes:number;edges:number;unresolved:number}; truncated:{nodes:boolean;edges:boolean;unresolved:boolean} };
@@ -85,7 +86,12 @@
     if (!layout.points.length) return;
     event.preventDefault();
     const box = viewport?.getBoundingClientRect();
-    zoomBy(event.deltaY < 0 ? 1.12 : 1 / 1.12, box ? event.clientX - box.left : undefined, box ? event.clientY - box.top : undefined);
+    zoomBy(wheelZoomFactor(event, { in: 1.12, out: 1 / 1.12 }), box ? event.clientX - box.left : undefined, box ? event.clientY - box.top : undefined);
+  }
+  function onPinch(factor: number, clientX: number, clientY: number) {
+    if (!layout.points.length) return;
+    const box = viewport?.getBoundingClientRect();
+    zoomBy(factor, box ? clientX - box.left : undefined, box ? clientY - box.top : undefined);
   }
   function startPan(event: PointerEvent) {
     if (event.button !== 0) return;
@@ -155,7 +161,7 @@
     {#if graph.truncated.nodes||graph.truncated.edges}<p class="panel-note">Graph limited to 200 notes and 1,000 links. Use a local graph to narrow it.</p>{/if}
     <div class="graph-viewport" bind:this={viewport} aria-busy={busy}>
       {#if layout.points.length}
-        <svg class="graph-canvas" data-zoom={camera.scale.toFixed(3)} data-pan-x={Math.round(camera.x)} data-pan-y={Math.round(camera.y)} data-view={cameraMode} data-content-width={Math.round(layout.width)} data-content-height={Math.round(layout.height)} role="group" aria-label="Workspace note connections" onpointerdown={startPan} onpointermove={movePan} onpointerup={endPan} onpointercancel={endPan} onwheel={onWheel}>
+        <svg class="graph-canvas" data-zoom={camera.scale.toFixed(3)} data-pan-x={Math.round(camera.x)} data-pan-y={Math.round(camera.y)} data-view={cameraMode} data-content-width={Math.round(layout.width)} data-content-height={Math.round(layout.height)} role="group" aria-label="Workspace note connections" onpointerdown={startPan} onpointermove={movePan} onpointerup={endPan} onpointercancel={endPan} onwheel={onWheel} use:pinchZoom={onPinch}>
           <g transform={'translate(' + camera.x + ' ' + camera.y + ') scale(' + camera.scale + ')'}>
             {#each layout.links as link, index (link.source + '>' + link.target + '>' + index)}
               <line class="graph-link" class:graph-link-active={selected === link.source || selected === link.target} x1={link.x1} y1={link.y1} x2={link.x2} y2={link.y2} />
