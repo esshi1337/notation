@@ -27,6 +27,9 @@ async function setup(page: Page, enabled = true) {
     contentType: 'text/html',
     body: '<!doctype html><html><head><meta charset="utf-8"><title>Smooth scroll fixture</title></head><body></body></html>',
   }));
+  // The animator is for notched mice on Linux and Windows; on macOS it never
+  // listens. Pin a non-Mac platform so these tests also run on a Mac host.
+  await page.addInitScript(() => Object.defineProperty(navigator, 'platform', { get: () => 'Linux x86_64' }));
   await page.goto('/smooth-scroll-fixture.html');
   await page.evaluate(async ({ enabled }) => {
     document.body.innerHTML = '';

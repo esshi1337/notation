@@ -6,7 +6,14 @@
  * native controls, graphs/canvases, and nested scroll owners keep browser
  * behavior. Animation is a bounded, short requestAnimationFrame loop that
  * stops as soon as it settles.
+ *
+ * On macOS the action never listens: trackpads and the Magic Mouse deliver
+ * pixel deltas with system momentum and overscroll bounce, and cancelling
+ * those events to re-animate them makes scrolling floaty and removes the
+ * bounce.
  */
+
+import { isMac } from './platform';
 
 const SCROLL_CONTAINERS = '.preview-scroll, .cm-scroller, .settings-content, .settings-editor-controls, .settings-specimen-stage, .shortcut-list, .sidebar-panel';
 const SIDEBAR = '.sidebar-panel';
@@ -192,7 +199,7 @@ export function smoothScrolling(node: HTMLElement, enabled: boolean): SmoothScro
   }
 
   function syncWheelListener() {
-    const shouldListen = active && !reducedMotion();
+    const shouldListen = active && !isMac && !reducedMotion();
     if (shouldListen && !wheelListening) {
       node.addEventListener('wheel', onWheel, { passive: false });
       wheelListening = true;

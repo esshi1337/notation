@@ -1,5 +1,13 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 
+// The browser under test runs on the host, so the host decides which
+// conventions the app follows (Cmd and glyph labels on macOS).
+export const mac = process.platform === 'darwin';
+/** The label Settings and menus show for a stored `Mod+…` binding. */
+export const shortcutLabel = (macLabel: string, otherLabel: string) => mac ? macLabel : otherLabel;
+export const nextTabKey = mac ? 'Meta+Alt+ArrowRight' : 'Control+PageDown';
+export const previousTabKey = mac ? 'Meta+Alt+ArrowLeft' : 'Control+PageUp';
+
 export const commandPalette = (page: Page) => page.getByRole('dialog', { name: 'Commands', exact: true });
 export const commandResults = (page: Page) => commandPalette(page).getByRole('listbox', { name: 'Commands', exact: true });
 

@@ -1,5 +1,6 @@
 import { DARK_PRESETS, LIGHT_PRESETS, readThemePreferences } from './themes';
 import type { UserTheme } from './themes';
+import { isMac } from './platform';
 export { DARK_PRESETS, LIGHT_PRESETS } from './themes';
 
 export type UIPreferences = {
@@ -14,7 +15,9 @@ export const DEFAULT_UI_PREFERENCES: Readonly<UIPreferences> = {
   userThemes: [], selectedThemeId: '',
   darkPreset: 'amoled', lightPreset: 'default', density: 'compact', accentColor: '#d8d8df',
   editorFont: 'mono', lineHeight: 1.7, readingWidth: 756, sidebarWidth: 260, sidebarRailWidth: 'standard', sidebarPosition: 'left',
-  showStatusBar: true, tabSize: 4, indentWithTabs: false, languageIntelligenceEnabled: false, automaticallyReloadExternalChanges: false, showLineNumbers: true, focusMode: false, smoothScrolling: true, reduceMotion: false, performanceMode: false, scriptsEnabled: false,
+  showStatusBar: true, tabSize: 4, indentWithTabs: false, languageIntelligenceEnabled: false, automaticallyReloadExternalChanges: false, showLineNumbers: true, focusMode: false,
+  // macOS already scrolls with momentum and rubber-banding; animating on top fights it.
+  smoothScrolling: !isMac, reduceMotion: false, performanceMode: false, scriptsEnabled: false,
 };
 
 export const UI_SETTINGS_VERSION = 3;
