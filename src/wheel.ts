@@ -8,6 +8,11 @@ const PAGE_PIXELS = 400;
 // page units). Trackpad pinches and two-finger scrolls arrive as a stream of
 // small pixel deltas.
 const NOTCH_PIXELS = 40;
+// Zoom per pixel of continuous input. A pinch reports small deltas (a full
+// pinch is around a hundred pixels); a two-finger scroll that zooms covers
+// several hundred, so it needs a gentler rate.
+export const PINCH_SENSITIVITY = 0.01;
+export const SCROLL_ZOOM_SENSITIVITY = 0.002;
 
 export function wheelPixels(event: WheelLike): number {
   if (event.deltaMode === 1) return event.deltaY * LINE_PIXELS;
@@ -25,10 +30,10 @@ export function isContinuousWheel(event: WheelLike): boolean {
  * notch. Continuous input zooms in proportion to its delta, so a pinch made
  * of dozens of small events is smooth instead of jumping a full step each.
  */
-export function wheelZoomFactor(event: WheelLike, step: { in: number; out: number }): number {
+export function wheelZoomFactor(event: WheelLike, step: { in: number; out: number }, sensitivity = PINCH_SENSITIVITY): number {
   if (!event.deltaY) return 1;
   if (!isContinuousWheel(event)) return event.deltaY < 0 ? step.in : step.out;
-  return Math.exp(-wheelPixels(event) * 0.01);
+  return Math.exp(-wheelPixels(event) * sensitivity);
 }
 
 type GestureEvent = UIEvent & { scale: number; clientX: number; clientY: number };

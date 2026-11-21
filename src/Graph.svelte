@@ -2,7 +2,7 @@
   import { invoke, isTauri } from '@tauri-apps/api/core';
   import { onDestroy, untrack } from 'svelte';
   import { layoutGraph, type LayoutPoint } from './graph-layout';
-  import { pinchZoom, wheelZoomFactor } from './wheel';
+  import { PINCH_SENSITIVITY, SCROLL_ZOOM_SENSITIVITY, pinchZoom, wheelZoomFactor } from './wheel';
   type Node = { id: string; path: string; name: string; title: string; tags: string[] };
   type Edge = { source: string; target: string; kind: string };
   type Graph = { nodes: Node[]; edges: Edge[]; unresolved: {source:string;target:string;status:string}[]; totals:{nodes:number;edges:number;unresolved:number}; truncated:{nodes:boolean;edges:boolean;unresolved:boolean} };
@@ -86,7 +86,8 @@
     if (!layout.points.length) return;
     event.preventDefault();
     const box = viewport?.getBoundingClientRect();
-    zoomBy(wheelZoomFactor(event, { in: 1.12, out: 1 / 1.12 }), box ? event.clientX - box.left : undefined, box ? event.clientY - box.top : undefined);
+    // A pinch arrives with ctrlKey set; a plain two-finger scroll also zooms here.
+    zoomBy(wheelZoomFactor(event, { in: 1.12, out: 1 / 1.12 }, event.ctrlKey ? PINCH_SENSITIVITY : SCROLL_ZOOM_SENSITIVITY), box ? event.clientX - box.left : undefined, box ? event.clientY - box.top : undefined);
   }
   function onPinch(factor: number, clientX: number, clientY: number) {
     if (!layout.points.length) return;

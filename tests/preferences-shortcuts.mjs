@@ -369,6 +369,10 @@ try {
     assert.ok(zoom < 1.1 ** 20 / 4);
     for (let index = 0; index < 20; index++) zoom *= wheel.wheelZoomFactor({ deltaY: 1.5, deltaMode: 0 }, step);
     assert.ok(Math.abs(zoom - 1) < 1e-9, String(zoom));
+    // A two-finger scroll that zooms (the graph) uses the gentler rate: 300 px is 1.8x, not 20x.
+    let scrolled = 1;
+    for (let index = 0; index < 60; index++) scrolled *= wheel.wheelZoomFactor({ deltaY: -5, deltaMode: 0 }, step, wheel.SCROLL_ZOOM_SENSITIVITY);
+    assert.ok(Math.abs(scrolled - Math.exp(0.6)) < 1e-9, String(scrolled));
   });
   check('WebKit pinch gestures report incremental factors and detach their listeners', () => {
     const listeners = new Map();
