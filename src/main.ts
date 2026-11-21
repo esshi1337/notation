@@ -4,10 +4,12 @@ import './motion.css';
 import { isTauri } from '@tauri-apps/api/core';
 import { followMotionPreference, trackInputModality } from './motion';
 import { markOverlayScrollbars } from './scrollbars';
+import { focusButtonsOnClick } from './click-focus';
 
 // Sticky windows and the main window share the pointer/keyboard focus-ring rule.
 trackInputModality();
 markOverlayScrollbars();
+focusButtonsOnClick();
 
 const target = document.getElementById('app')!;
 target.textContent = 'Loading Notation…';

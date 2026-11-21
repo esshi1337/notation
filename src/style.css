@@ -162,6 +162,8 @@
 :root[data-scrollbars='overlay']:has(dialog[open]) .app > :not(dialog) * {
   scrollbar-color: transparent transparent;
 }
+/* Engines without scrollbar-color style thumbs through the legacy pseudo-element. */
+:root[data-scrollbars='overlay']:has(dialog[open]) .app > :not(dialog) *::-webkit-scrollbar-thumb { background-color: transparent; }
 
 .identity-icon { display: block; flex: 0 0 auto; max-width: none; pointer-events: none; }
 /* macOS overlay title bar: leave room for the window controls. */
@@ -274,6 +276,8 @@
 .settings-sections { display: flex; flex-direction: column; gap: 6px; min-height: 0; padding: 18px 12px; overflow-y: auto; overscroll-behavior: contain; border-right: 1px solid var(--border); background: var(--bg); }
 .settings-sections button { flex: 0 0 var(--settings-nav-height); height: var(--settings-nav-height); padding: 0 12px; border-radius: var(--radius-control); color: var(--muted); text-align: left; font-size: 13px; line-height: 20px; }
 .settings-sections button[aria-selected='true'] { background: var(--active); color: var(--heading); font-weight: 600; }
+/* Keyboard focus is a thin inner ring, clearly not the filled selected state. */
+.settings-sections button:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 65%, var(--text)); outline-offset: -3px; }
 .settings-content { min-width: 0; min-height: 0; padding: 24px 28px; overflow: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; color: var(--text); font-size: 13px; }
 .settings-content.settings-shortcuts { display: flex; flex-direction: column; overflow: hidden; }
 .settings-shortcuts > :not(.shortcut-list) { flex-shrink: 0; }
@@ -281,7 +285,8 @@
 .settings-intro { display: flex; flex-direction: column; gap: 6px; margin-bottom: 24px; }
 .settings-intro strong { color: var(--heading); font-size: 20px; font-weight: 600; line-height: 28px; }
 .settings-intro p { margin: 0; color: var(--muted); font-size: 13px; line-height: 20px; }
-.shortcut-list { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+/* Overlay scrollbars take no gutter; keep the reset buttons clear of the thumb. */
+.shortcut-list { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding-right: 14px; }
 .shortcut-list:focus-visible { outline: 1px solid var(--muted); outline-offset: 2px; }
 .settings-fields { display: flex; flex-direction: column; gap: var(--settings-row-gap); min-width: 0; }
 .settings-field { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(0, 240px); align-items: center; gap: 8px 16px; min-width: 0; min-height: var(--settings-row-height); color: var(--text); font-size: 13px; line-height: 20px; }

@@ -103,6 +103,9 @@ test('narrow windows keep tools reachable on either side and appearance reset re
 });
 
 test('overlay scrollbar thumbs hide beneath an open header menu and modal dialogs', async ({ page }) => {
+  // The rule sets scrollbar-color; an engine without it has nothing to assert.
+  await page.goto('/');
+  test.skip(!await page.evaluate(() => CSS.supports('scrollbar-color', 'red blue')), 'scrollbar-color is not supported by this engine');
   await page.setViewportSize({ width: 1100, height: 420 });
   await page.goto('/');
   await sidebar(page).getByRole('button', { name: 'Templates panel', exact: true }).click();

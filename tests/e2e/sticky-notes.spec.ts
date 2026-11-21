@@ -797,3 +797,15 @@ test('a sticky window follows the main window\'s Reduce motion setting on open a
   await page.evaluate(() => { localStorage.setItem('notation.motion', 'reduce'); window.dispatchEvent(new Event('focus')); });
   await expect(root).toHaveAttribute('data-motion', 'reduce');
 });
+
+test('formatting buttons that cancel the press never take focus from the note', async ({ page }) => {
+  await stickyWindow(page, { note: { title: 'Focus', text: 'Keep typing here', html: null, color: 'yellow' } });
+  const paper = page.getByRole('textbox', { name: 'Sticky text' });
+  await expect(paper).toBeEnabled();
+  await paper.click();
+  await page.getByRole('button', { name: 'Bold', exact: true }).click();
+  await expect(paper).toBeFocused();
+  // A control that does not cancel the press takes focus like any button.
+  await page.getByRole('button', { name: 'Note options', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Note options', exact: true })).toBeFocused();
+});

@@ -25,7 +25,7 @@
   let selected = $derived(workspaces[selectedIndex]);
 
   function reveal() { queueMicrotask(() => list?.querySelector<HTMLElement>('.workspace-option.active')?.scrollIntoView({ block: 'nearest' })); }
-  function show(index = Math.max(0, selectedIndex)) { if (disabled || !workspaces.length) return; activeIndex = index; open = true; reveal(); }
+  function show(index = Math.max(0, selectedIndex)) { if (disabled || !workspaces.length) return; activeIndex = index; open = true; if (document.activeElement !== trigger) trigger.focus({ preventScroll: true }); reveal(); }
   function hide(focus = false) { if (!open) return; open = false; typed = ''; clearTimeout(typedTimer); if (focus) trigger.focus(); }
   function choose(index: number) {
     const workspace = workspaces[index];

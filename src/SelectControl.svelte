@@ -83,6 +83,9 @@
     activeIndex = index;
     listStyle = 'left:8px;top:8px;max-height:240px;visibility:hidden';
     open = true;
+    // Keys for the open list are handled on the button, so it must hold focus
+    // even where a click does not focus buttons (macOS WebKit).
+    if (document.activeElement !== trigger && !list?.contains(document.activeElement)) trigger?.focus({ preventScroll: true });
     void tick().then(() => { placeList(); revealActive(); });
   }
   function moveActive(direction: number) {

@@ -14,15 +14,15 @@ export const webkitExclusions: Array<{ title: string; reason: string }> = [
   // skips buttons unless Full Keyboard Access is on. These tests assert the
   // Chromium/Linux behaviour.
   { title: 'searches command labels, runs a command by keyboard, and restores focus on Escape', reason: 'Expects the clicked Commands button to hold focus; macOS WebKit does not focus buttons on click.' },
-  { title: 'custom dropdown supports keyboard commit, escape, outside click and narrow containment', reason: 'After clicking the dropdown and pressing Escape the Settings dialog is gone. Probably the clicked button is not focused in macOS WebKit, so Escape reaches the dialog; not confirmed on a real Mac.' },
+  { title: 'custom dropdown supports keyboard commit, escape, outside click and narrow containment', reason: 'Was: Escape after clicking a dropdown closed Settings, because macOS WebKit does not focus a clicked button. Fixed in the app (focus follows clicks; Escape closes an open dropdown first) and covered by "focus follows a click even where the engine does not focus buttons"; kept excluded until the macOS job can confirm it.' },
   { title: 'Settings traps focus, closes with Escape, restores focus, and persists preferences', reason: 'Counts Tab stops; macOS WebKit skips buttons on Tab by default.' },
   { title: 'black sticky paper and bars are true black and the editor has no focus frame while buttons keep keyboard focus', reason: 'Expects Tab to focus a toolbar button; macOS WebKit skips buttons on Tab by default.' },
 
   // Rendering differences.
   { title: 'gutter font size tracks the editor font size and stays aligned', reason: 'WebKit reports the computed size as a 32-bit float (19.200001px) where the test expects 19.2px.' },
   { title: 'the gutter hugs the centered source column in a wide pane', reason: 'WebKit reports the computed size as a 32-bit float (19.200001px) where the test expects 19.2px.' },
-  { title: 'chrome controls ease their states with the shared motion tokens', reason: 'Focus-ring width differs in WebKit (3px where 2px is expected); not yet investigated.' },
-  { title: 'overlay scrollbar thumbs hide beneath an open header menu and modal dialogs', reason: 'Reads scrollbar pseudo-element styles that WebKit does not expose the same way; not yet investigated.' },
+  { title: 'chrome controls ease their states with the shared motion tokens', reason: 'Asserts a 2px ring after Tab plus a script focus() on a button. macOS WebKit does not treat that as keyboard focus (Tab skips buttons there), so :focus-visible does not match and the computed outline is the unfocused 3px/none. The same steps give 2px solid in WebKitGTK; the ring itself is covered by the Chromium run.' },
+  { title: 'overlay scrollbar thumbs hide beneath an open header menu and modal dialogs', reason: 'Asserts computed scrollbar-color, which Safari supports only from 26.2. The rule under test targets engines that composite overlay thumbs above the page and support scrollbar-color (WebKitGTK); the test now skips itself where the property is unsupported, so this entry can go once the CI WebKit supports it.' },
   { title: 'small toolbar preserves selection for pointer and keyboard, native undo and bullets toggle', reason: 'Rich-text formatting through execCommand yields different markup and undo steps in WebKit; needs a check on a real Mac.' },
 
   // The wheel animator is for notched mice on Linux and Windows and never

@@ -97,3 +97,30 @@ xattr -dr com.apple.quarantine /Applications/Notation.app
 Alternatively, Control-click the app, choose Open, and confirm (on macOS 15,
 allow it under System Settings → Privacy & Security). Developer ID signing and
 notarization remain future work.
+
+## Keyboard focus in WebKit
+
+Two WebKit defaults on macOS differ from Chromium and WebKitGTK, and the app
+is written so that neither matters:
+
+- **A click does not focus a button.** Controls keep their key handling on the
+  clicked button (Escape and arrows on a dropdown, arrows on section tabs and
+  segmented options). `src/click-focus.ts` moves focus to a button after a
+  pointer click in every engine, except where a control cancels the press to
+  keep focus elsewhere (sticky-note formatting buttons, list options) or where
+  the click's own handlers already moved focus. Dropdowns also take focus when
+  they open, and Settings closes an open dropdown before it closes itself on
+  Escape.
+- **Tab skips buttons** unless the user turns on "Keyboard navigation" in
+  System Settings (or presses Option+Tab). Nothing depends on Tab reaching a
+  button: every command is reachable from the command palette shortcut and
+  the native menu, menus and lists move focus with arrow keys through explicit
+  `focus()` calls, dialogs focus their first field or tab when they open, and
+  modal dialogs confine focus natively. The dialog focus traps only wrap Tab
+  between the first and last focusable control and are inert when Tab never
+  reaches them. Tests that count Tab stops on buttons are excluded from the
+  WebKit run for this reason (`tests/e2e/webkit-exclusions.ts`).
+
+Focus rings: after pointer input, controls focused by script keep focus without
+a ring (WebKit matches `:focus-visible` there); any key press brings rings back.
+
