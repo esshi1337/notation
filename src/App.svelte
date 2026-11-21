@@ -368,7 +368,9 @@
     if (activeId === id) activeId = visibleIds[Math.max(0, Math.min(index - 1, visibleIds.length - 1))];
     scheduleDiskCheck();
     await tick();
-    if (previousControl instanceof HTMLElement && !previousControl.isConnected && document.activeElement === document.body) {
+    // A closed tab stays in the DOM, inert, while it animates out.
+    // The browser may not have moved focus off it yet.
+    if (previousControl instanceof HTMLElement && (!previousControl.isConnected || previousControl.closest('[inert]')) && (document.activeElement === document.body || document.activeElement === previousControl)) {
       document.querySelector<HTMLElement>('.document-tab.active [role="tab"]')?.focus();
     }
     await flushPersistence();

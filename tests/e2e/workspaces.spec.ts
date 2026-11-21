@@ -61,11 +61,10 @@ test('closing a shared dirty tab only closes that view and deleting a workspace 
   expect(dialogs).toBe(0);
   await page.getByRole('combobox', { name: 'Active workspace' }).selectOption({ label: 'First' });
   await expect(source(page)).toContainText('unsaved');
-  await runCommand(page, 'Workspace');
-  // The panel may already be open; keep it visible before the deletion. A
-  // toggled-off panel fades out briefly, so wait for it to leave first.
-  await expect(page.locator('.sidebar-panel.leaving')).toHaveCount(0);
-  if (!await panel(page).isVisible()) await runCommand(page, 'Workspace');
+  // The Workspace command toggles; the header button always opens the panel,
+  // whether or not it is already showing.
+  await page.getByRole('button', { name: 'Open workspace panel', exact: true }).click();
+  await expect(panel(page)).toBeVisible();
   await panel(page).getByRole('button', { name: 'Delete workspace', exact: true }).click();
   await expect(page.getByRole('combobox', { name: 'Active workspace' }).locator('option:checked')).toHaveText('Second');
   await page.getByRole('tab', { name: /shared.md/ }).click();
@@ -88,4 +87,34 @@ test('first workspace keeps existing drafts and rename/delete change metadata on
   await expect(source(page)).toHaveText('An existing unsaved draft');
   await page.reload();
   await expect(source(page)).toHaveText('An existing unsaved draft');
+});
+
+test('a shared tab that returns while it is still animating out is a normal tab again', async ({ page }) => {
+  await page.goto('/');
+  await create(page, 'First');
+  await importShared(page);
+  await create(page, 'Second');
+  await importShared(page);
+  // Stretch tab exits so switching workspaces always catches the tab mid-exit.
+  await page.evaluate(() => {
+    const original = Element.prototype.animate;
+    Element.prototype.animate = function (keyframes, options) {
+      const animation = original.call(this, keyframes, options);
+      if (this instanceof HTMLElement && this.classList.contains('document-tab') && Number((keyframes as Keyframe[])[0].opacity) === 1) animation.playbackRate = 0.02;
+      return animation;
+    };
+  });
+  const switcher = page.getByRole('combobox', { name: 'Active workspace' });
+  const shared = page.getByRole('tab', { name: /shared.md/ });
+  for (const label of ['First', 'Second', 'First']) {
+    await switcher.selectOption({ label });
+    await expect(switcher.locator('option:checked')).toHaveText(label);
+    await expect(shared).toHaveCount(1);
+    await expect(shared).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('.document-tab.active')).toHaveCount(1);
+    await expect(page.locator('.document-tab.active [role="tab"]')).toHaveAttribute('aria-label', 'shared.md');
+    expect(await page.locator('.document-tab.active').evaluate((element) => ({ hidden: element.getAttribute('aria-hidden'), inert: (element as HTMLElement).inert }))).toEqual({ hidden: null, inert: false });
+  }
+  await shared.click();
+  await expect(source(page)).toContainText('First line');
 });
