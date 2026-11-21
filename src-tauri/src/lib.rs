@@ -111,6 +111,12 @@ mod desktop {
             .map_err(|error| error.to_string())?
     }
     #[tauri::command]
+    async fn document_fingerprint(path: String) -> Result<super::file_changes::Fingerprint, String> {
+        tauri::async_runtime::spawn_blocking(move || super::file_changes::fingerprint(&path))
+            .await
+            .map_err(|error| error.to_string())?
+    }
+    #[tauri::command]
     async fn write_document_checked(
         path: String,
         content: String,
@@ -1052,6 +1058,7 @@ mod desktop {
                 write_document,
                 write_document_checked,
                 read_document_snapshot,
+                document_fingerprint,
                 lsp_typescript_path,
                 run_script,
                 stop_script,

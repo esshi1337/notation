@@ -274,6 +274,21 @@
   // saved document is polled; focus checks still detect conflicts when off.
   let diskGeneration = 0, diskReading = false, diskQueued = false, diskDisposed = false;
   let diskTimer: ReturnType<typeof setTimeout> | undefined;
+  // The file state seen at the last full read that found the disk equal to
+  // the tab's saved content. While the file's fingerprint (size, modification
+  // time, identity) still equals it, the content is not read again.
+  type DiskFingerprint = { size: string; modifiedNs: string; device: string; inode: string };
+  let diskKnown: { path: string; baseline: string; print: string; settled: boolean } | undefined;
+  async function diskFingerprint(path: string) {
+    try {
+      const value = await invoke<DiskFingerprint | null>('document_fingerprint', { path });
+      if (!value || typeof value.modifiedNs !== 'string' || typeof value.size !== 'string') return null;
+      // A rewrite within the filesystem's timestamp granularity can keep the
+      // same size and time. Trust a fingerprint only once it is two seconds old.
+      const settled = Date.now() - Number(BigInt(value.modifiedNs) / 1_000_000n) >= 2000;
+      return { print: [value.size, value.modifiedNs, value.device, value.inode].join(':'), settled };
+    } catch { return null; }
+  }
   function invalidateDiskCheck() {
     diskGeneration++;
     clearTimeout(diskTimer); diskTimer = undefined;
@@ -301,8 +316,13 @@
       && tab.content === content && tab.savedContent === baseline && tab.name === name && tab.savedName === savedName
       && !busy && !workspaceBusy && !closingWindow;
     try {
+      const seen = await diskFingerprint(path);
+      if (!current()) return;
+      if (seen && diskKnown && diskKnown.settled && diskKnown.path === path && diskKnown.baseline === baseline && diskKnown.print === seen.print) return;
       const disk = await readDiskFile(path);
       if (!current()) return;
+      // Remember the state only when taken before the read and unchanged by it.
+      diskKnown = seen && disk === baseline ? { path, baseline, ...seen } : undefined;
       if (disk === baseline) { delete diskConflicts[tab.id]; return; }
       if (autoReload && ui.automaticallyReloadExternalChanges && !tabDirty(tab) && !tab.hemingway && discardDecisions === 0) {
         const target = editors[tab.id], selection = { ...tab.selection };
