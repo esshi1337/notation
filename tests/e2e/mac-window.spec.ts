@@ -17,6 +17,8 @@ async function openDesktop(page: Page, platform: 'MacIntel' | 'Linux x86_64') {
     Object.assign(window, {
       menuShortcuts: [],
       presented: [],
+      reads: [],
+      agentResults: [],
       quitGuard: [],
       failPersist: false,
       isTauri: true,
@@ -37,6 +39,8 @@ async function openDesktop(page: Page, platform: 'MacIntel' | 'Linux x86_64') {
           if (cmd === 'set_menu_shortcuts') { (window as unknown as { menuShortcuts: unknown[] }).menuShortcuts.push(args.shortcuts); return null; }
           if (cmd === 'set_quit_guard') { (window as unknown as { quitGuard: boolean[] }).quitGuard.push(Boolean(args.needed)); return null; }
           if (cmd === 'persist_state' && (window as unknown as { failPersist: boolean }).failPersist) throw new Error('disk full');
+          if (cmd === 'read_document') { const reads = (window as unknown as { reads: string[] }).reads; reads.push(String(args.path)); return { path: '/vault/Readme.md', content: '# Stored spelling\n', warning: null }; }
+          if (cmd === 'complete_agent_request') { (window as unknown as { agentResults: unknown[] }).agentResults.push(args); return null; }
           if (cmd === 'launch_ready') return [];
           return null;
         },
@@ -199,4 +203,30 @@ test('other platforms never report a quit guard', async ({ page }) => {
   await page.keyboard.type('words');
   await page.waitForTimeout(1500);
   expect(await quitGuard(page)).toEqual([]);
+});
+
+test('a file opened under another spelling of its path is found under the stored one', async ({ page }) => {
+  await openDesktop(page, 'MacIntel');
+  await expect(page.getByRole('textbox', { name: 'Document source' })).toBeVisible();
+  const ask = (id: string, path: string) => page.evaluate(([requestId, requestPath]) => window.emitTauri!('notation:agent-request', { id: requestId, operation: 'open_document', path: requestPath, expiresAt: Date.now() + 60000 }), [id, path]);
+  const results = () => page.evaluate(() => (window as unknown as { agentResults: Array<{ id: string; result?: { path: string; id: string }; error?: string }> }).agentResults);
+
+  // The backend stores Readme.md; the request names it in another letter case.
+  await ask('one', '/vault/README.MD');
+  await expect.poll(async () => (await results()).length).toBe(1);
+  const first = (await results())[0];
+  expect(first.error).toBeUndefined();
+  expect(first.result!.path).toBe('/vault/Readme.md');
+  await expect(page.getByRole('tab', { name: /Readme\.md/u })).toHaveCount(1);
+
+  // The same spelling again, and the stored spelling, both reuse that tab.
+  await ask('two', '/vault/README.MD');
+  await ask('three', '/vault/Readme.md');
+  await expect.poll(async () => (await results()).length).toBe(3);
+  const all = await results();
+  expect(all.map((entry) => entry.error)).toEqual([undefined, undefined, undefined]);
+  expect(new Set(all.map((entry) => entry.result!.id)).size).toBe(1);
+  await expect(page.getByRole('tab', { name: /Readme\.md/u })).toHaveCount(1);
+  // The stored spelling is answered from the open tab without another read.
+  expect(await page.evaluate(() => (window as unknown as { reads: string[] }).reads)).toEqual(['/vault/README.MD', '/vault/README.MD']);
 });
