@@ -189,7 +189,7 @@ under `src-tauri/target/release/bundle/macos/` and `bundle/dmg/`. It uses the ho
 Rust architecture and skips Linux packaging tools. `desktop:install` remains a
 Linux AppImage installer; use the macOS app/DMG directly. macOS compilation,
 native dialogs, runtime behavior, packaging, signing and notarization have **not
-been validated** by a person on a Mac. A macOS CI workflow builds, ad-hoc signs and launches the app; no Developer ID signed or notarized distribution is provided. See the
+been validated** by a person on a Mac. A macOS CI workflow that builds, ad-hoc signs and launches the app exists but is currently disabled; no Developer ID signed or notarized distribution is provided. See the
 [platform audit and validation notes](docs/macos-development.md).
 
 ## Editing basics
@@ -493,7 +493,7 @@ python3 tests/native/packaging_test.py
 
 Playwright starts an isolated Vite server on port 1420, so stop any existing development server before running tests. Tests exercise real CodeMirror input, rendering, malformed diagrams, browser import/export, draft recovery, preferences, layouts, and HTML sanitization. Live Preview tests also cover source preservation, undo across modes, inline diagram editing, keyboard access, standalone Mermaid, task toggles, and math rendering with local fonts. Failed tests retain screenshots and traces; use `npx playwright show-report` to inspect results.
 
-Rust tests exercise real temporary files. Browser tests do not exercise native operating-system dialogs or prove desktop-webview compatibility. Validation runs locally, except the macOS workflow (`.github/workflows/macos.yml`), which builds and launches the app and runs this suite on WebKit. The Python packaging tests verify playback dependencies and portable build helpers without building or launching the app.
+Rust tests exercise real temporary files. Browser tests do not exercise native operating-system dialogs or prove desktop-webview compatibility. Validation runs locally. A macOS workflow (`.github/workflows/macos.yml`) that builds and launches the app and runs this suite on WebKit exists but is disabled and manual-only. The Python packaging tests verify playback dependencies and portable build helpers without building or launching the app.
 
 The installed Linux package has an additional native smoke test using `tauri-driver` and `WebKitWebDriver`, with temporary user-data directories:
 
@@ -665,7 +665,7 @@ See the [responsiveness measurements and remaining limits](docs/markdown-respons
 Start the sandboxed Astra session with `scripts/notation-advisor`. Work starts
 with a scoped GitHub issue assigned to the owner, uses an issue branch and
 linked PR, and receives local checks plus GLM Flash challenger review. The
-only CI is the macOS build workflow. See [the project orchestration guide](orchestration/README.md)
+macOS build workflow exists but is disabled and manual-only. See [the project orchestration guide](orchestration/README.md)
 for prerequisites, model routing, sandbox limits and issue-to-merge commands.
 
 ## Brand

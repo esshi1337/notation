@@ -5,7 +5,8 @@ Describe the problem and resulting behavior. Keep this PR within the issue scope
 
 ## Validation
 List exact local checks and their passed, failed or unrun results. Include UI
-evidence for visible changes. The only CI is the macOS workflow; report its result.
+evidence for visible changes. The macOS workflow is disabled
+and manual-only: write "macOS CI: disabled by user" and name what still needs a Mac.
 
 ## Review
 Record the independent GLM Flash review, fixes and retests. Cover relevant logic,

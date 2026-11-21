@@ -57,8 +57,12 @@ either host output as universal.
 
 ## Continuous integration
 
-`.github/workflows/macos.yml` runs on pull requests that touch app, native,
-test or tooling files, and on demand (`workflow_dispatch`):
+`.github/workflows/macos.yml` is currently **disabled by the repository owner**.
+It does not run on pull requests; it only runs if the owner re-enables or
+dispatches it, and pull requests are gated on local checks. Code under
+`cfg(target_os = "macos")` merged since it was disabled has not been compiled by
+it. When enabled, it runs on pull requests that touch app, native, test or
+tooling files, and on demand (`workflow_dispatch`):
 
 - **Build + launch smoke** on Apple Silicon (`macos-15`) and Intel
   (`macos-15-intel`): `scripts/setup-macos.py`, `npm run check`, the Python

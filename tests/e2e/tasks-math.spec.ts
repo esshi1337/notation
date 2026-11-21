@@ -208,8 +208,10 @@ test('keeps math, Mermaid and tasks together across mode changes and reload', as
   expect(await savedText(page)).toBe(text.replace('[ ] Check', '[x] Check'));
 });
 
-test('loads local math fonts and renders with external requests blocked', async ({ page }) => {
-  await page.route(/^https?:\/\/(?!127\.0\.0\.1:1420)/, route => route.abort());
+test('loads local math fonts and renders with external requests blocked', async ({ page, baseURL }) => {
+  // Everything except the app's own origin, whichever port the suite uses.
+  const origin = new URL(baseURL!).origin;
+  await page.route(url => url.origin !== origin, route => route.abort());
   await source(page).fill('# Offline math\n\n$$\\frac{1}{2}$$\n\nEnd.');
   await runCommand(page, 'Live Preview');
   await expect(page.locator('.cm-live-math .katex')).toHaveCount(1);
