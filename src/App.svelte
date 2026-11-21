@@ -975,7 +975,7 @@
       </aside>
       {#if visiblePanel}<button class="sidebar-scrim" tabindex="-1" aria-label="Close tool panel" onclick={() => { panel = null; stickyCreateRequest = 0; }} in:pop={{ token: 'slow', y: 0, scale: 1 }} out:pop={{ token: 'slow', y: 0, scale: 1, exit: true }}></button>{/if}
     {/if}
-    <div class="workspace" class:only-source={effectiveLayout === 'source' || effectiveLayout === 'live' || canvasVisible || active.hemingway} class:only-preview={!active.hemingway && effectiveLayout === 'preview'}>
+    <div class="workspace" use:fadeOnChange={{ key: effectiveLayout + (canvasVisible ? ':canvas' : '') + (active.hemingway ? ':hemingway' : ''), self: true, token: 'base', from: .35 }} class:only-source={effectiveLayout === 'source' || effectiveLayout === 'live' || canvasVisible || active.hemingway} class:only-preview={!active.hemingway && effectiveLayout === 'preview'}>
       <section class="pane source-pane" class:code-source={codeDocument} aria-label="Source editor" hidden={!active.hemingway && (effectiveLayout === 'preview' || canvasVisible)}>
         {#if reducedDocument}<div class="formatting-notice" role="status">Reduced formatting · This document is large or punctuation-heavy. Editing continues in Source; rich formatting returns when it shrinks. Your text is unchanged.</div>{/if}
         {#if active.hemingway}<div class="pane-heading" role="status" aria-label="Hemingway mode"><span>HEMINGWAY MODE</span><span class="pane-hint">Deletion blocked · Commands → Hemingway mode</span></div>{:else if effectiveLayout === 'split'}<div class="pane-heading"><span>SOURCE</span><span class="pane-hint">{standalone ? '.mmd' : '.md'}</span></div>{/if}

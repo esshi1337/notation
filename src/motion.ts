@@ -87,23 +87,26 @@ export function scrimExit(_node: HTMLElement) {
 
 /** Svelte action: fade in whenever the key changes, for surfaces that swap
     what they show in place. A bare value fades the first child (the sidebar
-    tool panel keeps its own background steady); `{ key, self: true }` fades
-    the element itself (the status-bar save state). */
+    tool panel keeps its own background steady). `{ key, self: true }` fades
+    the element itself (the status-bar save state); `token` and `from` set the
+    duration and starting opacity (the editor area on a view-mode change
+    starts partly visible, so there is no dark flash). */
+type FadeOptions = { key: unknown; self?: boolean; token?: MotionToken; from?: number };
 export function fadeOnChange(node: HTMLElement, value: unknown) {
-  const read = (input: unknown) => input !== null && typeof input === 'object' && 'key' in input
-    ? input as { key: unknown; self?: boolean } : { key: input, self: false };
+  const read = (input: unknown): FadeOptions => input !== null && typeof input === 'object' && 'key' in input
+    ? input as FadeOptions : { key: input };
   let current = read(value).key;
   return {
     update(next: unknown) {
-      const { key, self } = read(next);
+      const { key, self = false, token = 'fast', from = 0 } = read(next);
       if (key === current) return;
       current = key;
-      const duration = motionMs('fast');
+      const duration = motionMs(token);
       if (!duration) return;
       const easing = 'cubic-bezier(.2, .8, .2, 1)';
-      (self ? node : node.firstElementChild)?.animate([{ opacity: 0 }, { opacity: 1 }], { duration, easing });
+      (self ? node : node.firstElementChild)?.animate([{ opacity: from }, { opacity: 1 }], { duration, easing });
       // An icon that arrives with the new state (the saved check mark) pops.
-      if (self) node.querySelector('.identity-icon')?.animate([{ transform: 'scale(.4)' }, { transform: 'none' }], { duration: motionMs('base'), easing });
+      if (self) node.querySelector(':scope > .identity-icon')?.animate([{ transform: 'scale(.4)' }, { transform: 'none' }], { duration: motionMs('base'), easing });
     },
   };
 }
