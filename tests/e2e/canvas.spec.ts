@@ -139,6 +139,8 @@ test('pointer drag moves cards at 100% and 120% with one-step undo and redo', as
 
   await view.getByRole('button', { name: 'Zoom in', exact: true }).click();
   await expect(view.locator('.canvas-zoom')).toHaveText('120%');
+  // The zoom buttons ease the board; drag coordinates need the settled scale.
+  await expect(view.locator('.canvas-plane')).not.toHaveClass(/easing/);
   await drag(page, view.getByRole('button', { name: 'Move card: New card', exact: true }), 60, 36);
   data = await canvasData(page);
   expect(data.nodes[0].x).toBe(moved.x + 50);
@@ -176,6 +178,8 @@ test('corner resize previews at 100% and 120%, clamps minimum sizes, and commits
 
   await view.getByRole('button', { name: 'Zoom in', exact: true }).click();
   await expect(view.locator('.canvas-zoom')).toHaveText('120%');
+  // The zoom buttons ease the board; drag coordinates need the settled scale.
+  await expect(view.locator('.canvas-plane')).not.toHaveClass(/easing/);
   await drag(page, handle, 60, 36);
   data = await canvasData(page);
   expect(data.nodes[0].width).toBe(370);
