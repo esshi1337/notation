@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { scrimExit } from './motion';
   import { onMount, onDestroy } from 'svelte';
   import { detectLanguage, languageOptions, type CodeLanguage } from './code-languages';
   import SelectControl from './SelectControl.svelte';
@@ -10,7 +11,7 @@
   onMount(() => { previous = document.activeElement as HTMLElement; dialog.showModal(); });
   onDestroy(() => { if (dialog?.open) dialog.close(); previous?.focus(); });
 </script>
-<dialog class="rename-dialog document-language-dialog" aria-label="Document language" bind:this={dialog} oncancel={(event) => { event.preventDefault(); close(); }}>
+<dialog class="rename-dialog document-language-dialog" use:scrimExit aria-label="Document language" bind:this={dialog} oncancel={(event) => { event.preventDefault(); close(); }}>
   <div class="language-dialog-body">
     <div class="language-dialog-heading"><strong>Document language</strong><button class="settings-close" aria-label="Close document language" onclick={close}><Icon name="close" size={14} {theme} /></button></div>
     <p>New notes use Markdown. Other files choose their editor from the filename. Override this document only when needed.</p>

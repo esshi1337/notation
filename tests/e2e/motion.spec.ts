@@ -114,3 +114,106 @@ test('a pointer-opened menu shows no keyboard focus until a key is used', async 
   await expect(editor).toHaveCSS('outline-width', '2px');
   await expect(editor).not.toHaveCSS('outline-color', 'rgba(0, 0, 0, 0)');
 });
+
+test('menus animate in and out faster, and a leaving menu cannot be used', async ({ page }) => {
+  await page.goto('/');
+  // Record menu animations as they start and slow the exit, so the leaving
+  // state can be observed however busy the machine is.
+  await page.evaluate(() => {
+    const original = Element.prototype.animate;
+    const state = window as unknown as { menuDurations: number[] };
+    state.menuDurations = [];
+    Element.prototype.animate = function (keyframes, options) {
+      const animation = original.call(this, keyframes, options);
+      const duration = Number((options as KeyframeAnimationOptions).duration);
+      // Svelte first pins the starting frame with a zero-length animation.
+      if (duration > 0 && this instanceof HTMLElement && this.classList.contains('compact-menu')) {
+        state.menuDurations.push(duration);
+        if (state.menuDurations.length === 2) animation.playbackRate = 0.1;
+      }
+      return animation;
+    };
+  });
+  const durations = () => page.evaluate(() => (window as unknown as { menuDurations: number[] }).menuDurations);
+  const trigger = page.getByRole('button', { name: 'App menu', exact: true });
+  const menu = page.locator('.compact-menu');
+  await trigger.click();
+  await expect(menu).toBeVisible();
+  expect(await durations()).toEqual([180]);
+  await menu.evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)));
+  await expect(menu).toHaveCSS('opacity', '1');
+
+  await page.keyboard.press('Escape');
+  await expect(trigger).toBeFocused();
+  await expect(menu).toHaveCount(1);
+  expect(await menu.evaluate((element) => (element as HTMLElement).inert)).toBe(true);
+  const [enter, exit] = await durations();
+  expect(enter).toBe(180);
+  expect(exit).toBeCloseTo(126, 3);
+  // The document underneath is usable while the menu fades.
+  await page.locator('.cm-content').first().click();
+  await expect(page.locator('.cm-content').first()).toBeFocused();
+  await expect(menu).toHaveCount(0);
+});
+
+test('dialogs ease in, close without delaying focus and fade only their dim', async ({ page }) => {
+  await page.goto('/');
+  const commands = page.getByRole('button', { name: 'Commands', exact: true });
+  await commands.click();
+  const palette = page.getByRole('dialog', { name: 'Commands', exact: true });
+  await expect(palette).toHaveCSS('animation-name', 'palette-in');
+  await expect(palette).toHaveCSS('animation-duration', '0.18s');
+  // Typing works during the entrance.
+  await page.keyboard.type('settings');
+  await expect(palette.getByRole('textbox', { name: 'Search commands' })).toHaveValue('settings');
+  await palette.getByRole('option', { name: 'Settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await expect(settings).toHaveCSS('animation-name', 'dialog-in');
+  await expect(settings).toHaveCSS('animation-duration', '0.24s');
+  await expect(settings.getByRole('tab', { name: 'Appearance', exact: true })).toBeFocused();
+  await settings.evaluate((dialog) => Promise.all(dialog.getAnimations().map((animation) => animation.finished)));
+  await expect(settings).toHaveCSS('opacity', '1');
+  expect(await settings.evaluate((dialog) => getComputedStyle(dialog).transform)).toBe('none');
+
+  // Count section fades as they start; the 120 ms animation may already be over when read back.
+  await page.evaluate(() => {
+    const original = Element.prototype.animate;
+    const state = window as unknown as { sectionFades: number[] };
+    state.sectionFades = [];
+    Element.prototype.animate = function (keyframes, options) {
+      if (this instanceof HTMLElement && this.classList.contains('settings-content')) state.sectionFades.push(Number((options as KeyframeAnimationOptions).duration));
+      return original.call(this, keyframes, options);
+    };
+  });
+  await settings.getByRole('tab', { name: 'Shortcuts', exact: true }).click();
+  await expect(settings.getByRole('searchbox', { name: 'Search shortcuts' })).toBeVisible();
+  expect(await page.evaluate(() => (window as unknown as { sectionFades: number[] }).sectionFades)).toEqual([120]);
+
+  const focusAtClose = await page.evaluate(() => {
+    const dialog = document.querySelector<HTMLDialogElement>('dialog.settings-dialog')!;
+    dialog.querySelector<HTMLButtonElement>('.settings-close')!.click();
+    return new Promise<{ open: number; scrims: number; pointerEvents: string }>((resolve) => queueMicrotask(() => {
+      const scrim = document.querySelector('.modal-scrim-exit');
+      resolve({ open: document.querySelectorAll('dialog[open]').length, scrims: document.querySelectorAll('.modal-scrim-exit').length, pointerEvents: scrim ? getComputedStyle(scrim).pointerEvents : '' });
+    }));
+  });
+  expect(focusAtClose).toEqual({ open: 0, scrims: 1, pointerEvents: 'none' });
+  await expect(page.locator('.modal-scrim-exit')).toHaveCount(0);
+
+  // Reduced motion: nothing animates and no dim element is created.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await commands.click();
+  await expect(palette).toBeVisible();
+  await expect(palette).toHaveCSS('animation-duration', '0s');
+  const scrims = await page.evaluate(() => {
+    document.querySelector<HTMLButtonElement>('.palette-close')!.click();
+    return new Promise<number>((resolve) => queueMicrotask(() => resolve(document.querySelectorAll('.modal-scrim-exit').length)));
+  });
+  expect(scrims).toBe(0);
+  await expect(palette).toHaveCount(0);
+  await page.getByRole('button', { name: 'App menu', exact: true }).click();
+  await expect(page.locator('.compact-menu')).toBeVisible();
+  expect(await page.locator('.compact-menu').evaluate((element) => element.getAnimations().length)).toBe(0);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.compact-menu')).toHaveCount(0);
+});

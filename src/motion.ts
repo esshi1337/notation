@@ -28,3 +28,59 @@ export function trackInputModality(root: HTMLElement = document.documentElement)
     window.removeEventListener('keydown', keyboard, options);
   };
 }
+
+/** JavaScript twin of a CSS cubic-bezier() curve, for Svelte transitions. */
+export function cubicBezier(x1: number, y1: number, x2: number, y2: number): (t: number) => number {
+  const sample = (a: number, b: number, t: number) => ((1 - 3 * b + 3 * a) * t + (3 * b - 6 * a)) * t * t + 3 * a * t;
+  const slope = (a: number, b: number, t: number) => 3 * (1 - 3 * b + 3 * a) * t * t + 2 * (3 * b - 6 * a) * t + 3 * a;
+  return (x) => {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    let t = x;
+    for (let step = 0; step < 6; step++) {
+      const gradient = slope(x1, x2, t);
+      if (Math.abs(gradient) < 1e-6) break;
+      t = Math.min(1, Math.max(0, t - (sample(x1, x2, t) - x) / gradient));
+    }
+    return sample(y1, y2, t);
+  };
+}
+export const easeOut = cubicBezier(.2, .8, .2, 1);
+export const easeIn = cubicBezier(.4, 0, 1, 1);
+
+/** Share of the enter duration an exit takes: leaving is quicker than arriving. */
+export const EXIT_RATIO = .7;
+
+type PopOptions = { token?: MotionToken; x?: number; y?: number; scale?: number; origin?: string; exit?: boolean };
+
+/** Fade with a small offset and scale from the anchor. Use as `in:pop` and
+    `out:pop={{ exit: true }}`; Svelte marks a leaving element inert. */
+export function pop(_node: Element, { token = 'base', x = 0, y = -4, scale = .98, origin = 'top left', exit = false }: PopOptions = {}) {
+  return {
+    duration: motionMs(token) * (exit ? EXIT_RATIO : 1),
+    easing: exit ? easeIn : easeOut,
+    css: (t: number) => `opacity:${t};transform-origin:${origin};transform:translate(${(1 - t) * x}px,${(1 - t) * y}px) scale(${scale + (1 - scale) * t})`,
+  };
+}
+
+/** Svelte action for modal dialogs. A dialog leaves at once so focus and input
+    are never delayed; only its backdrop dim fades out, on a click-through
+    element that removes itself. */
+export function scrimExit(_node: HTMLElement) {
+  return {
+    destroy() {
+      const duration = motionMs('base') * EXIT_RATIO;
+      if (!duration || typeof document === 'undefined') return;
+      const scrim = document.createElement('div');
+      scrim.className = 'modal-scrim-exit';
+      scrim.setAttribute('aria-hidden', 'true');
+      document.body.append(scrim);
+      const animation = scrim.animate([{ opacity: 1 }, { opacity: 0 }], { duration, easing: 'cubic-bezier(.4, 0, 1, 1)' });
+      const remove = () => scrim.remove();
+      animation.onfinish = remove;
+      animation.oncancel = remove;
+      // A hidden window can defer animation events; never leave the dim behind.
+      setTimeout(remove, duration + 250);
+    },
+  };
+}
