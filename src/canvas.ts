@@ -44,9 +44,11 @@ export function serializeCanvas(value: CanvasDocument, eol = '\n') {
   return text;
 }
 export function newCanvas() { return '{\n  "nodes": [],\n  "edges": []\n}\n'; }
-export function mutateCanvas(text: string, mutation: (canvas: CanvasDocument) => void) {
-  const canvas = parseCanvas(text); mutation(canvas); return serializeCanvas(canvas, text.includes('\r\n') ? '\r\n' : '\n');
+/** Apply a mutation and return both the new text and the document it was serialized from. */
+export function mutateCanvasDocument(text: string, mutation: (canvas: CanvasDocument) => void) {
+  const canvas = parseCanvas(text); mutation(canvas); return { text: serializeCanvas(canvas, text.includes('\r\n') ? '\r\n' : '\n'), canvas };
 }
+export function mutateCanvas(text: string, mutation: (canvas: CanvasDocument) => void) { return mutateCanvasDocument(text, mutation).text; }
 export function removeCanvasNode(canvas: CanvasDocument, id: string) { canvas.nodes = canvas.nodes.filter((node) => node.id !== id); canvas.edges = canvas.edges.filter((edge) => edge.fromNode !== id && edge.toNode !== id); }
-export function canvasNodeTitle(node: CanvasNode) { return node.label || node.type === 'text' && node.text?.split('\n').find((line) => line.trim())?.replace(/^#+\s*/u, '').slice(0,80) || node.file || node.url || 'Group'; }
+export function canvasNodeTitle(node: CanvasNode) { return node.label || node.type === 'text' && node.text?.split('\n').find((line) => line.trim())?.replace(/^#+\s*/u, '').slice(0,80) || node.file || node.url || (node.type === 'text' ? 'Empty card' : 'Group'); }
 export function canvasAnchor(node: CanvasNode, side = 'right') { return { x: node.x + (side === 'left' ? 0 : side === 'right' ? node.width : node.width / 2), y: node.y + (side === 'top' ? 0 : side === 'bottom' ? node.height : node.height / 2) }; }
