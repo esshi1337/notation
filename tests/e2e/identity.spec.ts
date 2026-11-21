@@ -90,7 +90,10 @@ test('compact windows contain the chrome and keep document tabs scrollable', asy
 test('app menu keeps arrow, Enter, and Escape keyboard operation', async ({ page }) => {
   await page.goto('/');
   const trigger = page.getByRole('button', { name: 'App menu', exact: true });
-  await trigger.click();
+  // Keyboard activation focuses the first item; a pointer-opened menu focuses
+  // its container instead (covered in motion.spec.ts).
+  await trigger.focus();
+  await page.keyboard.press('Enter');
   const menu = page.getByRole('menu', { name: 'App menu', exact: true });
   await expect(menu.locator('svg[data-icon="mark"]')).toHaveCount(1);
   const fresh = menu.getByRole('menuitem', { name: 'New', exact: true });

@@ -224,6 +224,7 @@
     document.documentElement.dataset.darkPreset = customTheme && theme === 'dark' ? customTheme.base.split('/')[1] : ui.darkPreset;
     document.documentElement.dataset.lightPreset = customTheme && theme === 'light' ? customTheme.base.split('/')[1] : ui.lightPreset;
     document.documentElement.dataset.density = ui.density;
+    document.documentElement.dataset.motion = ui.reduceMotion || ui.performanceMode ? 'reduce' : 'full';
   });
   $effect(() => {
     persistMetadata({ settings: { uiSettingsVersion: UI_SETTINGS_VERSION, theme: builtInTheme, fontSize, wrap, layout, agentEditsEnabled, ...ui, shortcuts } });
