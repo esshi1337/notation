@@ -389,3 +389,61 @@ test('notices are toasts that never move the editor, and the save state fades on
   expect(await workspace.boundingBox()).toEqual(box);
   expect(await page.locator('.toast-stack').evaluate((element) => getComputedStyle(element).pointerEvents)).toBe('none');
 });
+
+test('the canvas has a centered empty state, eases toolbar zoom and animates only the changed card', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Commands', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Commands', exact: true }).getByRole('textbox', { name: 'Search commands' }).fill('New canvas');
+  await page.getByRole('option', { name: 'New canvas', exact: true }).click();
+  const view = page.getByRole('region', { name: 'Canvas', exact: true });
+  const empty = view.locator('.canvas-empty');
+  await expect(empty).toContainText('This canvas is empty');
+  const centered = await empty.evaluate((element) => {
+    const board = element.parentElement!.getBoundingClientRect(), title = element.querySelector('strong')!.getBoundingClientRect();
+    return Math.abs((title.left + title.right) / 2 - (board.left + board.right) / 2) < 2 && title.top > board.top + board.height * 0.25;
+  });
+  expect(centered).toBe(true);
+  for (const name of ['Add card', 'Connect cards', 'Fit canvas', 'Zoom in']) {
+    const button = view.getByRole('button', { name, exact: true });
+    expect((await button.boundingBox())!.height, name).toBeGreaterThanOrEqual(26);
+    await expect(button).not.toHaveCSS('border-top-color', 'rgba(0, 0, 0, 0)');
+  }
+
+  await page.evaluate(() => {
+    const original = Element.prototype.animate;
+    const state = window as unknown as { cardAnimations: { duration: number; properties: string[] }[] };
+    state.cardAnimations = [];
+    Element.prototype.animate = function (keyframes, options) {
+      const animation = original.call(this, keyframes, options);
+      const duration = Number((options as KeyframeAnimationOptions).duration);
+      if (duration > 0 && this instanceof HTMLElement && this.classList.contains('canvas-node')) state.cardAnimations.push({ duration, properties: Object.keys((keyframes as Keyframe[])[0]).sort() });
+      return animation;
+    };
+  });
+  const animations = () => page.evaluate(() => (window as unknown as { cardAnimations: { duration: number; properties: string[] }[] }).cardAnimations);
+  await empty.getByRole('button', { name: 'Add text card', exact: true }).click();
+  await expect(view.locator('.canvas-node')).toHaveCount(1);
+  await expect(empty).toHaveCount(0);
+  await expect.poll(animations).toEqual([{ duration: 180, properties: ['opacity', 'transform', 'transformOrigin'] }]);
+
+  // Toolbar zoom eases the plane; the read-out and final scale are exact.
+  const plane = view.locator('.canvas-plane');
+  await view.getByRole('button', { name: 'Zoom in', exact: true }).click();
+  await expect(plane).toHaveClass(/easing/);
+  await expect(view.locator('.canvas-zoom')).toHaveText('120%');
+  await expect(plane).not.toHaveClass(/easing/);
+  expect(await plane.evaluate((element) => new DOMMatrix(getComputedStyle(element).transform).a)).toBeCloseTo(1.2, 5);
+  // Wheel zoom is immediate: no easing class, transform applied at once.
+  await view.locator('.canvas-viewport').hover();
+  await page.keyboard.down('Control');
+  await page.mouse.wheel(0, -100);
+  await page.keyboard.up('Control');
+  await expect(plane).not.toHaveClass(/easing/);
+  expect(await plane.evaluate((element) => getComputedStyle(element).transitionDuration)).toBe('0s');
+
+  // A second card only animates itself.
+  await view.getByRole('button', { name: 'Add card', exact: true }).click();
+  await view.getByRole('menuitem', { name: 'Add text card', exact: true }).click();
+  await expect(view.locator('.canvas-node')).toHaveCount(2);
+  await expect.poll(async () => (await animations()).length).toBe(2);
+});
