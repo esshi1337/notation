@@ -384,3 +384,47 @@ fn wiki_index_ignores_escaped_code_math_and_closed_yaml_but_keeps_unclosed_markd
         "Name#part"
     );
 }
+
+#[test]
+fn completion_returns_the_first_safe_candidates_in_order_even_when_stale_ones_rank_first() {
+    let temporary = tempfile::tempdir().unwrap();
+    let (database, root) = setup(temporary.path());
+    fs::create_dir(root.join("near")).unwrap();
+    fs::create_dir(root.join("far")).unwrap();
+    for name in ["a", "b", "c", "d", "e"] {
+        fs::write(root.join(format!("near/{name}.md")), format!("# {name}\n")).unwrap();
+        fs::write(root.join(format!("far/{name}.md")), format!("# far {name}\n")).unwrap();
+    }
+    let source = root.join("near/source.md");
+    fs::write(&source, "# Source\n").unwrap();
+    database.index_workspace().unwrap();
+    let names = |limit: Option<usize>| {
+        database
+            .wiki_candidates("", source.to_str(), limit)
+            .unwrap()
+            .into_iter()
+            .map(|candidate| candidate.relative_path)
+            .collect::<Vec<_>>()
+    };
+    // Notes in the source folder come first, then the rest by path.
+    let all = names(None);
+    assert_eq!(all[..6], ["near/a.md", "near/b.md", "near/c.md", "near/d.md", "near/e.md", "near/source.md"]);
+    assert_eq!(all.len(), 11);
+    assert_eq!(names(Some(3)), all[..3]);
+
+    // The index is now stale for the two best-ranked notes: one is gone, one
+    // became a symbolic link. Neither may be offered, and the list still fills
+    // up with the next safe notes in the same order.
+    fs::remove_file(root.join("near/a.md")).unwrap();
+    fs::remove_file(root.join("near/b.md")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(root.join("far/a.md"), root.join("near/b.md")).unwrap();
+    let safe = all.iter().filter(|path| !["near/a.md", "near/b.md"].contains(&path.as_str())).cloned().collect::<Vec<_>>();
+    assert_eq!(names(None), safe);
+    assert_eq!(names(Some(3)), ["near/c.md", "near/d.md", "near/e.md"]);
+    assert_eq!(names(Some(1)), ["near/c.md"]);
+    assert_eq!(names(Some(9)), safe);
+    // A typed query filters first and keeps the order.
+    let typed = database.wiki_candidates("far", source.to_str(), Some(2)).unwrap();
+    assert_eq!(typed.iter().map(|candidate| candidate.relative_path.as_str()).collect::<Vec<_>>(), ["far/a.md", "far/b.md"]);
+}

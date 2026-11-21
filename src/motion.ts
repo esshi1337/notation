@@ -98,3 +98,15 @@ export function fadeOnChange(node: HTMLElement, key: unknown) {
     },
   };
 }
+
+/** Grow or shrink an element along the inline axis while fading it, for items
+    entering or leaving a row (document tabs). Only that item's width animates;
+    its neighbours follow through normal layout. `gap` is the row gap to absorb. */
+export function collapseX(node: Element, { token = 'base', gap = 0, exit = false }: { token?: MotionToken; gap?: number; exit?: boolean } = {}) {
+  const width = node.getBoundingClientRect().width;
+  return {
+    duration: motionMs(token) * (exit ? EXIT_RATIO : 1),
+    easing: exit ? easeIn : easeOut,
+    css: (t: number) => `overflow:hidden;min-width:0;max-width:${t * width}px;margin-inline-end:${-(1 - t) * gap}px;opacity:${t}`,
+  };
+}

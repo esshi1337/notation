@@ -4,6 +4,7 @@ use crate::{explorer, frontmatter, storage::Database};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
@@ -421,7 +422,6 @@ impl Database {
                         .iter()
                         .any(|alias| alias.to_lowercase().contains(&note))
             })
-            .filter(|candidate| safe_candidate(&scope, candidate))
             .collect::<Vec<_>>();
         if let Some(heading) = heading {
             for candidate in &mut candidates {
@@ -438,9 +438,15 @@ impl Database {
                 }
             }
         }
-        candidates = suggestions(&root, &folder, candidates);
-        candidates.truncate(limit.unwrap_or(50).clamp(1, 200));
-        Ok(candidates)
+        // Checking a note against the filesystem costs several system calls.
+        // The order depends only on each candidate, so sort first and check
+        // just enough of them to fill the list, instead of every match.
+        let limit = limit.unwrap_or(50).clamp(1, 200);
+        Ok(suggestions(&root, &folder, candidates)
+            .into_iter()
+            .filter(|candidate| safe_candidate(&scope, candidate))
+            .take(limit)
+            .collect())
     }
     pub fn create_wiki_note(
         &self,
@@ -669,82 +675,179 @@ impl Database {
     }
 }
 
-pub(crate) fn indexed_matches(
-    root: &Path,
-    source: &Path,
-    raw: &str,
-    notes: &[Candidate],
-) -> Vec<PathBuf> {
-    indexed_matches_inner(root, source, raw, notes).unwrap_or_default()
+/// Hash lookups over the indexed note set. Resolving each wiki link by
+/// scanning every note made indexing O(links x notes).
+pub(crate) struct NoteLookup<'a> {
+    notes: &'a [Candidate],
+    // `Path` hashing and equality are component-wise, as in the linear scan.
+    by_path: HashMap<&'a Path, Vec<usize>>,
+    // File name, file stem and every alias, each listing notes in index order.
+    by_key: HashMap<&'a str, Vec<usize>>,
 }
-fn indexed_matches_inner(
-    root: &Path,
-    source: &Path,
-    raw: &str,
-    notes: &[Candidate],
-) -> Option<Vec<PathBuf>> {
-    let target = parse_target(raw).ok()?;
-    if target.note.is_empty() {
-        return source.starts_with(root).then(|| vec![source.to_path_buf()]);
-    }
-    let folder = source.parent()?;
-    let raw = Path::new(&target.note);
-    let requested = normalize(&if raw.is_absolute() {
-        root.join(target.note.trim_start_matches('/'))
-    } else {
-        folder.join(raw)
-    });
-    if !requested.starts_with(root) {
-        return None;
-    }
-    let paths = |path: PathBuf| {
-        let mut result = vec![path.clone()];
-        if path.extension().is_none() {
-            for extension in ["md", "markdown", "mmd"] {
-                result.push(path.with_extension(extension));
+impl<'a> NoteLookup<'a> {
+    pub(crate) fn new(notes: &'a [Candidate]) -> Self {
+        let mut by_path: HashMap<&'a Path, Vec<usize>> = HashMap::new();
+        let mut by_key: HashMap<&'a str, Vec<usize>> = HashMap::new();
+        for (index, note) in notes.iter().enumerate() {
+            by_path
+                .entry(Path::new(&note.path))
+                .or_default()
+                .push(index);
+            let mut keys = vec![note.name.as_str()];
+            keys.extend(Path::new(&note.name).file_stem().and_then(|stem| stem.to_str()));
+            keys.extend(note.aliases.iter().map(String::as_str));
+            keys.sort_unstable();
+            keys.dedup();
+            for key in keys {
+                by_key.entry(key).or_default().push(index);
             }
         }
-        result
-    };
-    let local = paths(requested);
-    let direct = notes
-        .iter()
-        .filter(|candidate| local.iter().any(|path| Path::new(&candidate.path) == path))
-        .collect::<Vec<_>>();
-    let matches = if !direct.is_empty() {
-        direct
-    } else if target.note.contains('/') {
-        let requested = normalize(&root.join(target.note.trim_start_matches('/')));
+        Self {
+            notes,
+            by_path,
+            by_key,
+        }
+    }
+    fn paths(&self, candidates: &[PathBuf]) -> Vec<usize> {
+        let mut found = candidates
+            .iter()
+            .filter_map(|path| self.by_path.get(path.as_path()))
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        found.sort_unstable();
+        found.dedup();
+        found
+    }
+    pub(crate) fn matches(&self, root: &Path, source: &Path, raw: &str) -> Vec<PathBuf> {
+        self.matches_inner(root, source, raw).unwrap_or_default()
+    }
+    fn matches_inner(&self, root: &Path, source: &Path, raw: &str) -> Option<Vec<PathBuf>> {
+        let target = parse_target(raw).ok()?;
+        if target.note.is_empty() {
+            return source.starts_with(root).then(|| vec![source.to_path_buf()]);
+        }
+        let folder = source.parent()?;
+        let raw = Path::new(&target.note);
+        let requested = normalize(&if raw.is_absolute() {
+            root.join(target.note.trim_start_matches('/'))
+        } else {
+            folder.join(raw)
+        });
         if !requested.starts_with(root) {
             return None;
         }
-        let paths = paths(requested);
-        notes
-            .iter()
-            .filter(|candidate| paths.iter().any(|path| Path::new(&candidate.path) == path))
-            .collect()
-    } else {
-        let all = notes
-            .iter()
-            .filter(|candidate| matches_note(candidate, &target.note))
-            .collect::<Vec<_>>();
-        let local = all
-            .iter()
-            .copied()
-            .filter(|candidate| current(candidate, folder))
-            .collect::<Vec<_>>();
-        if local.is_empty() {
-            all
+        let paths = |path: PathBuf| {
+            let mut result = vec![path.clone()];
+            if path.extension().is_none() {
+                for extension in ["md", "markdown", "mmd"] {
+                    result.push(path.with_extension(extension));
+                }
+            }
+            result
+        };
+        let direct = self.paths(&paths(requested));
+        let matches = if !direct.is_empty() {
+            direct
+        } else if target.note.contains('/') {
+            let requested = normalize(&root.join(target.note.trim_start_matches('/')));
+            if !requested.starts_with(root) {
+                return None;
+            }
+            self.paths(&paths(requested))
         } else {
-            local
+            let all = self
+                .by_key
+                .get(target.note.as_str())
+                .cloned()
+                .unwrap_or_default();
+            let local = all
+                .iter()
+                .copied()
+                .filter(|&index| current(&self.notes[index], folder))
+                .collect::<Vec<_>>();
+            if local.is_empty() {
+                all
+            } else {
+                local
+            }
+        };
+        Some(
+            matches
+                .into_iter()
+                .map(|index| PathBuf::from(&self.notes[index].path))
+                .collect(),
+        )
+    }
+}
+/// The original linear resolver, kept as the reference `NoteLookup` is tested against.
+#[cfg(test)]
+fn linear_matches(root: &Path, source: &Path, raw: &str, notes: &[Candidate]) -> Vec<PathBuf> {
+    (|| {
+        let target = parse_target(raw).ok()?;
+        if target.note.is_empty() {
+            return source.starts_with(root).then(|| vec![source.to_path_buf()]);
         }
-    };
-    Some(
-        matches
-            .into_iter()
-            .map(|candidate| PathBuf::from(&candidate.path))
-            .collect(),
-    )
+        let folder = source.parent()?;
+        let raw = Path::new(&target.note);
+        let requested = normalize(&if raw.is_absolute() {
+            root.join(target.note.trim_start_matches('/'))
+        } else {
+            folder.join(raw)
+        });
+        if !requested.starts_with(root) {
+            return None;
+        }
+        let paths = |path: PathBuf| {
+            let mut result = vec![path.clone()];
+            if path.extension().is_none() {
+                for extension in ["md", "markdown", "mmd"] {
+                    result.push(path.with_extension(extension));
+                }
+            }
+            result
+        };
+        let local = paths(requested);
+        let direct = notes
+            .iter()
+            .filter(|candidate| local.iter().any(|path| Path::new(&candidate.path) == path))
+            .collect::<Vec<_>>();
+        let matches = if !direct.is_empty() {
+            direct
+        } else if target.note.contains('/') {
+            let requested = normalize(&root.join(target.note.trim_start_matches('/')));
+            if !requested.starts_with(root) {
+                return None;
+            }
+            let paths = paths(requested);
+            notes
+                .iter()
+                .filter(|candidate| paths.iter().any(|path| Path::new(&candidate.path) == path))
+                .collect()
+        } else {
+            let all = notes
+                .iter()
+                .filter(|candidate| matches_note(candidate, &target.note))
+                .collect::<Vec<_>>();
+            let local = all
+                .iter()
+                .copied()
+                .filter(|candidate| current(candidate, folder))
+                .collect::<Vec<_>>();
+            if local.is_empty() {
+                all
+            } else {
+                local
+            }
+        };
+        Some(
+            matches
+                .into_iter()
+                .map(|candidate| PathBuf::from(&candidate.path))
+                .collect(),
+        )
+    })()
+    .unwrap_or_default()
 }
 pub(crate) fn scoped_link(
     root: &Path,
@@ -801,4 +904,99 @@ pub(crate) fn scoped_link(
     normalize(&path)
         .starts_with(root)
         .then_some((target, heading, alias))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn note(path: &str, aliases: &[&str]) -> Candidate {
+        Candidate {
+            path: path.into(),
+            name: Path::new(path).file_name().unwrap().to_string_lossy().into(),
+            title: String::new(),
+            relative_path: String::new(),
+            link: String::new(),
+            aliases: aliases.iter().map(|alias| alias.to_string()).collect(),
+            headings: vec![],
+            blocks: vec![],
+        }
+    }
+
+    #[test]
+    fn hashed_lookup_matches_the_linear_resolver() {
+        // Deterministic pseudo-random corpus with duplicate names across
+        // folders, shared aliases, mixed extensions and a non-canonical path.
+        let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = move |bound: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % bound
+        };
+        let folders = ["", "a", "a/b", "c", "c/d/e"];
+        let extensions = ["md", "markdown", "mmd"];
+        let mut notes = Vec::new();
+        for index in 0..400 {
+            let folder = folders[next(folders.len() as u64) as usize];
+            let name = format!("note{}.{}", next(60), extensions[next(3) as usize]);
+            let path = if folder.is_empty() {
+                format!("/vault/{name}")
+            } else {
+                format!("/vault/{folder}/{name}")
+            };
+            let aliases = match next(4) {
+                0 => vec![format!("alias{}", next(20))],
+                1 => vec![format!("note{}", next(60)), "shared".to_string()],
+                _ => vec![],
+            };
+            let aliases = aliases.iter().map(String::as_str).collect::<Vec<_>>();
+            if index % 97 == 0 {
+                notes.push(note(&path.replacen("/vault/", "/vault//", 1), &aliases));
+            } else {
+                notes.push(note(&path, &aliases));
+            }
+        }
+        notes.push(note("/vault/Ünï cödé.md", &["ü"]));
+        notes.push(note("/vault/dir.with.dots/readme", &[]));
+        let root = Path::new("/vault");
+        let lookup = NoteLookup::new(&notes);
+        let mut targets = vec![
+            String::new(),
+            "#heading".into(),
+            "shared".into(),
+            "missing".into(),
+            "/a/b/note1".into(),
+            "a/b/note1.md".into(),
+            "../note2".into(),
+            "../../../outside".into(),
+            "/../outside".into(),
+            "./note3".into(),
+            "Ünï cödé".into(),
+            "ü|label".into(),
+            "readme".into(),
+            "dir.with.dots/readme".into(),
+            "note4#heading|alias".into(),
+            "note5#^block".into(),
+            "bad|a|b".into(),
+        ];
+        for index in 0..60 {
+            targets.push(format!("note{index}"));
+            targets.push(format!("note{index}.md"));
+            targets.push(format!("c/note{index}"));
+            targets.push(format!("alias{}", index % 20));
+        }
+        let mut compared = 0;
+        let mut resolved = 0;
+        for source in ["/vault/x.md", "/vault/a/x.md", "/vault/a/b/x.md", "/vault/c/d/e/x.md", "/other/x.md"] {
+            for target in &targets {
+                let expected = linear_matches(root, Path::new(source), target, &notes);
+                let actual = lookup.matches(root, Path::new(source), target);
+                assert_eq!(actual, expected, "source {source}, target {target:?}");
+                compared += 1;
+                resolved += usize::from(!expected.is_empty());
+            }
+        }
+        assert!(compared > 1000 && resolved > 300, "{compared} compared, {resolved} resolved");
+    }
 }

@@ -266,7 +266,7 @@ PRAGMA user_version=8;").unwrap();
     assert_eq!(db.read_sticky(&new.id).unwrap().color, "black");
     drop(db);
     let connection = rusqlite::Connection::open(&path).unwrap();
-    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 9);
+    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 11);
     assert!(connection.execute("UPDATE sticky_notes SET color='red'", []).is_err());
     assert!(connection.execute("UPDATE sticky_notes SET text=?1", ["x".repeat(MAX_TEXT + 1)]).is_err());
     assert!(connection.execute("UPDATE sticky_notes SET title=?1", ["x".repeat(MAX_TITLE + 1)]).is_err());
@@ -337,4 +337,47 @@ fn sticky_dispatch_only_allows_own_note_operations_and_new_note_creation() {
         assert!(authorize_command(&label, command).is_err(), "{command}");
         authorize_command("main", command).unwrap();
     }
+}
+
+#[test]
+fn window_teardown_never_waits_for_a_busy_admission_lock() {
+    use std::sync::{mpsc, Arc};
+    use std::time::{Duration, Instant};
+    let manager = Arc::new(StickyManager::default());
+    let id = "0123456789abcdef0123456789abcdef";
+    assert!(manager.lock().unwrap().reserve(id).unwrap());
+    // Uncontended: released on the spot.
+    assert!(manager.try_release(id));
+    assert!(manager.lock().unwrap().reserve(id).unwrap());
+
+    // A sticky command holds the lock while it waits for a busy database.
+    let (locked, wait_locked) = mpsc::channel();
+    let (finish, wait_finish) = mpsc::channel::<()>();
+    let holder = {
+        let manager = manager.clone();
+        std::thread::spawn(move || {
+            let admission = manager.lock().unwrap();
+            locked.send(()).unwrap();
+            wait_finish.recv().unwrap();
+            drop(admission);
+        })
+    };
+    wait_locked.recv().unwrap();
+    let started = Instant::now();
+    assert!(!manager.try_release(id), "a busy lock must be reported, not waited for");
+    assert!(started.elapsed() < Duration::from_millis(50), "{:?}", started.elapsed());
+
+    // The deferred release (what the Destroyed handler hands to a worker)
+    // completes once the command lets go.
+    let deferred = {
+        let manager = manager.clone();
+        std::thread::spawn(move || manager.lock().unwrap().release(id))
+    };
+    std::thread::sleep(Duration::from_millis(20));
+    assert!(!deferred.is_finished());
+    finish.send(()).unwrap();
+    holder.join().unwrap();
+    deferred.join().unwrap();
+    // Released: the same note can be reserved again.
+    assert!(manager.lock().unwrap().reserve(id).unwrap());
 }

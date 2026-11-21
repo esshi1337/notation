@@ -169,14 +169,23 @@
 .workspace-personal { flex: 1; min-width: 0; padding-left: 8px; overflow: hidden; color: var(--text); font-size: 13px; font-weight: 600; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-panel-trigger { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: var(--control-size); padding: 0; border-radius: var(--radius-control); color: var(--muted); }
 .workspace-bar .document-tabs-wrap { display: flex; align-items: center; gap: 4px; flex: 1 1 0; min-width: 0; height: var(--control-size); }
-.document-tabs { display: flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 0; height: var(--control-size); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.document-tabs { position: relative; display: flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 0; height: var(--control-size); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+/* Tabs scrolled out of view fade at the edge they continue past. */
+.document-tabs[data-fade='start'] { -webkit-mask-image: linear-gradient(to right, transparent, #000 28px); mask-image: linear-gradient(to right, transparent, #000 28px); }
+.document-tabs[data-fade='end'] { -webkit-mask-image: linear-gradient(to left, transparent, #000 28px); mask-image: linear-gradient(to left, transparent, #000 28px); }
+.document-tabs[data-fade='both'] { -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
+/* One background slides between tabs instead of each tab switching its own. */
+.tab-indicator { position: absolute; z-index: 0; top: 0; left: 0; height: 100%; border-radius: var(--radius-control); background: var(--hover); pointer-events: none; }
+.tab-indicator.sliding { transition: transform var(--motion-base) var(--ease-out), width var(--motion-base) var(--ease-out); }
+.document-tabs.has-indicator .document-tab.active { background: transparent; }
 .document-tabs::-webkit-scrollbar { display: none; width: 0; height: 0; }
-.document-tab { display: flex; align-items: center; flex: 0 1 188px; min-width: 104px; max-width: 210px; height: var(--control-size); overflow: hidden; border-radius: var(--radius-control); }
+.document-tab { position: relative; z-index: 1; display: flex; align-items: center; flex: 0 1 188px; min-width: 136px; max-width: 210px; height: var(--control-size); overflow: hidden; border-radius: var(--radius-control); }
 .document-tab.active { background: var(--hover); }
 .document-tab > button[role='tab'] { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; height: var(--control-size); padding: 0 0 0 10px; border-radius: var(--radius-control); color: var(--muted); font-size: 13px; line-height: 20px; text-align: left; }
 .document-tab.active > button[role='tab'] { color: var(--heading); }
 .tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-dirty { flex: 0 0 auto; margin-left: -3px; color: var(--accent); font-size: 11px; }
+.tab-context { flex: 0 1 auto; min-width: 2ch; max-width: 45%; margin-left: -2px; overflow: hidden; color: var(--subtle); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .document-tab .tab-close { display: grid; place-items: center; flex: 0 0 24px; width: 24px; height: 24px; margin-right: 3px; padding: 0; border-radius: var(--radius-control); color: var(--muted); opacity: .55; }
 .document-tab:hover .tab-close, .document-tab.active .tab-close { opacity: 1; }
 .new-tab-button { display: grid; place-items: center; flex: 0 0 var(--control-size); width: var(--control-size); height: var(--control-size); padding: 0; border-radius: var(--radius-control); color: var(--muted); }
