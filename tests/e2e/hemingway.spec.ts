@@ -34,7 +34,7 @@ test('Hemingway mode shows literal Markdown without syntax spans or Live widgets
   const markdown = '# Literal note\n\n**bold** and _italic_\n\n$x^2$\n\n[[Note|alias]]\n\n- [ ] task\n';
   await source(page).fill(markdown);
   await runCommand(page, 'Live Preview');
-  await expect(source(page).locator('.cm-live-math .katex')).toHaveCount(1);
+  await expect(source(page).locator('.cm-live-math svg.typst-math-svg')).toHaveCount(1);
   await expect(source(page).locator('.cm-live-wiki')).toHaveCount(1);
 
   await runCommand(page, 'Hemingway mode');
@@ -47,7 +47,7 @@ test('Hemingway mode shows literal Markdown without syntax spans or Live widgets
 
   await runCommand(page, 'Hemingway mode');
   await runCommand(page, 'Live Preview');
-  await expect(source(page).locator('.cm-live-math .katex')).toHaveCount(1);
+  await expect(source(page).locator('.cm-live-math svg.typst-math-svg')).toHaveCount(1);
   await expect(source(page).locator('.cm-live-wiki')).toHaveCount(1);
   await expect(source(page).locator('.task-checkbox')).toHaveCount(1);
 });

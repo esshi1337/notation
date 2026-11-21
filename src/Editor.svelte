@@ -33,6 +33,7 @@
   import { search, searchKeymap, highlightSelectionMatches, openSearchPanel, gotoLine } from '@codemirror/search';
   import { livePreview, livePreviewFocus, revealDocumentSource, wikiNavigation } from './live-preview';
   import { mathMarkdown } from './markdown-features';
+  import type { MathMode } from './math-syntax';
   import type { TaskToggle } from './markdown-features';
   import { toggleTask } from './tasks';
   import { performBlockAction, slashCommands, insertEditorTemplate } from './editor-commands';
@@ -49,7 +50,7 @@
   import { formattingStatus, reducedFormatting } from './reduced-formatting';
   import type { FormattingStatus } from './reduced-formatting';
 
-  let { codeLanguage = 'markdown', intelligenceEnabled = false, tabSize = 2, indentWithTabs = false, onIntelligence, value, wrap, live, standalone, theme, folds, initialSelection, active = true, showLineNumbers = true, appearance = '', hemingway = false, cells, sourcePath, loadEmbed, onOpenPath, onOpenWiki, onEditProperties, wikiCandidates, onSelection, onFormatting, onChange }: { codeLanguage?: CodeLanguage; intelligenceEnabled?: boolean; tabSize?: number; indentWithTabs?: boolean; onIntelligence?: (state: IntelligenceState) => void; value: string; wrap: boolean; live: boolean; standalone: boolean; theme: 'dark' | 'light'; folds: Map<string, boolean>; initialSelection?: DocumentSelection; active?: boolean; showLineNumbers?: boolean; appearance?: string; hemingway?: boolean; cells?: CellSession; sourcePath?: string; loadEmbed?: (target: string, sourcePath?: string) => Promise<{ path: string; content: string; label: string; key: string }>; onOpenPath?: (path: string) => void; onOpenWiki?: (target: string, sourcePath?: string) => void; onEditProperties?: () => void; wikiCandidates?: (context: WikiCompletion) => Promise<WikiCandidate[]>; onSelection?: (selection: DocumentSelection) => void; onFormatting?: (status: FormattingStatus) => void; onChange: (value: string) => void } = $props();
+  let { mathMode = 'auto', codeLanguage = 'markdown', intelligenceEnabled = false, tabSize = 2, indentWithTabs = false, onIntelligence, value, wrap, live, standalone, theme, folds, initialSelection, active = true, showLineNumbers = true, appearance = '', hemingway = false, cells, sourcePath, loadEmbed, onOpenPath, onOpenWiki, onEditProperties, wikiCandidates, onSelection, onFormatting, onChange }: { mathMode?: MathMode; codeLanguage?: CodeLanguage; intelligenceEnabled?: boolean; tabSize?: number; indentWithTabs?: boolean; onIntelligence?: (state: IntelligenceState) => void; value: string; wrap: boolean; live: boolean; standalone: boolean; theme: 'dark' | 'light'; folds: Map<string, boolean>; initialSelection?: DocumentSelection; active?: boolean; showLineNumbers?: boolean; appearance?: string; hemingway?: boolean; cells?: CellSession; sourcePath?: string; loadEmbed?: (target: string, sourcePath?: string) => Promise<{ path: string; content: string; label: string; key: string }>; onOpenPath?: (path: string) => void; onOpenWiki?: (target: string, sourcePath?: string) => void; onEditProperties?: () => void; wikiCandidates?: (context: WikiCompletion) => Promise<WikiCandidate[]>; onSelection?: (selection: DocumentSelection) => void; onFormatting?: (status: FormattingStatus) => void; onChange: (value: string) => void } = $props();
   let host: HTMLDivElement;
   let view: EditorView | undefined;
   let retainedState: EditorState | undefined;
@@ -233,7 +234,7 @@
     // Reduced mode keeps plain source text and optional line numbers, without
     // rich widgets or folding. Text, undo and selection are untouched.
     if (reduced) return [showLineNumbers ? lineNumbers() : []];
-    return live ? livePreview(theme, standalone, folds, { openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells })
+    return live ? livePreview(theme, standalone, folds, { mathMode, openWiki: onOpenWiki, editProperties: onEditProperties, sourcePath, loadEmbed, openPath: onOpenPath, cells })
       : [showLineNumbers ? lineNumbers() : [], standalone ? [] : foldGutter()];
   }
   function createState() {
@@ -381,8 +382,9 @@
     const folded = folds;
     const numbers = showLineNumbers;
     const reduced = formattingReduced;
+    const math = mathMode;
     if (!currentState()) return;
-    void [locked, enabled, palette, raw, folded, numbers, reduced];
+    void [locked, enabled, palette, raw, folded, numbers, reduced, math];
     dispatch({ effects: presentation.reconfigure(presentationExtensions()) });
   });
 

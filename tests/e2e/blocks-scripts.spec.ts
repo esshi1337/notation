@@ -134,12 +134,12 @@ test('callouts render tasks, math, and diagrams with correct source offsets', as
   const text = '# Nested content\n\n> [!NOTE] Work\n> - [ ] Verify this\n>\n> $x^2$\n>\n> ```mermaid\n> flowchart LR\n> A --> B\n> ```\n\nEnd.';
   await source(page).fill(text);
   const callout = preview(page).getByRole('region', { name: 'Callout: Work' });
-  await expect(callout.locator('.katex')).toHaveCount(1);
+  await expect(callout.locator('svg.typst-math-svg')).toHaveCount(1);
   await expect(callout.locator('.diagram svg')).toHaveCount(1);
   await callout.getByRole('checkbox', { name: 'Task: Verify this' }).check();
   expect(await saveText(page)).toBe(text.replace('[ ] Verify', '[x] Verify'));
   await runCommand(page, 'Live Preview');
-  await expect(page.locator('.cm-live-callout .katex')).toHaveCount(1);
+  await expect(page.locator('.cm-live-callout svg.typst-math-svg')).toHaveCount(1);
   await expect(page.locator('.cm-live-callout .diagram svg')).toHaveCount(1);
 });
 
@@ -168,7 +168,7 @@ test('nested callouts keep typed monochrome icons and task, math, and Mermaid so
   await expect(inner).toHaveClass(/callout-warning/);
   await expect(outer.locator('.callout-icon svg path').first()).not.toHaveAttribute('d', await inner.locator('.callout-icon svg path').first().getAttribute('d'));
   await expect(inner.getByRole('checkbox', { name: 'Task: Nested task' })).toBeVisible();
-  await expect(inner.locator('.katex')).toHaveCount(1);
+  await expect(inner.locator('svg.typst-math-svg')).toHaveCount(1);
   await expect(inner.locator('.diagram svg')).toHaveCount(1);
   await expect(preview(page)).toContainText('After the callouts.');
   await expect(outer).not.toContainText('After the callouts.');
@@ -178,7 +178,7 @@ test('nested callouts keep typed monochrome icons and task, math, and Mermaid so
   await runCommand(page, 'Live Preview');
   await expect(page.locator('.cm-live-callout')).toHaveCount(1);
   await expect(page.locator('.cm-live-callout .callout')).toHaveCount(2);
-  await expect(page.locator('.cm-live-callout .katex')).toHaveCount(1);
+  await expect(page.locator('.cm-live-callout svg.typst-math-svg')).toHaveCount(1);
   await expect(page.locator('.cm-live-callout .diagram svg')).toHaveCount(1);
   expect(await saveText(page)).toBe(text.replace('[ ] Nested task', '[x] Nested task'));
 });
@@ -197,12 +197,12 @@ test('display math inside a callout does not consume following blocks', async ({
   const text = '> [!NOTE] Math\n> $$\n> x^2\n> $$\n\nOutside paragraph.\n\n```mermaid\nflowchart LR\n A --> B\n```';
   await source(page).fill(text);
   const callout = preview(page).getByRole('region', { name: 'Callout: Math', exact: true });
-  await expect(callout.locator('.katex-display')).toHaveCount(1);
+  await expect(callout.locator('.typst-display svg.typst-math-svg')).toHaveCount(1);
   await expect(callout).not.toContainText('Outside paragraph.');
   await expect(callout.locator('.diagram svg')).toHaveCount(0);
   await expect(preview(page).locator('.diagram svg')).toHaveCount(1);
   await runCommand(page, 'Live Preview');
-  await expect(page.locator('.cm-live-callout .katex-display')).toHaveCount(1);
+  await expect(page.locator('.cm-live-callout .typst-display svg.typst-math-svg')).toHaveCount(1);
   await expect(page.locator('.cm-live-callout')).not.toContainText('Outside paragraph.');
   await expect(page.locator('.cm-live-mermaid svg')).toHaveCount(1);
   expect(await saveText(page)).toBe(text);

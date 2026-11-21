@@ -1,6 +1,8 @@
 import { DARK_PRESETS, LIGHT_PRESETS, readThemePreferences } from './themes';
 import type { UserTheme } from './themes';
 import { isMac } from './platform';
+import { readMathMode } from './math-syntax';
+import type { MathMode } from './math-syntax';
 export { DARK_PRESETS, LIGHT_PRESETS } from './themes';
 
 export type UIPreferences = {
@@ -9,6 +11,8 @@ export type UIPreferences = {
   accentColor: string; editorFont: 'mono' | 'sans'; lineHeight: number;
   readingWidth: number; sidebarWidth: number; sidebarRailWidth: 'narrow' | 'standard' | 'wide'; sidebarPosition: 'left' | 'right'; showStatusBar: boolean;
   tabSize: number; indentWithTabs: boolean; languageIntelligenceEnabled: boolean; automaticallyReloadExternalChanges: boolean; showLineNumbers: boolean; focusMode: boolean; smoothScrolling: boolean; reduceMotion: boolean; performanceMode: boolean; scriptsEnabled: boolean;
+  /** Math syntax for notes without a `math:` property: Typst with LaTeX fallback, or one engine only. */
+  mathSyntax: MathMode;
 };
 
 export const DEFAULT_UI_PREFERENCES: Readonly<UIPreferences> = {
@@ -17,7 +21,7 @@ export const DEFAULT_UI_PREFERENCES: Readonly<UIPreferences> = {
   editorFont: 'mono', lineHeight: 1.7, readingWidth: 756, sidebarWidth: 260, sidebarRailWidth: 'standard', sidebarPosition: 'left',
   showStatusBar: true, tabSize: 4, indentWithTabs: false, languageIntelligenceEnabled: false, automaticallyReloadExternalChanges: false, showLineNumbers: true, focusMode: false,
   // macOS already scrolls with momentum and rubber-banding; animating on top fights it.
-  smoothScrolling: !isMac, reduceMotion: false, performanceMode: false, scriptsEnabled: false,
+  smoothScrolling: !isMac, reduceMotion: false, performanceMode: false, scriptsEnabled: false, mathSyntax: 'auto',
 };
 
 export const UI_SETTINGS_VERSION = 3;
@@ -61,6 +65,7 @@ export function readUIPreferences(settings: Record<string, unknown>): UIPreferen
     automaticallyReloadExternalChanges: settings.automaticallyReloadExternalChanges === true,
     performanceMode: settings.performanceMode === true,
     scriptsEnabled: settings.scriptsEnabled === true,
+    mathSyntax: readMathMode(settings.mathSyntax) ?? defaults.mathSyntax,
     showLineNumbers: typeof settings.showLineNumbers === 'boolean' ? settings.showLineNumbers : defaults.showLineNumbers,
     focusMode: settings.focusMode === true,
     smoothScrolling: typeof settings.smoothScrolling === 'boolean' ? settings.smoothScrolling : defaults.smoothScrolling,

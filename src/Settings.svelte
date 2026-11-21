@@ -28,6 +28,7 @@
   const darkPresetOptions = [{ value: 'midnight', label: 'Midnight' }, { value: 'charcoal', label: 'Charcoal' }, { value: 'amoled', label: 'AMOLED' }, { value: 'forest', label: 'Forest' }, { value: 'dusk', label: 'Dusk' }];
   const lightPresetOptions = [{ value: 'default', label: 'Default' }, { value: 'paper', label: 'Paper' }];
   const editorFontOptions = [{ value: 'mono', label: 'IBM Plex Mono' }, { value: 'sans', label: 'Source Sans 3' }];
+  const mathSyntaxOptions = [{ value: 'auto', label: 'Typst, LaTeX fallback' }, { value: 'typst', label: 'Typst only' }, { value: 'latex', label: 'LaTeX only' }];
   const layoutOptions = [{ value: 'source', label: 'Source' }, { value: 'split', label: 'Split' }, { value: 'preview', label: 'Preview' }, { value: 'live', label: 'Live Preview' }];
   const toolPanelWidthPresets = [
     { value: '220', numeric: 220, label: 'Narrow', hint: '220 px' },
@@ -142,6 +143,7 @@
     prefs.smoothScrolling = DEFAULT_UI_PREFERENCES.smoothScrolling;
     prefs.performanceMode = DEFAULT_UI_PREFERENCES.performanceMode;
     prefs.scriptsEnabled = DEFAULT_UI_PREFERENCES.scriptsEnabled;
+    prefs.mathSyntax = DEFAULT_UI_PREFERENCES.mathSyntax;
     prefs.automaticallyReloadExternalChanges = DEFAULT_UI_PREFERENCES.automaticallyReloadExternalChanges;
   }
   // Fields show the platform label (Ctrl+N, ⌘N); storage keeps the Mod form.
@@ -243,6 +245,8 @@
           <details class="language-setup"><summary>Set up language tools</summary><p>From the Notation source checkout, run <code>npm run desktop:languages</code> to install the optional TypeScript / Svelte pack. This is a separate download, stored in your Notation data directory.</p><p>For Rust, install <code>rust-analyzer</code> and <code>rustfmt</code> with your Rust toolchain. After installation, turn intelligence on. No tools are downloaded automatically.</p></details>
           <NumberControl label="Reading width" bind:value={prefs.readingWidth} min={480} max={1200} step={10} sliderStep={1} defaultValue={DEFAULT_UI_PREFERENCES.readingWidth} unit="px" />
           <SelectControl label="Layout" options={layoutOptions} disabled={prefs.performanceMode} value={prefs.performanceMode ? 'source' : layout} onchange={(value) => layout = value as Layout} {theme} />
+          <SelectControl label="Math syntax" options={mathSyntaxOptions} value={prefs.mathSyntax} onchange={(value) => prefs.mathSyntax = value as UIPreferences['mathSyntax']} {theme} />
+          <p class="settings-help">How <code>$…$</code> is read. Typst is the default; equations written in LaTeX are detected and rendered with KaTeX. A note can override this with a <code>math: typst</code>, <code>latex</code> or <code>auto</code> property.</p>
           <div class="settings-toggle-group">
             <label class="settings-checkbox"><input type="checkbox" bind:checked={wrap} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Word wrap</label>
             <label class="settings-checkbox"><input type="checkbox" bind:checked={prefs.showLineNumbers} /><span class="settings-checkbox-mark" aria-hidden="true"><Icon name="checkbox-check" size={12} {theme} /></span> Show line numbers</label>
