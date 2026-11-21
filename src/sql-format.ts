@@ -129,3 +129,10 @@ export function truncationNotice(result: SqlResult): string {
   if (result.truncated === 'size') return `Showing the first ${formatRows(result.rowCount)}: the result reached the 8 MiB size limit.`;
   return '';
 }
+/** The one-line caption of a result: connection, rows, duration, time, and how it was cut. */
+export function resultCaption(result: SqlResult, time: string): string {
+  const parts = [result.connection, result.columns.length ? formatRows(result.rowCount) : 'no columns', formatDuration(result.durationMs), time];
+  if (result.truncated === 'rows') parts.push(`first ${formatRows(result.rowCount)}`);
+  if (result.truncated === 'size') parts.push(`first ${formatRows(result.rowCount)} (8 MiB limit)`);
+  return parts.join(' · ');
+}

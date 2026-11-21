@@ -871,44 +871,56 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .cell-output { order: 2; max-width: 100%; padding: 8px 16px; border-top: 1px solid var(--border); font: 11px/18px 'IBM Plex Mono', monospace; overflow: auto; }
 .cell-output pre { max-height: 320px; margin: 0; padding: 4px 0; border: 0; white-space: pre-wrap; }
 .cell-status { margin-bottom: 5px; color: var(--muted); font: 11px/18px 'IBM Plex Mono', monospace; }
-/* SQL blocks: ```sql connection:name */
-.sql-block { display: flex; flex-direction: column; min-width: 0; max-width: 100%; margin: 24px 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--bar); }
-.sql-block > pre { order: 1; margin: 0; border: 0; border-radius: 0; background: transparent; }
-.sql-block-compact > pre { display: none; }
-.sql-actions { order: 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-height: 38px; padding: 6px 8px 6px 16px; border-bottom: 1px solid var(--border); font: 13px/20px 'Source Sans 3', sans-serif; }
-.sql-block-compact .sql-actions { border-bottom: 0; }
-.sql-actions strong { color: var(--muted); font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; font-weight: 400; line-height: 18px; text-transform: uppercase; }
-.sql-connection { min-width: 0; margin-right: auto; overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.sql-actions button, .sql-toolbar button, .sql-more { min-height: 26px; padding: 2px 8px; border-radius: var(--radius-control); background: var(--hover); font: 13px/20px 'Source Sans 3', sans-serif; transition: var(--control-transition); }
-.sql-actions button:disabled { cursor: default; opacity: .55; }
-.sql-actions .sql-run:not(:disabled) { background: var(--active); color: var(--heading); }
-.sql-output { order: 2; min-width: 0; border-top: 1px solid var(--border); font: 13px/20px 'Source Sans 3', sans-serif; }
-.sql-output .sql-status { margin: 0; padding: 8px 16px; color: var(--muted); font-size: 12px; line-height: 18px; }
-.sql-error { padding: 8px 16px; color: var(--error); font: 12px/18px 'IBM Plex Mono', ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
-.sql-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 8px 6px 16px; }
-.sql-meta { margin-right: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.sql-note { flex-basis: 100%; color: var(--muted); font-size: 12px; line-height: 18px; }
-.sql-note:empty { display: none; }
-.sql-table-scroll { max-width: 100%; max-height: 420px; overflow: auto; border-top: 1px solid var(--border); overscroll-behavior: contain; }
+/* SQL blocks: ```sql connection:name. The result table is the content; one
+   quiet line carries everything else. */
+.sql-block { min-width: 0; max-width: 100%; margin: 1em 0; }
+.sql-block > pre { margin: 0 0 8px; }
+.sql-block > pre[hidden], .sql-block-compact > pre { display: none; }
+.sql-table-scroll { max-width: 100%; max-height: 420px; overflow: auto; overscroll-behavior: contain; }
 .sql-table-scroll:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
-.markdown-body .sql-table { display: table; width: max-content; min-width: 100%; margin: 0; border-collapse: separate; border-spacing: 0; font-size: 12px; line-height: 18px; }
+/* The look of a regular preview table. Borders are drawn per cell, not
+   collapsed, so the sticky header keeps its lines while rows scroll under it. */
+.markdown-body .sql-table { display: table; width: max-content; min-width: 100%; margin: 0; border-collapse: separate; border-spacing: 0; border-left: 1px solid var(--border); }
 .markdown-body .sql-table th, .markdown-body .sql-table td { max-width: 48ch; overflow: hidden; border: 0; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); text-overflow: ellipsis; vertical-align: top; white-space: pre; }
-.markdown-body .sql-table td { padding: 4px 10px; }
-.markdown-body .sql-table :is(th, td):last-child { border-right: 0; }
-.markdown-body .sql-table tbody tr:last-child td { border-bottom: 0; }
-/* The header stays in view while rows scroll under it. */
-.markdown-body .sql-table th { position: sticky; top: 0; z-index: 1; padding: 0; background: var(--code); }
-.sql-sort { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 26px; padding: 4px 10px; border-radius: 0; color: var(--heading); font: 550 12px/18px 'Source Sans 3', sans-serif; text-align: left; }
+.markdown-body .sql-table td { padding: 7px 13px; }
+.markdown-body .sql-table th { position: sticky; top: 0; z-index: 1; padding: 0; border-top: 1px solid var(--border); background: var(--code); }
+.sql-sort { display: flex; align-items: center; gap: 6px; width: 100%; padding: 7px 13px; border-radius: 0; color: inherit; font: inherit; font-weight: 550; text-align: left; }
 .sql-sort:hover { background: var(--hover); }
 /* A header is never narrower than its name. */
 .sql-column-name { white-space: nowrap; }
 .sql-sort-mark { flex: 0 0 9px; margin-left: auto; color: var(--muted); font-size: 9px; }
+.sql-sort-mark:empty { display: none; }
 .sql-table .sql-cell-number { text-align: right; font-variant-numeric: tabular-nums; }
 .sql-table .sql-cell-null { color: var(--muted); font-style: italic; opacity: .75; }
-.sql-table .sql-cell-json, .sql-table .sql-cell-bytes { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; }
+.sql-table .sql-cell-json, .sql-table .sql-cell-bytes { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: .85em; }
 .sql-table .sql-cell-date { font-variant-numeric: tabular-nums; }
 .sql-table .sql-cell-other, .sql-table .sql-cell-cut { color: var(--muted); }
-.sql-more { margin: 6px 16px 8px; }
+.sql-more { margin: 6px 0 0; padding: 2px 8px; border-radius: var(--radius-control); background: var(--hover); color: var(--muted); font: 12px/18px 'Source Sans 3', sans-serif; }
+.sql-line { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; min-height: 26px; color: var(--muted); font: 12px/18px 'Source Sans 3', sans-serif; }
+.sql-body:not(:empty) + .sql-line { margin-top: 4px; }
+.sql-caption { flex: 0 1 auto; min-width: 0; overflow: hidden; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.sql-status { min-width: 0; }
+.sql-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sql-note:empty { display: none; }
+.sql-line .sql-error { flex: 0 1 auto; min-width: 0; color: var(--error); font: 12px/18px 'IBM Plex Mono', ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sql-run { display: inline-flex; align-items: center; gap: 6px; min-height: 26px; padding: 2px 10px 2px 7px; border: 1px solid var(--border); border-radius: var(--radius-control); color: var(--text); font: 13px/20px 'Source Sans 3', sans-serif; transition: var(--control-transition); }
+.sql-run:hover { background: var(--hover); color: var(--heading); }
+.sql-run-target { margin-left: -3px; color: var(--muted); }
+.sql-link { padding: 2px 4px; border-radius: 4px; color: var(--muted); font: 12px/18px 'Source Sans 3', sans-serif; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; transition: var(--control-transition); }
+.sql-link:hover:not(:disabled) { color: var(--heading); text-decoration-color: currentColor; }
+.sql-link:disabled { cursor: default; opacity: .6; }
+/* Actions stay out of the way until the block is hovered or holds focus;
+   where there is no hover they are always there. */
+.sql-tools { position: relative; display: flex; flex: 0 0 auto; gap: 2px; margin-left: auto; opacity: 0; transition: opacity var(--motion-fast) var(--ease-out); }
+.sql-block:hover .sql-tools, .sql-block:focus-within .sql-tools, .sql-tools-open { opacity: 1; }
+@media (hover: none) { .sql-tools { opacity: 1; } }
+.sql-icon { display: grid; place-items: center; width: 26px; height: 26px; border-radius: var(--radius-control); color: var(--muted); transition: var(--control-transition); }
+.sql-icon:hover, .sql-icon[aria-expanded='true'] { background: var(--hover); color: var(--heading); }
+.sql-menu.compact-menu { top: auto; bottom: calc(100% + 4px); left: auto; right: 0; width: 190px; padding: 6px; transform-origin: bottom right; }
+.sql-spinner { flex: 0 0 12px; width: 12px; height: 12px; border: 1.5px solid var(--border); border-top-color: var(--muted); border-radius: 50%; animation: sql-spin .8s linear infinite; }
+@keyframes sql-spin { to { transform: rotate(360deg); } }
+:root[data-motion='reduce'] .sql-spinner { animation: none; }
+@media (prefers-reduced-motion: reduce) { .sql-spinner { animation: none; } }
 .sql-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .cm-live-sql-result .sql-block { margin: 6px 0 12px; }
 .media-embed { display: block; margin: .8em 0; max-width: 100%; font: 12px/1.5 'Source Sans 3', sans-serif; overflow: hidden; }

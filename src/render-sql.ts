@@ -11,7 +11,7 @@ import { save } from '@tauri-apps/plugin-dialog';
 import { motionMs } from './motion';
 import { isMac } from './platform';
 import { DESKTOP_ONLY, kindLabels, knownConnection, connectionsLoaded, listConnections, subscribeConnections, sqlFailure } from './sql-connections';
-import { cellCut, cellKind, cellText, formatDuration, formatRows, sortedRows, sqlParameters, toCsv, toMarkdownTable, truncationNotice } from './sql-format';
+import { cellCut, cellKind, cellText, formatRows, resultCaption, sortedRows, sqlParameters, toCsv, toMarkdownTable, truncationNotice } from './sql-format';
 import type { SqlResult } from './sql-format';
 import { cancelSql, runSql, sqlKey, sqlResult, sqlState, subscribeSql } from './sql-session';
 
@@ -41,7 +41,7 @@ function element<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', 
   return node;
 }
 function clock(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 function table(result: SqlResult, key: string, redraw: () => void): HTMLElement {
@@ -94,104 +94,189 @@ function table(result: SqlResult, key: string, redraw: () => void): HTMLElement 
   return wrapper;
 }
 
+// Blocks whose query is shown. The query is in the source, so it is hidden
+// by default; the choice lasts for the session.
+const shownQueries = new Set<string>();
+const EASE = 'cubic-bezier(.2, .8, .2, 1)';
+
+function icon(paths: string): SVGSVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('width', '14'); svg.setAttribute('height', '14');
+  svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '1.4');
+  svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round'); svg.setAttribute('aria-hidden', 'true');
+  // Fixed markup from this file, never data.
+  svg.innerHTML = paths;
+  return svg;
+}
+const ICONS = {
+  play: '<path d="M5 3.5v9l7-4.5Z" fill="currentColor" stroke="none"/>',
+  again: '<path d="M13 8a5 5 0 1 1-1.6-3.7"/><path d="M13 2.5v3h-3"/>',
+  more: '<circle cx="3.5" cy="8" r="1.1" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none"/><circle cx="12.5" cy="8" r="1.1" fill="currentColor" stroke="none"/>',
+};
+
+/**
+ * A SQL block in Preview and Live Preview. The result table is the content:
+ * before a run there is one line with Run; after it, the table and one quiet
+ * caption line whose actions appear on hover or focus.
+ */
 export function renderSqlBlock(target: HTMLElement, block: { connection: string; sql: string }, context: SqlBlockContext): () => void {
   const key = sqlKey(context.scope, block.connection, block.sql);
-  const desktop = isTauri();
+  const desktop = isTauri(), shortcut = isMac ? '⌘↩' : 'Ctrl+Enter';
   target.classList.toggle('sql-block-compact', !!context.compact);
   target.setAttribute('role', 'region'); target.setAttribute('aria-label', 'SQL query: ' + block.connection);
-  const actions = element('div', 'sql-actions');
-  const label = element('strong', '', 'SQL');
-  const connection = element('span', 'sql-connection');
-  const run = element('button', 'sql-run', 'Run'); run.type = 'button'; run.setAttribute('aria-label', 'Run query: ' + block.connection);
-  run.title = `Run this query (${isMac ? '⌘↩' : 'Ctrl+Enter'})`;
-  const cancel = element('button', 'sql-cancel', 'Cancel'); cancel.type = 'button'; cancel.setAttribute('aria-label', 'Cancel query: ' + block.connection); cancel.hidden = true;
-  actions.append(label, connection, run, cancel);
-  const output = element('div', 'sql-output');
-  target.prepend(actions); target.append(output);
+  const query = target.querySelector<HTMLElement>(':scope > pre');
+  const body = element('div', 'sql-body'), line = element('div', 'sql-line');
+  target.append(body, line);
 
-  let timer: ReturnType<typeof setInterval> | undefined, alive = true, drawn = '';
+  let timer: ReturnType<typeof setInterval> | undefined, alive = true, drawnBody = '', drawnLine = '', canRun = false;
+  let closeMenu: (() => void) | undefined;
   const stopTimer = () => { if (timer) { clearInterval(timer); timer = undefined; } };
-  const start = () => { if (alive && context.current() && !run.disabled) void runSql(context.scope, block.connection, block.sql, sqlParameters(block.sql, context.variables)); };
+  const start = () => { if (alive && context.current() && canRun) void runSql(context.scope, block.connection, block.sql, sqlParameters(block.sql, context.variables)); };
 
-  const status = (text: string) => { const line = element('p', 'sql-status', text); line.setAttribute('role', 'status'); return line; };
-  const failure = (text: string) => { const line = element('div', 'sql-error', text); line.setAttribute('role', 'alert'); return line; };
-  const toolbar = (result: SqlResult) => {
-    const bar = element('div', 'sql-toolbar');
-    const meta = element('span', 'sql-meta', `Ran at ${clock(result.finishedAt)} · ${formatDuration(result.durationMs)} · ${formatRows(result.rowCount)}`);
-    const note = element('span', 'sql-note'); note.setAttribute('role', 'status');
-    const say = (text: string) => { note.textContent = text; };
-    const action = (name: string, handler: () => Promise<void> | void) => {
-      const button = element('button', '', name); button.type = 'button';
-      button.addEventListener('click', (event) => { event.stopPropagation(); if (!context.current()) return; Promise.resolve().then(handler).catch((cause) => say(sqlFailure(cause).message)); });
-      return button;
-    };
-    bar.append(meta);
+  const control = <T extends HTMLElement>(node: T, name: string, handler: () => void): T => {
+    node.dataset.sqlControl = name;
+    node.addEventListener('click', (event) => { event.stopPropagation(); if (context.current()) handler(); });
+    return node;
+  };
+  const runButton = (text: string) => {
+    const button = element('button', 'sql-run'); button.type = 'button';
+    button.append(icon(ICONS.play), element('span', '', text), element('span', 'sql-run-target', ' · ' + block.connection));
+    button.setAttribute('aria-label', 'Run query: ' + block.connection); button.title = `Run this query (${shortcut})`;
+    return control(button, 'run', start);
+  };
+  const link = (text: string, name: string, handler: () => void) => { const button = element('button', 'sql-link', text); button.type = 'button'; return control(button, name, handler); };
+  const toggleQuery = () => { if (shownQueries.has(key)) shownQueries.delete(key); else shownQueries.add(key); update(); };
+  const queryLabel = () => shownQueries.has(key) ? 'Hide query' : 'Show query';
+  // Under a fence that is being edited the query is right above: no toggle.
+  const queryToggle = () => { if (context.compact || !query) return []; const button = link(queryLabel(), 'query', toggleQuery); button.setAttribute('aria-expanded', String(shownQueries.has(key))); return [button]; };
+  const message = (className: string, role: string, text: string) => { const node = element('span', className, text); node.setAttribute('role', role); return node; };
+
+  const tools = (result: SqlResult, say: (text: string) => void) => {
+    const box = element('div', 'sql-tools');
+    const again = element('button', 'sql-icon'); again.type = 'button'; again.append(icon(ICONS.again));
+    again.setAttribute('aria-label', 'Run query: ' + block.connection); again.title = `Run again (${shortcut})`;
+    const more = element('button', 'sql-icon'); more.type = 'button'; more.append(icon(ICONS.more));
+    more.setAttribute('aria-label', 'More actions: ' + block.connection); more.title = 'More actions'; more.setAttribute('aria-haspopup', 'menu'); more.setAttribute('aria-expanded', 'false');
+    const act = (handler: () => Promise<void> | void) => () => { Promise.resolve().then(handler).catch((cause) => say(sqlFailure(cause).message)); };
+    const entries: [string, () => void][] = [];
     if (result.columns.length) {
-      bar.append(action('Copy CSV', async () => {
+      entries.push(['Copy CSV', act(async () => {
         if (!navigator.clipboard?.writeText) throw new Error('The clipboard is unavailable.');
         await navigator.clipboard.writeText(toCsv(result)); say('Copied as CSV.');
-      }));
-      if (desktop) bar.append(action('Export CSV', async () => {
+      })]);
+      if (desktop) entries.push(['Export CSV', act(async () => {
         const path = await save({ defaultPath: block.connection + '-results.csv', filters: [{ name: 'CSV', extensions: ['csv'] }] });
         if (!path) return;
         await invoke('write_export_file', { path, content: toCsv(result) });
         say('Exported ' + (path.split(/[\\/]/u).pop() || 'results.csv') + '.');
-      }));
-      if (context.insert) bar.append(action('Insert as table', () => { say(context.insert!(toMarkdownTable(result)) ? 'Inserted below the query. Undo removes it.' : 'The note changed; the table was not inserted.'); }));
+      })]);
+      if (context.insert) entries.push(['Insert as table', () => say(context.insert!(toMarkdownTable(result)) ? 'Inserted below the query. Undo removes it.' : 'The note changed; the table was not inserted.')]);
     }
-    bar.append(note);
-    return bar;
+    if (!context.compact && query) entries.push([queryLabel(), toggleQuery]);
+    // The same menu surface and keys as the app's other menus.
+    let menu: HTMLElement | undefined;
+    const outside = (event: PointerEvent) => { if (menu && !box.contains(event.target as Node)) close(false); };
+    function close(refocus: boolean) {
+      if (!menu) return;
+      menu.remove(); menu = undefined; closeMenu = undefined;
+      more.setAttribute('aria-expanded', 'false'); box.classList.remove('sql-tools-open');
+      document.removeEventListener('pointerdown', outside, true);
+      if (refocus) more.focus();
+    }
+    const open = (viaPointer: boolean) => {
+      const list = menu = element('div', 'compact-menu sql-menu'); list.setAttribute('role', 'menu'); list.setAttribute('aria-label', 'Result actions'); list.tabIndex = -1;
+      for (const [label, handler] of entries) {
+        const item = element('button'); item.type = 'button'; item.setAttribute('role', 'menuitem'); item.append(element('span', 'menu-item-label', label));
+        item.addEventListener('click', (event) => { event.stopPropagation(); close(true); if (context.current()) handler(); });
+        list.append(item);
+      }
+      list.addEventListener('keydown', (event) => {
+        const items = [...list.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')], at = items.indexOf(document.activeElement as HTMLButtonElement);
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); event.stopPropagation(); items[at < 0 ? (event.key === 'ArrowDown' ? 0 : items.length - 1) : (at + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus(); }
+        else if (event.key === 'Home' || event.key === 'End') { event.preventDefault(); items[event.key === 'Home' ? 0 : items.length - 1]?.focus(); }
+        else if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); }
+        else if (event.key === 'Tab') close(true);
+      });
+      list.addEventListener('click', (event) => event.stopPropagation());
+      box.append(list); box.classList.add('sql-tools-open'); more.setAttribute('aria-expanded', 'true');
+      document.addEventListener('pointerdown', outside, true); closeMenu = () => close(false);
+      const duration = motionMs('base');
+      if (duration) list.animate([{ opacity: 0, transform: 'translateY(4px) scale(.98)' }, { opacity: 1, transform: 'none' }], { duration, easing: EASE });
+      (viaPointer ? list : list.querySelector<HTMLElement>('[role="menuitem"]') ?? list).focus();
+    };
+    control(again, 'run', start);
+    more.dataset.sqlControl = 'more';
+    more.addEventListener('click', (event) => { event.stopPropagation(); if (menu) close(true); else if (context.current()) open(event.detail > 0); });
+    box.append(again, more);
+    return box;
   };
+
   const update = () => {
     if (!alive) return;
-    if (!target.isConnected && drawn) { cleanup(); return; }
+    if (!target.isConnected && drawnLine) { cleanup(); return; }
     const state = sqlState(key), known = knownConnection(block.connection), listed = connectionsLoaded();
-    const missing = desktop && listed && !known;
-    connection.textContent = known ? `${block.connection} · ${kindLabels[known.kind]}` : block.connection;
-    const running = state?.status === 'running';
-    run.disabled = !desktop || missing || running;
-    run.textContent = running ? 'Running…' : state?.status === 'done' ? 'Run again' : 'Run';
-    cancel.hidden = !running; cancel.disabled = running && !!state.cancelling;
-    cancel.textContent = running && state.cancelling ? 'Cancelling…' : 'Cancel';
-    // Redraw the output only when what it shows changed.
-    const signature = [desktop, missing, state?.status, state?.status === 'running' ? state.cancelling : '', state?.status === 'done' ? state.result.finishedAt : state?.status === 'error' ? state.code + state.message : '', JSON.stringify(sorts.get(key) ?? null)].join('|');
-    if (signature === drawn) return;
-    const first = !drawn; drawn = signature;
-    stopTimer(); output.replaceChildren();
-    if (!desktop) output.append(status(DESKTOP_ONLY));
-    else if (missing) output.append(failure(`No connection named ${block.connection} — add it in Settings → Databases.`));
-    else if (!state) output.append(status(`Not run in this session. Press Run${context.compact ? ` or ${isMac ? '⌘↩' : 'Ctrl+Enter'}` : ''}; results are kept until you quit.`));
-    else if (state.status === 'running') {
-      const line = status('');
-      const tick = () => { const seconds = Math.floor((Date.now() - state.startedAt) / 1000); line.textContent = state.cancelling ? 'Cancelling on the server…' : seconds ? `Running… ${seconds} s` : 'Running…'; };
-      tick(); timer = setInterval(tick, 1000); output.append(line);
-    } else if (state.status === 'error') {
-      if (state.code === 'password_required') output.append(status(`${block.connection} asks for its password once per session. Enter it in Settings → Databases, then run again.`));
-      else if (state.code === 'cancelled') output.append(status('Query cancelled.'));
-      else output.append(failure(state.message));
-    } else {
-      const result = state.result, notice = truncationNotice(result);
-      output.append(toolbar(result));
-      if (notice) output.append(status(notice));
-      if (!result.columns.length) output.append(status('The statement returned no columns.'));
-      else if (!result.rows.length) output.append(table(result, key, update), status('No rows.'));
-      else output.append(table(result, key, update));
-      // Results settle in; Live Preview widgets are never animated.
-      const duration = context.measure || first ? 0 : motionMs('base');
-      if (duration) output.animate([{ opacity: 0 }, { opacity: 1 }], { duration, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+    const missing = desktop && listed && !known, running = state?.status === 'running';
+    canRun = desktop && !missing && !running;
+    const showQuery = shownQueries.has(key) && !context.compact;
+    if (query) query.hidden = !showQuery;
+    target.dataset.state = state?.status ?? 'idle';
+
+    // The table: rebuilt only for a new result or sort order, so toggling the query keeps its scroll position.
+    const result = state?.status === 'done' ? state.result : undefined;
+    const bodySignature = result ? [result.finishedAt, JSON.stringify(sorts.get(key) ?? null)].join('|') : '';
+    if (bodySignature !== drawnBody) {
+      const fresh = !!result && !!drawnLine && !drawnBody;
+      drawnBody = bodySignature;
+      body.replaceChildren(...(result?.columns.length ? [table(result, key, update)] : []));
+      // A new result settles in; Live Preview widgets are never animated.
+      const duration = fresh && !context.measure ? motionMs('base') : 0;
+      if (duration) body.animate([{ opacity: 0 }, { opacity: 1 }], { duration, easing: EASE });
+    }
+
+    const lineSignature = [desktop, missing, showQuery, known?.kind, state?.status, running ? state.cancelling : '', result ? result.finishedAt : state?.status === 'error' ? state.code + state.message : ''].join('|');
+    if (lineSignature !== drawnLine) {
+      drawnLine = lineSignature;
+      // Keep keyboard focus on the control that was used.
+      const focused = line.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.sqlControl : undefined;
+      closeMenu?.(); stopTimer(); line.replaceChildren();
+      if (!desktop) line.append(message('sql-status', 'status', DESKTOP_ONLY), ...queryToggle());
+      else if (missing) line.append(message('sql-error', 'alert', `No connection named ${block.connection} — add it in Settings → Databases.`), ...queryToggle());
+      else if (!state) line.append(runButton('Run query'), ...queryToggle());
+      else if (state.status === 'running') {
+        const text = message('sql-status', 'status', '');
+        const tick = () => { const seconds = Math.floor((Date.now() - state.startedAt) / 1000); text.textContent = `${state.cancelling ? 'Cancelling on the server…' : seconds ? `Running… ${seconds} s` : 'Running…'} · ${block.connection}`; };
+        tick(); timer = setInterval(tick, 1000);
+        const cancel = element('button', 'sql-link sql-cancel', state.cancelling ? 'Cancelling…' : 'Cancel'); cancel.type = 'button'; cancel.disabled = !!state.cancelling;
+        cancel.setAttribute('aria-label', 'Cancel query: ' + block.connection);
+        const spinner = element('span', 'sql-spinner'); spinner.setAttribute('aria-hidden', 'true');
+        line.append(spinner, text, control(cancel, 'cancel', () => void cancelSql(key)));
+      } else if (state.status === 'error') {
+        if (state.code === 'cancelled') line.append(runButton('Run query'), ...queryToggle(), message('sql-status', 'status', 'Query cancelled.'));
+        else {
+          const text = state.code === 'password_required' ? `${block.connection} asks for its password once per session. Enter it in Settings → Databases, then run again.` : state.message;
+          const retry = link('Retry', 'run', start); retry.classList.add('sql-retry'); retry.setAttribute('aria-label', 'Run query: ' + block.connection); retry.title = `Run again (${shortcut})`;
+          line.append(message(state.code === 'password_required' ? 'sql-status' : 'sql-error', state.code === 'password_required' ? 'status' : 'alert', text), ...queryToggle(), retry);
+        }
+      } else {
+        const done = state.result;
+        const caption = element('span', 'sql-caption', resultCaption(done, clock(done.finishedAt)));
+        const notice = truncationNotice(done);
+        if (notice) caption.title = notice;
+        const note = message('sql-note', 'status', '');
+        line.append(caption, note, tools(done, (text) => { note.textContent = text; }));
+      }
+      if (focused) (line.querySelector<HTMLElement>(`[data-sql-control="${focused}"]`) ?? line.querySelector<HTMLElement>('button'))?.focus({ preventScroll: true });
     }
     context.measure?.();
   };
 
-  run.addEventListener('click', (event) => { event.stopPropagation(); start(); });
-  cancel.addEventListener('click', (event) => { event.stopPropagation(); void cancelSql(key); });
   const keydown = (event: KeyboardEvent) => {
     if (event.key !== 'Enter' || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
     event.preventDefault(); event.stopPropagation(); start();
   };
   target.addEventListener('keydown', keydown);
   const unsubscribe = subscribeSql(key, update), unlisten = subscribeConnections(update);
-  function cleanup() { if (!alive) return; alive = false; stopTimer(); unsubscribe(); unlisten(); target.removeEventListener('keydown', keydown); }
+  function cleanup() { if (!alive) return; alive = false; closeMenu?.(); stopTimer(); unsubscribe(); unlisten(); target.removeEventListener('keydown', keydown); }
   // Knowing the connection names is local metadata; it runs no query and reads no password.
   if (desktop && !connectionsLoaded() && !connectionsRequested) { connectionsRequested = true; void listConnections().catch(() => { connectionsRequested = false; }); }
   update();

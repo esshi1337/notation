@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { sqlConnection, cellKind, cellText, cellCut, compareCells, sortedRows, sqlParameters, toCsv, toMarkdownTable, truncationNotice, formatDuration, MARKDOWN_TABLE_ROWS } from '../src/sql-format.ts';
+import { sqlConnection, cellKind, cellText, cellCut, compareCells, sortedRows, sqlParameters, toCsv, toMarkdownTable, truncationNotice, formatDuration, resultCaption, MARKDOWN_TABLE_ROWS } from '../src/sql-format.ts';
 let passed = 0;
 function test(name, run) { run(); passed++; console.log('✓ ' + name); }
 const result = (columns, rows, extra = {}) => ({ connection: 'analytics', kind: 'postgres', columns: columns.map(name => ({ name, typeName: '' })), rows, rowCount: rows.length, rowLimit: 1000, truncated: null, durationMs: 12, finishedAt: 0, ...extra });
@@ -66,6 +66,8 @@ test('notices and durations read plainly', () => {
   assert.equal(truncationNotice(result(['n'], [[1]])), '');
   assert.match(truncationNotice(result(['n'], [[1]], { truncated: 'rows', rowCount: 1000 })), /^Showing the first 1,000 rows: the connection's row limit/u);
   assert.match(truncationNotice(result(['n'], [[1]], { truncated: 'size', rowCount: 1 })), /first 1 row: .*size limit/u);
+  assert.equal(resultCaption(result(['n'], [[1], [2]], { durationMs: 41 }), '14:26'), 'analytics · 2 rows · 41 ms · 14:26');
+  assert.equal(resultCaption(result(['n'], [[1]], { truncated: 'rows', rowCount: 1000 }), '14:26'), 'analytics · 1,000 rows · 12 ms · 14:26 · first 1,000 rows');
   assert.equal(formatDuration(38), '38 ms');
   assert.equal(formatDuration(1234), '1.23 s');
   assert.equal(formatDuration(12_345), '12.3 s');
