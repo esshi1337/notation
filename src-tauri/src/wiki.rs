@@ -421,7 +421,6 @@ impl Database {
                         .iter()
                         .any(|alias| alias.to_lowercase().contains(&note))
             })
-            .filter(|candidate| safe_candidate(&scope, candidate))
             .collect::<Vec<_>>();
         if let Some(heading) = heading {
             for candidate in &mut candidates {
@@ -438,9 +437,15 @@ impl Database {
                 }
             }
         }
-        candidates = suggestions(&root, &folder, candidates);
-        candidates.truncate(limit.unwrap_or(50).clamp(1, 200));
-        Ok(candidates)
+        // Checking a note against the filesystem costs several system calls.
+        // The order depends only on each candidate, so sort first and check
+        // just enough of them to fill the list, instead of every match.
+        let limit = limit.unwrap_or(50).clamp(1, 200);
+        Ok(suggestions(&root, &folder, candidates)
+            .into_iter()
+            .filter(|candidate| safe_candidate(&scope, candidate))
+            .take(limit)
+            .collect())
     }
     pub fn create_wiki_note(
         &self,
