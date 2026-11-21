@@ -337,8 +337,15 @@ fn restrict(spec: &JobSpec) -> Result<(), String> {
 }
 #[cfg(not(target_os = "linux"))]
 fn restrict(_spec: &JobSpec) -> Result<(), String> {
-    Err("Bundled native engines currently require Linux with Landlock support.".into())
+    Err(UNSUPPORTED_PLATFORM.into())
 }
+/// Shown wherever a native engine is asked for on a platform without the
+/// Linux sandbox. It names the platform limit, not an installation problem.
+pub const UNSUPPORTED_PLATFORM: &str = if cfg!(target_os = "macos") {
+    "Not available on macOS yet. PDF, DOCX and PPTX export, citations and D2, PlantUML and Graphviz diagrams run only inside the Linux sandbox."
+} else {
+    "Not available on this platform yet. PDF, DOCX and PPTX export, citations and D2, PlantUML and Graphviz diagrams run only inside the Linux sandbox."
+};
 pub fn worker_main() {
     let result = (|| -> Result<(), String> {
         let mut input = String::new();

@@ -129,8 +129,9 @@ pub(crate) fn normalize_reference(value: &str) -> Result<PathBuf, String> {
     if value.len() > 4096 || !Path::new(value).is_absolute() {
         return Err("File references require an absolute path.".into());
     }
+    let value = crate::explorer::system_path(Path::new(value));
     let mut result = PathBuf::new();
-    for part in Path::new(value).components() {
+    for part in value.components() {
         match part {
             Component::ParentDir => {
                 result.pop();

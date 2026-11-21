@@ -8,8 +8,10 @@
   import type { EmbedDocument } from './render-content';
   let { snapshot, theme, loadEmbed, close }: { snapshot: () => HtmlExportSource; theme: 'dark' | 'light'; loadEmbed?: (target: string, sourcePath?: string) => Promise<EmbedDocument>; close: () => void } = $props();
   type Format = HtmlExportFormat | 'pdf' | 'docx' | 'pptx';
-  let engines = $state<{ available: boolean; error?: string; engines?: { pandoc: boolean; typst: boolean } } | null>(null), conversionId: string | null = null;
+  let engines = $state<{ available: boolean; platformSupported?: boolean; error?: string; engines?: { pandoc: boolean; typst: boolean } } | null>(null), conversionId: string | null = null;
   let format = $state<Format>('html'), busy = $state(false), error = $state(''), message = $state(''), warnings = $state<string[]>([]), progress = $state('');
+  // The platform has no native engines at all (macOS today), as opposed to a damaged install.
+  let conversionUnsupported = $derived(engines?.platformSupported === false);
   let abort: AbortController | undefined, alive = true;
   const desktop = isTauri();
   async function cancel() { abort?.abort(); if (alive) message = 'Export canceled.'; if (conversionId) await invoke('cancel_export', { id: conversionId }).catch(() => {}); }
@@ -22,6 +24,7 @@
     try {
       const converting = ['pdf','docx','pptx'].includes(selected);
       if (converting && !desktop) throw new Error('PDF, DOCX, and PPTX exports require the desktop app with its bundled conversion engines.');
+      if (converting && engines?.platformSupported === false) throw new Error(engines.error || 'PDF, DOCX, and PPTX export is not available on this platform yet.');
       if (converting && engines && (engines.engines ? !engines.engines.pandoc || selected === 'pdf' && !engines.engines.typst : !engines.available)) throw new Error('Bundled export engines are unavailable. Reinstall the complete desktop package. ' + (engines.error || ''));
       const result = await buildHtmlExport(source, { format: converting ? 'self-contained' : selected as HtmlExportFormat, theme: converting ? 'light' : theme, loadEmbed, signal: abort.signal, progress: stage => { if (alive) progress = stage; } });
       if (!alive || abort.signal.aborted) return;
@@ -60,9 +63,10 @@
 
 <section class="utility-panel export-panel" aria-label="Export">
   <div class="scripts-heading"><strong>Export</strong><button aria-label="Close export" onclick={close}>×</button></div>
-  <label>Export format<select aria-label="Export format" bind:value={format} disabled={busy}><option value="html">HTML with linked images</option><option value="self-contained">Self-contained webpage</option><option value="pdf">PDF</option><option value="docx">DOCX</option><option value="pptx">PPTX</option></select></label>
+  <label>Export format<select aria-label="Export format" bind:value={format} disabled={busy}><option value="html">HTML with linked images</option><option value="self-contained">Self-contained webpage</option><option value="pdf" disabled={conversionUnsupported}>PDF</option><option value="docx" disabled={conversionUnsupported}>DOCX</option><option value="pptx" disabled={conversionUnsupported}>PPTX</option></select></label>
   <p class="panel-note">{['pdf','docx','pptx'].includes(format) ? 'Export this note with its rendered diagrams, math, and embedded content.' : 'A static webpage with rendered diagrams, math, and embedded content.'}</p>
   {#if ['pdf','docx','pptx'].includes(format)}<p class="panel-note">{desktop ? 'Uses bundled conversion engines. Remote resources are not fetched.' : 'PDF, DOCX, and PPTX are available in the desktop app.'}</p>{:else if format === 'self-contained'}<p class="panel-note">Styles, fonts, and local media are bundled. Unsupported resources are reported.</p>{:else}<p class="panel-note">Styles and fonts are included. Images remain linked.</p>{/if}
+  {#if conversionUnsupported}<p class="panel-note" role="note">PDF, DOCX, and PPTX export is not available on this platform yet. HTML exports work everywhere.</p>{/if}
   <details class="export-help"><summary>Export details</summary><p class="panel-note">Exports a snapshot; editing the note later does not change the file. Checkboxes are static and callouts are expanded. Existing destinations are replaced only after a successful export.</p></details>
   {#if busy && progress}<p class="panel-status" role="status">{progress}</p>{/if}
   {#if error}<div class="script-error" role="alert">{error}</div>{/if}

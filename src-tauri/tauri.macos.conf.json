@@ -8,7 +8,34 @@
     "macOS": {
       "minimumSystemVersion": "13.0",
       "signingIdentity": "-"
-    }
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "md",
+          "markdown"
+        ],
+        "name": "Markdown Document",
+        "role": "Editor",
+        "rank": "Alternate"
+      },
+      {
+        "ext": [
+          "mmd"
+        ],
+        "name": "Mermaid Diagram",
+        "role": "Editor",
+        "rank": "Alternate"
+      },
+      {
+        "ext": [
+          "canvas"
+        ],
+        "name": "Canvas",
+        "role": "Editor",
+        "rank": "Alternate"
+      }
+    ]
   },
   "app": {
     "windows": [
