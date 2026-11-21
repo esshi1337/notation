@@ -103,7 +103,7 @@ impl Database {
             let mut scanned: HashSet<PathBuf> =
                 files.iter().map(|file| file.path.clone()).collect();
             for path in &scope.files {
-                if !scanned.insert(PathBuf::from(path)) {
+                if scanned.contains(Path::new(path)) {
                     continue;
                 }
                 if report.files >= MAX_FILES {
@@ -136,6 +136,7 @@ impl Database {
                         if let Some(error) = &metadata.frontmatter.error {
                             report_error(&mut report, format!("{path}: YAML: {}", error.message));
                         }
+                        scanned.insert(PathBuf::from(path));
                         files.push(IndexedFile {
                             path: PathBuf::from(path),
                             content,
