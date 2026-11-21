@@ -48,7 +48,8 @@
         if (!path || !alive || abort.signal.aborted) return;
         if (!/\.html?$/iu.test(path)) throw new Error('Choose an .html filename for this export.');
         progress = 'Writing HTML…';
-        const saved = await invoke<{ warning?: string }>('write_document', { path, content: result.html });
+        // A plain write: an export is not a document save, so nothing is copied into revision history.
+        const saved = await invoke<{ warning?: string }>('write_export_file', { path, content: result.html });
         if (saved.warning) warnings = [...warnings, saved.warning];
         message = 'Exported ' + (path.split(/[\\/]/u).pop() || name) + '. The source document is unchanged.';
       } else {
