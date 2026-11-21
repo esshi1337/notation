@@ -758,6 +758,9 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .frontmatter-properties dl { display: grid; grid-template-columns: minmax(60px, 1fr) minmax(0, 3fr); gap: 4px 14px; margin: 8px 0 0; }
 .frontmatter-properties dt, .frontmatter-properties dd { margin: 0; overflow-wrap: anywhere; }
 .frontmatter-properties dd { color: var(--text); white-space: pre-wrap; }
+.markdown-body .frontmatter-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; white-space: normal; }
+.markdown-body .frontmatter-chip { max-width: 100%; margin: 0; padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--code); color: var(--text); line-height: 18px; overflow-wrap: anywhere; }
+.markdown-body .frontmatter-chip-more { border-color: transparent; background: transparent; color: var(--muted); }
 .frontmatter-more { display: block; margin-top: 6px; font-size: 12px; }
 .frontmatter-error { white-space: pre-wrap; overflow-wrap: anywhere; }
 
@@ -843,13 +846,15 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .settings-content.settings-editor { display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
 .settings-editor-controls { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; scrollbar-width: thin; padding: 0 2px 4px 0; }
 .settings-editor .settings-intro { margin-bottom: 14px; }
-.settings-editor .settings-preview-card { display: flex; flex-direction: column; flex: 0 0 180px; min-height: 0; margin-top: 0; }
+/* The card takes the height of its specimen, up to a share of the dialog;
+   only a specimen larger than that scrolls inside the stage. */
+.settings-editor .settings-preview-card { display: flex; flex-direction: column; flex: 0 0 auto; min-height: 0; max-height: 60%; margin-top: 0; }
 .settings-editor .settings-preview-heading { flex-shrink: 0; padding: 6px 12px; }
 .settings-editor .settings-preview-meta { flex-shrink: 0; padding: 5px 12px; }
 .settings-editor .settings-specimen-stage { flex: 1; min-height: 0; padding: 10px; overflow: auto; scrollbar-width: thin; }
 .settings-field-unit { margin-left: 3px; }
 @media (max-height: 600px) {
-  .settings-editor .settings-preview-card { flex-basis: 140px; }
+  .settings-editor .settings-preview-card { max-height: 46%; }
   .settings-editor .settings-preview-heading, .settings-editor .settings-preview-meta { padding-block: 3px; }
 }
 @supports (corner-shape: squircle) {

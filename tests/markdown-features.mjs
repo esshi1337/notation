@@ -73,6 +73,20 @@ try {
     assert.equal(calloutKind('CUSTOM'), 'information');
     assert.ok(types.every(t => calloutIcon(t).includes('stroke="currentColor"')));
   });
+  check('frontmatter lists of plain values render as escaped chips, tags with a hash, other values as text', () => {
+    const html = renderMarkdown('---\ntags: [audit, ui, "<b>x</b>", "#kept"]\naliases: [One, 2, true]\nnested: [[1, 2], {a: 1}]\nempty: []\ntitle: Plain\n---\nBody').html;
+    assert.match(html, /<dt>tags<\/dt><dd><ul class="frontmatter-chips"><li class="frontmatter-chip">#audit<\/li><li class="frontmatter-chip">#ui<\/li><li class="frontmatter-chip">#&lt;b&gt;x&lt;\/b&gt;<\/li><li class="frontmatter-chip">#kept<\/li><\/ul><\/dd>/);
+    assert.match(html, /<dt>aliases<\/dt><dd><ul class="frontmatter-chips"><li class="frontmatter-chip">One<\/li><li class="frontmatter-chip">2<\/li><li class="frontmatter-chip">true<\/li><\/ul><\/dd>/);
+    // Nested and empty lists keep the escaped text form.
+    assert.match(html, /<dt>nested<\/dt><dd>\[\[1,2\],\{&quot;a&quot;:1\}\]<\/dd>/);
+    assert.match(html, /<dt>empty<\/dt><dd>\[\]<\/dd>/);
+    assert.match(html, /<dt>title<\/dt><dd>Plain<\/dd>/);
+    assert.doesNotMatch(html, /<b>x<\/b>/);
+    const many = renderMarkdown('---\ntags: [' + Array.from({ length: 30 }, (_, index) => 't' + index).join(', ') + ']\nlong: ["' + 'x'.repeat(80) + '"]\n---\n').html;
+    assert.equal((many.match(/class="frontmatter-chip"/g) ?? []).length, 25);
+    assert.match(many, /<li class="frontmatter-chip frontmatter-chip-more">\+6 more<\/li>/);
+    assert.match(many, /title="x{80}">x{60}…<\/li>/);
+  });
   check('nested thematic breaks never become frontmatter and unclosed YAML keeps body visible', () => {
     assert.equal(renderMarkdown('> [!note]\n> ---\n> hello\n> ---').frontmatter, null);
     const result = renderMarkdown('---\ntitle: unfinished\n\n# Visible\n\n[] task');

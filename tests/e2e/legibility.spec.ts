@@ -120,3 +120,60 @@ test('the first preview heading scales with the pane and content under the statu
   });
   expect(result).toEqual({ paneEndsAtBar: true, hit: true });
 });
+
+test('frontmatter lists show as wrapping chips in Preview and Live Preview', async ({ page }) => {
+  await page.setViewportSize({ width: 720, height: 480 });
+  await page.goto('/');
+  await source(page).fill(['---', 'title: Chips', 'tags: [audit, ui, very-long-tag-name-that-should-wrap-or-truncate-gracefully-somewhere]', 'status: draft', '---', '', 'Body'].join('\n'));
+  for (const [mode, scope] of [['Split', '.preview-pane'], ['Live Preview', '.cm-live-frontmatter']] as const) {
+    await runCommand(page, mode);
+    const block = page.locator(scope + ' .frontmatter-properties, ' + scope + '.frontmatter-properties').first();
+    await expect(block).toBeVisible();
+    const chips = block.locator('.frontmatter-chip');
+    await expect(chips).toHaveText(['#audit', '#ui', '#very-long-tag-name-that-should-wrap-or-truncate-gracefully-s…']);
+    await expect(block).not.toContainText('["');
+    await expect(block.locator('dd').last()).toHaveText('draft');
+    // Chips are pills that stay inside the block, however long.
+    await expect(chips.first()).toHaveCSS('border-top-style', 'solid');
+    expect(await block.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      return [...element.querySelectorAll('.frontmatter-chip')].every((chip) => { const item = chip.getBoundingClientRect(); return item.left >= box.left && item.right <= box.right + 0.5; }) && element.scrollWidth <= element.clientWidth + 1;
+    }), mode).toBe(true);
+  }
+});
+
+test('the Settings editor specimen is fully visible by default and scrolls only when oversized', async ({ page }) => {
+  for (const size of [{ width: 1440, height: 900 }, { width: 720, height: 480 }]) {
+    await page.setViewportSize(size);
+    await page.goto('/');
+    await openSettings(page);
+    const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+    await settings.getByRole('tab', { name: 'Editor', exact: true }).click();
+    const fits = () => settings.evaluate((dialog) => {
+      const stage = dialog.querySelector('.settings-specimen-stage')!, page = dialog.querySelector('.settings-specimen-page')!.getBoundingClientRect();
+      const card = dialog.querySelector('.settings-preview-card')!.getBoundingClientRect(), content = dialog.querySelector('.settings-content')!.getBoundingClientRect();
+      return { scrolls: stage.scrollHeight > stage.clientHeight + 1, visible: page.bottom <= stage.getBoundingClientRect().bottom + 0.5, inside: card.bottom <= content.bottom + 0.5, share: card.height / content.height };
+    });
+    const box = await settings.boundingBox();
+    if (size.height >= 900) {
+      // Every layout's specimen is shown whole at the default font settings.
+      for (const layout of ['Source', 'Split', 'Preview', 'Live Preview']) {
+        await settings.getByRole('combobox', { name: 'Layout', exact: true }).click();
+        await settings.getByRole('option', { name: new RegExp('^' + layout + '$') }).click();
+        const state = await fits();
+        expect({ layout, scrolls: state.scrolls, visible: state.visible, inside: state.inside }).toEqual({ layout, scrolls: false, visible: true, inside: true });
+      }
+    }
+    // An oversized specimen scrolls inside its card; the dialog does not grow.
+    const font = settings.getByRole('spinbutton', { name: 'Font size', exact: true });
+    await font.fill('24'); await font.press('Enter');
+    const lineHeight = settings.getByRole('spinbutton', { name: 'Line height', exact: true });
+    await lineHeight.fill('2.2'); await lineHeight.press('Enter');
+    const large = await fits();
+    expect(large.inside).toBe(true);
+    expect(large.share).toBeLessThanOrEqual(0.61);
+    expect(await settings.boundingBox()).toEqual(box);
+    // The scrollable controls above the specimen keep a usable height.
+    expect(await settings.locator('.settings-editor-controls').evaluate((element) => element.clientHeight)).toBeGreaterThanOrEqual(110);
+  }
+});
