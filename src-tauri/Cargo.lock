@@ -2148,6 +2148,7 @@ dependencies = [
  "base64 0.22.1",
  "landlock",
  "libc",
+ "objc2",
  "percent-encoding",
  "pulldown-cmark",
  "regex",

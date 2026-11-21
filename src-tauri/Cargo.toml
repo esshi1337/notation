@@ -41,6 +41,11 @@ tauri-plugin-dialog = { version = "2", optional = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"
 
+# Only to answer `applicationShouldTerminate:` (see `quit_guard` in lib.rs);
+# the same version the window library already brings in.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+
 [dev-dependencies]
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 

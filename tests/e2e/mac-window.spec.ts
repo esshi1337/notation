@@ -17,6 +17,8 @@ async function openDesktop(page: Page, platform: 'MacIntel' | 'Linux x86_64') {
     Object.assign(window, {
       menuShortcuts: [],
       presented: [],
+      quitGuard: [],
+      failPersist: false,
       isTauri: true,
       emitTauri(event: string, payload: unknown) {
         const handlers = listeners.get(event) ?? [];
@@ -33,6 +35,8 @@ async function openDesktop(page: Page, platform: 'MacIntel' | 'Linux x86_64') {
           if (cmd === 'plugin:event|listen') { const event = String(args.event); listeners.set(event, [...(listeners.get(event) ?? []), Number(args.handler)]); return Number(args.handler); }
           if (cmd === 'present_main_window') { (window as unknown as { presented: unknown[] }).presented.push({ background: args.background, theme: args.theme }); return null; }
           if (cmd === 'set_menu_shortcuts') { (window as unknown as { menuShortcuts: unknown[] }).menuShortcuts.push(args.shortcuts); return null; }
+          if (cmd === 'set_quit_guard') { (window as unknown as { quitGuard: boolean[] }).quitGuard.push(Boolean(args.needed)); return null; }
+          if (cmd === 'persist_state' && (window as unknown as { failPersist: boolean }).failPersist) throw new Error('disk full');
           if (cmd === 'launch_ready') return [];
           return null;
         },
@@ -169,4 +173,30 @@ test('a browser tab never asks to present a window', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('textbox', { name: 'Document source' })).toBeVisible();
   expect(await page.evaluate(() => 'presented' in window)).toBe(false);
+});
+
+const quitGuard = (page: Page) => page.evaluate(() => (window as unknown as { quitGuard: boolean[] }).quitGuard);
+
+test('macOS tells the backend when a system quit must go through the close guard', async ({ page }) => {
+  await openDesktop(page, 'MacIntel');
+  const source = page.getByRole('textbox', { name: 'Document source' });
+  await expect(source).toBeVisible();
+  // A failed state write needs the guard (it holds the recovery prompt).
+  await page.evaluate(() => { (window as unknown as { failPersist: boolean }).failPersist = true; });
+  await source.click();
+  await page.keyboard.type('unsaved words');
+  await expect.poll(async () => (await quitGuard(page)).at(-1)).toBe(true);
+  // Once writes succeed again nothing is pending and a system quit may proceed.
+  await page.evaluate(() => { (window as unknown as { failPersist: boolean }).failPersist = false; });
+  await page.keyboard.type(' more');
+  await expect.poll(async () => (await quitGuard(page)).at(-1), { timeout: 15000 }).toBe(false);
+});
+
+test('other platforms never report a quit guard', async ({ page }) => {
+  await openDesktop(page, 'Linux x86_64');
+  const source = page.getByRole('textbox', { name: 'Document source' });
+  await source.click();
+  await page.keyboard.type('words');
+  await page.waitForTimeout(1500);
+  expect(await quitGuard(page)).toEqual([]);
 });
