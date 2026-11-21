@@ -3,7 +3,7 @@
 use crate::{
     assets,
     engine_process::{self, JobSpec},
-    frontmatter,
+    frontmatter, math_export,
     storage::Database,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -535,6 +535,12 @@ impl Runtime {
             total: 0,
         };
         walk_images(&mut ast, &mut media)?;
+        let mut warnings = Vec::new();
+        if let Some(warning) =
+            self.export_typst_math(&mut ast, request.format, &ticket, temp.path(), deadline)?
+        {
+            warnings.push(warning);
+        }
         if let Some(title) = request.title {
             if title.len() > 512 {
                 return Err("Export title exceeds 512 bytes.".into());
@@ -557,7 +563,6 @@ impl Runtime {
         )
         .map_err(|error| error.to_string())?;
         let output_name = format!("output.{}", request.format.extension());
-        let mut warnings = Vec::new();
         let mut arguments = vec![
             "--from=json".into(),
             "document.json".into(),
@@ -637,6 +642,133 @@ impl Runtime {
             warning: (!warnings.is_empty())
                 .then(|| warnings.join("\n").chars().take(8192).collect()),
         })
+    }
+    /// Rewrite the Typst equations the frontend marked (see `math_export`).
+    /// Returns a warning when some could not become Office equations.
+    fn export_typst_math(
+        &self,
+        ast: &mut Value,
+        format: Format,
+        ticket: &Ticket,
+        temp: &Path,
+        deadline: Instant,
+    ) -> Result<Option<String>, String> {
+        let equations = math_export::equations(ast)?;
+        if equations.is_empty() {
+            return Ok(None);
+        }
+        let markup = equations
+            .iter()
+            .map(math_export::markup)
+            .collect::<Result<Vec<_>, _>>()?;
+        if matches!(format, Format::Pdf) {
+            // The PDF engine is Typst: hand the equation over as written.
+            let raw = markup.iter().map(|text| math_export::raw_typst(text));
+            math_export::replace(ast, raw.collect())?;
+            return Ok(None);
+        }
+        // Office needs TeX. Pandoc's Typst reader derives it; an equation it
+        // cannot read is isolated by bisection so the rest still convert.
+        let mut tex = vec![None; markup.len()];
+        let mut runs = 48;
+        self.typst_math_to_tex(&markup, 0, &mut tex, &mut runs, ticket, temp, deadline)?;
+        let (mut images, mut sources) = (0, 0);
+        let mut replacements = Vec::with_capacity(equations.len());
+        for (index, equation) in equations.iter().enumerate() {
+            check(ticket, deadline)?;
+            if let Some(tex) = &tex[index] {
+                replacements.push(math_export::tex_math(tex, equation.display));
+                continue;
+            }
+            let name = format!("typst-math-{}.png", index + 1);
+            // Pandoc's slide writer drops images that sit inside a sentence.
+            let drawn = matches!(format, Format::Docx)
+                && images < 100
+                && equation.width > 0.0
+                && equation.height > 0.0
+                && equation.svg.as_deref().is_some_and(|svg| {
+                    svg.len() <= 1024 * 1024
+                        && raster_svg(svg, &temp.join(&name), &self.directory).is_ok()
+                });
+            if drawn {
+                images += 1;
+                replacements.push(math_export::image(&name, equation));
+            } else {
+                sources += 1;
+                replacements.push(math_export::code(equation));
+            }
+        }
+        math_export::replace(ast, replacements)?;
+        Ok(match (images, sources) {
+            (0, 0) => None,
+            _ => Some(format!(
+                "{} Typst equation(s) could not be converted to Office equations: {images} embedded as images, {sources} as source text.",
+                images + sources
+            )),
+        })
+    }
+    /// Convert `markup[..]` (document positions `offset..`) to TeX in one
+    /// Pandoc run, halving the batch while a run fails. `runs` bounds the work.
+    #[allow(clippy::too_many_arguments)]
+    fn typst_math_to_tex(
+        &self,
+        markup: &[String],
+        offset: usize,
+        tex: &mut [Option<String>],
+        runs: &mut usize,
+        ticket: &Ticket,
+        temp: &Path,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        if markup.is_empty() || *runs == 0 {
+            return Ok(());
+        }
+        *runs -= 1;
+        fs::write(temp.join("equations.typ"), math_export::batch(markup))
+            .map_err(|error| error.to_string())?;
+        let read = self.run(
+            ticket,
+            temp,
+            "bin/pandoc",
+            vec![
+                "--from=typst".into(),
+                "--to=json".into(),
+                "equations.typ".into(),
+            ],
+            EngineIo {
+                input: None,
+                limit: 16 * 1024 * 1024,
+            },
+            deadline,
+        );
+        // A canceled or timed-out export stops here; a rejected equation does not.
+        check(ticket, deadline)?;
+        let converted = read
+            .ok()
+            .and_then(|output| serde_json::from_slice::<Value>(&output.stdout).ok())
+            .and_then(|document| math_export::converted(&document, markup.len()));
+        if let Some(converted) = converted {
+            for (index, text) in converted.into_iter().enumerate() {
+                // Pandoc reads drawing functions as nothing at all; an empty
+                // equation is a failed conversion, not a result.
+                tex[offset + index] = (!text.trim().is_empty()).then_some(text);
+            }
+            return Ok(());
+        }
+        if markup.len() == 1 {
+            return Ok(());
+        }
+        let middle = markup.len() / 2;
+        self.typst_math_to_tex(&markup[..middle], offset, tex, runs, ticket, temp, deadline)?;
+        self.typst_math_to_tex(
+            &markup[middle..],
+            offset + middle,
+            tex,
+            runs,
+            ticket,
+            temp,
+            deadline,
+        )
     }
     pub fn citations(
         &self,

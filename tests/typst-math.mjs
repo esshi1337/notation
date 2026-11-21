@@ -22,7 +22,7 @@ async function test(name, run) { await run(); passed++; console.log('✓ ' + nam
 // The app's exact KaTeX options (src/math.ts).
 const latexRenders = (source, display) => { try { katex.renderToString(source, { displayMode: !!display, throwOnError: true, trust: false, strict: 'error', maxExpand: 200, maxSize: 20, output: 'htmlAndMathml' }); return true; } catch { return false; } };
 
-const fontBytes = readFileSync(new URL('../src/assets/typst/NewCMMath-Regular.otf', import.meta.url));
+const fontBytes = readFileSync(new URL('../src/assets/typst/NewCMMath-Book.otf', import.meta.url));
 const wasm = (name) => readFileSync(new URL('../node_modules/@myriaddreamin/' + name, import.meta.url));
 const requests = [];
 const realFetch = globalThis.fetch;
@@ -51,7 +51,7 @@ async function typst(source, display) {
 }
 
 await test('the bundled math font is the pinned typst-assets v0.15.1 file', () => {
-  assert.equal(createHash('sha256').update(fontBytes).digest('hex'), 'd66ac1cc91c55c24d3636ae2df1238076debdff51841f9893fc5419cc2df3df7');
+  assert.equal(createHash('sha256').update(fontBytes).digest('hex'), '2ea09ebc9167b1e1a66f31390dc917f2d4004ecfca72d51b28010e4ad6becd95');
 });
 await test('every real-world LaTeX snippet is detected and still renders with KaTeX in auto mode', () => {
   for (const { s, d } of LATEX) {

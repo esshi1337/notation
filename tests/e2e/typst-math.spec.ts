@@ -53,7 +53,7 @@ test('the Typst engine is loaded only when a note contains Typst math', async ({
   await settledPreview(page, 1);
   expect(await engines(page)).toEqual(['typst']);
   expect(loaded.some((url) => url.includes('typst_ts_web_compiler_bg'))).toBe(true);
-  expect(loaded.some((url) => url.includes('NewCMMath-Regular'))).toBe(true);
+  expect(loaded.some((url) => url.includes('NewCMMath-Book'))).toBe(true);
 });
 
 test('invalid math shows a localized error from the engine that owns it', async ({ page }) => {
@@ -269,4 +269,54 @@ test('self-contained HTML export embeds Typst math as SVG and LaTeX math as KaTe
   const colours = await offline.evaluate(() => ({ ink: getComputedStyle(document.querySelector('svg.typst-math-svg path')!).fill, text: getComputedStyle(document.querySelector('main p')!).color }));
   expect(colours.ink).toBe(colours.text);
   await offline.close();
+});
+
+test('the native converter receives Typst equations as source markers and LaTeX as TeX', async ({ page }) => {
+  const markdown = '# Converter\n\nTypst $a/b$ and LaTeX $\\frac{1}{2}$.\n\n$$\nsum_(i=1)^n x_i\n$$\n\nMid-sentence $$x^2$$ display.\n';
+  await source(page).fill(markdown);
+  await settledPreview(page, 4);
+  const result = await page.evaluate(async (text) => {
+    const { buildHtmlExport } = await import('/src/export-html.ts');
+    const { prepareConverterHtml } = await import('/src/export-converter.ts');
+    const built = await buildHtmlExport({ name: 'converter.md', text, documentId: 1 }, { format: 'self-contained', theme: 'light' });
+    const pdf = prepareConverterHtml(built.html), office = prepareConverterHtml(built.html, { images: true });
+    const markers = (content: string) => {
+      const template = document.createElement('template'); template.innerHTML = content;
+      return Array.from(template.content.querySelectorAll<HTMLElement>('span.notation-typst-math'), (marker) => ({
+        typst: marker.dataset.typst, display: marker.dataset.display, width: Number(marker.dataset.width), height: Number(marker.dataset.height),
+        svg: marker.dataset.svg ?? null, parent: marker.parentElement?.localName ?? null, alone: marker.parentElement?.childNodes.length === 1, empty: marker.childNodes.length === 0,
+        picture: (() => {
+          if (!marker.dataset.svg) return null;
+          const root = new DOMParser().parseFromString(marker.dataset.svg, 'image/svg+xml').documentElement;
+          return { root: root.localName, invalid: !!root.querySelector('parsererror'), width: Number(root.getAttribute('width')), height: Number(root.getAttribute('height')), paths: root.querySelectorAll('path').length };
+        })(),
+      }));
+    };
+    return { pdf: markers(pdf.content), office: markers(office.content), pdfContent: pdf.content, assets: [pdf.assets.length, office.assets.length] };
+  }, markdown);
+  expect(result.pdf.map((marker) => [marker.typst, marker.display])).toEqual([['a/b', '0'], ['sum_(i=1)^n x_i', '1'], ['x^2', '1']]);
+  // A block equation is a paragraph of its own; the others stay in their sentence.
+  expect(result.pdf.map((marker) => [marker.parent, marker.alone])).toEqual([['p', false], ['p', true], ['p', false]]);
+  for (const marker of result.pdf) {
+    expect(marker.empty).toBe(true);
+    expect(marker.width).toBeGreaterThan(3);
+    expect(marker.height).toBeGreaterThan(3);
+    // PDF needs no picture: the Typst engine typesets the source.
+    expect(marker.svg).toBeNull();
+  }
+  expect(result.pdfContent).toContain('\\(\\frac{1}{2}\\)');
+  expect(result.pdfContent).not.toMatch(/<svg|typst-math-svg|class="katex"/u);
+  // Equations are not figures: they do not use the 100-asset budget.
+  expect(result.assets).toEqual([0, 0]);
+  for (const [index, marker] of result.office.entries()) {
+    expect(marker.typst).toBe(result.pdf[index].typst);
+    // A standalone SVG: black ink at four times the point size, with nothing page-specific left.
+    expect(marker.picture).toMatchObject({ root: 'svg', invalid: false });
+    expect(marker.picture!.width).toBeCloseTo(marker.width * 4, 1);
+    expect(marker.picture!.height).toBeCloseTo(marker.height * 4, 1);
+    expect(marker.picture!.paths).toBeGreaterThan(0);
+    expect(marker.svg).toContain('xmlns="http://www.w3.org/2000/svg"');
+    expect(marker.svg).toContain('#000000');
+    expect(marker.svg).not.toMatch(/currentColor|style=|class=|<script|href=/u);
+  }
 });

@@ -11,6 +11,7 @@ pub mod git;
 pub mod instance;
 pub mod language_server;
 pub mod launch;
+pub mod math_export;
 pub mod mcp;
 pub mod search_graph;
 #[cfg(unix)]
