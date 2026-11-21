@@ -198,3 +198,71 @@ test('tabs with the same name show what tells them apart without changing their 
   await expect(tabs.getByRole('tab', { name: 'untitled.md', exact: true })).toHaveCount(3);
   await expect(tabs.getByRole('tab', { name: 'notes.md', exact: true })).toHaveCount(2);
 });
+
+test('hidden tabs are counted on an overflow button whose menu reaches them', async ({ page }) => {
+  await page.setViewportSize({ width: 1060, height: 650 });
+  await openManyTabs(page);
+  const tabs = page.getByRole('tablist', { name: 'Documents' });
+  const overflow = page.locator('.tab-overflow-button');
+  const menu = page.getByRole('menu', { name: 'Hidden tabs', exact: true });
+  const hiddenCount = () => tabs.evaluate((element) => {
+    const host = element.getBoundingClientRect();
+    return [...element.querySelectorAll('.document-tab')].filter((tab) => { const box = tab.getBoundingClientRect(); return box.left < host.left - 1 || box.right > host.right + 1; }).length;
+  });
+  await expect(overflow).toBeVisible();
+  const initial = await hiddenCount();
+  expect(initial).toBeGreaterThan(8);
+  await expect(overflow).toHaveText('+' + initial);
+  await expect(overflow).toHaveAttribute('aria-label', `Show ${initial} hidden tabs`);
+  await expectContainedHeader(page);
+
+  // The count follows scrolling.
+  await tabs.hover();
+  await page.mouse.wheel(0, 400);
+  await expect.poll(async () => (await overflow.textContent())?.trim()).toBe('+' + await hiddenCount());
+
+  // Pointer: the menu lists exactly the hidden tabs; choosing one reveals it.
+  await page.mouse.wheel(0, -10000);
+  await expect(overflow).toHaveText('+' + initial);
+  await overflow.click();
+  await expect(menu).toBeVisible();
+  await expect(menu).toBeFocused();
+  await expect(menu.getByRole('menuitem')).toHaveCount(initial);
+  const last = '17 A longer document name.md';
+  await menu.getByRole('menuitem', { name: last, exact: true }).click();
+  await expect(menu).toHaveCount(0);
+  const chosen = tabs.getByRole('tab', { name: last, exact: true });
+  await expect(chosen).toHaveAttribute('aria-selected', 'true');
+  await expect(chosen).toBeFocused();
+  await expect.poll(() => tabs.evaluate((element) => {
+    const host = element.getBoundingClientRect(), active = element.querySelector('.document-tab.active')!.getBoundingClientRect();
+    return active.left >= host.left - 1 && active.right <= host.right + 1;
+  })).toBe(true);
+  await expect(menu.getByRole('menuitem', { name: last, exact: true })).toHaveCount(0);
+
+  // Keyboard: Enter opens on the first hidden tab, arrows move, Escape returns focus.
+  await overflow.focus();
+  await page.keyboard.press('Enter');
+  await expect(menu.getByRole('menuitem').first()).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(menu.getByRole('menuitem').nth(1)).toBeFocused();
+  await page.keyboard.press('End');
+  await expect(menu.getByRole('menuitem').last()).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await expect(overflow).toBeFocused();
+
+  // Narrow windows keep every header control on screen with the button present.
+  for (const width of [720, 480, 360]) {
+    await page.setViewportSize({ width, height: 650 });
+    await expect(overflow).toBeVisible();
+    await expectContainedHeader(page);
+  }
+  // When everything fits the button goes away.
+  await page.setViewportSize({ width: 1266, height: 650 });
+  for (let count = await tabs.getByRole('tab').count(); count > 3; count--) {
+    await tabs.locator('.document-tab.active .tab-close').click();
+    await expect(tabs.getByRole('tab')).toHaveCount(count - 1);
+  }
+  await expect(overflow).toHaveCount(0);
+});

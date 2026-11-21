@@ -156,8 +156,8 @@
    underneath an open header menu or modal dialog would draw its thumb across
    that surface. Hide those thumbs while the surface is open; scrollers inside
    the dialog keep theirs. main.ts sets data-scrollbars. */
-:root[data-scrollbars='overlay'] .app:has(> .workspace-bar :is(.compact-menu, .workspace-list)) > .content-area,
-:root[data-scrollbars='overlay'] .app:has(> .workspace-bar :is(.compact-menu, .workspace-list)) > .content-area *,
+:root[data-scrollbars='overlay'] .app:has(> .workspace-bar :is(.compact-menu, .workspace-list, .tab-overflow-menu)) > .content-area,
+:root[data-scrollbars='overlay'] .app:has(> .workspace-bar :is(.compact-menu, .workspace-list, .tab-overflow-menu)) > .content-area *,
 :root[data-scrollbars='overlay']:has(dialog[open]) .app > :not(dialog),
 :root[data-scrollbars='overlay']:has(dialog[open]) .app > :not(dialog) * {
   scrollbar-color: transparent transparent;
@@ -173,9 +173,9 @@
 .workspace-bar .document-tabs-wrap { display: flex; align-items: center; gap: 4px; flex: 1 1 0; min-width: 0; height: var(--control-size); }
 .document-tabs { position: relative; display: flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 0; height: var(--control-size); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 /* Tabs scrolled out of view fade at the edge they continue past. */
-.document-tabs[data-fade='start'] { -webkit-mask-image: linear-gradient(to right, transparent, #000 28px); mask-image: linear-gradient(to right, transparent, #000 28px); }
-.document-tabs[data-fade='end'] { -webkit-mask-image: linear-gradient(to left, transparent, #000 28px); mask-image: linear-gradient(to left, transparent, #000 28px); }
-.document-tabs[data-fade='both'] { -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
+.document-tabs[data-fade='start'] { -webkit-mask-image: linear-gradient(to right, transparent, #0006 14px, #000 52px); mask-image: linear-gradient(to right, transparent, #0006 14px, #000 52px); }
+.document-tabs[data-fade='end'] { -webkit-mask-image: linear-gradient(to left, transparent, #0006 14px, #000 52px); mask-image: linear-gradient(to left, transparent, #0006 14px, #000 52px); }
+.document-tabs[data-fade='both'] { -webkit-mask-image: linear-gradient(to right, transparent, #0006 14px, #000 52px, #000 calc(100% - 52px), #0006 calc(100% - 14px), transparent); mask-image: linear-gradient(to right, transparent, #0006 14px, #000 52px, #000 calc(100% - 52px), #0006 calc(100% - 14px), transparent); }
 /* One background slides between tabs instead of each tab switching its own. */
 .tab-indicator { position: absolute; z-index: 0; top: 0; left: 0; height: 100%; border-radius: var(--radius-control); background: var(--hover); pointer-events: none; }
 .tab-indicator.sliding { transition: transform var(--motion-base) var(--ease-out), width var(--motion-base) var(--ease-out); }
@@ -190,6 +190,13 @@
 .tab-context { flex: 0 1 auto; min-width: 2ch; max-width: 45%; margin-left: -2px; overflow: hidden; color: var(--subtle); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .document-tab .tab-close { display: grid; place-items: center; flex: 0 0 24px; width: 24px; height: 24px; margin-right: 3px; padding: 0; border-radius: var(--radius-control); color: var(--muted); opacity: .55; }
 .document-tab:hover .tab-close, .document-tab.active .tab-close { opacity: 1; }
+.tab-overflow { position: relative; flex: 0 0 auto; }
+.tab-overflow-button { display: flex; align-items: center; gap: 2px; height: var(--control-size); padding: 0 6px 0 8px; border-radius: var(--radius-control); color: var(--muted); font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 12px; line-height: 18px; }
+.tab-overflow-button[aria-expanded='true'] { background: var(--hover); color: var(--heading); }
+.tab-overflow-menu { position: absolute; z-index: 50; top: calc(100% + 7px); right: 0; width: max-content; min-width: 220px; max-width: min(340px, calc(100vw - 12px)); max-height: min(420px, calc(100dvh - 60px)); overflow: auto; overscroll-behavior: contain; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-menu); background: var(--menu); box-shadow: 0 12px 40px #0006; }
+.tab-overflow-menu:focus-visible { outline: none; }
+.tab-overflow-menu button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: var(--menu-row-height); padding: 5px 10px; border-radius: var(--radius-control); color: var(--text); font-size: 13px; line-height: 20px; text-align: left; }
+.tab-overflow-menu button:focus-visible { background: var(--hover); outline: 1px solid var(--muted); outline-offset: -1px; }
 .new-tab-button { display: grid; place-items: center; flex: 0 0 var(--control-size); width: var(--control-size); height: var(--control-size); padding: 0; border-radius: var(--radius-control); color: var(--muted); }
 .focus-mode .document-tab:not(.active) { display: none; }
 .commands-trigger { display: flex; align-items: center; gap: 8px; flex: 0 0 156px; width: 156px; height: var(--control-size); padding: 0 6px; border-radius: var(--radius-control); color: var(--text); font-size: 13px; line-height: 20px; }
