@@ -90,6 +90,8 @@
         if (ticket !== generation || !container) return;
         container.textContent = `Preview error: ${error instanceof Error ? error.message : String(error)}`;
         rendering = false;
+        // Never apply an anchor from before the failure to a later render.
+        pendingLine = null;
       });
     }, 180);
   });
