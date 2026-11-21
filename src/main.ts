@@ -2,7 +2,7 @@ import { mount } from 'svelte';
 import './style.css';
 import './motion.css';
 import { isTauri } from '@tauri-apps/api/core';
-import { trackInputModality } from './motion';
+import { followMotionPreference, trackInputModality } from './motion';
 import { markOverlayScrollbars } from './scrollbars';
 
 // Sticky windows and the main window share the pointer/keyboard focus-ring rule.
@@ -19,6 +19,8 @@ if (label.startsWith('sticky-') || query.has('sticky')) {
   const id = query.get('sticky') ?? '';
   if (isTauri() && /^[a-f0-9]{32}$/u.test(id) && label === `sticky-${id}`) {
     const { default: StickyNote } = await import('./StickyNote.svelte');
+    // Follow the main window's Reduce motion and Performance mode settings.
+    followMotionPreference();
     target.textContent = '';
     mount(StickyNote, { target, props: { id } });
   } else target.textContent = 'Sticky notes require a matching native desktop window.';

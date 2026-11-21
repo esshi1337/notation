@@ -541,3 +541,18 @@ test('changing the view mode fades the editor area once and nothing else does', 
   await expect(layout).toContainText('Split');
   expect(await fades()).toHaveLength(2);
 });
+
+test('the main window publishes its motion preference for sticky windows', async ({ page }) => {
+  await page.goto('/');
+  const stored = () => page.evaluate(() => localStorage.getItem('notation.motion'));
+  await expect.poll(stored).toBe('full');
+  await openSettings(page);
+  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await settings.getByRole('checkbox', { name: 'Reduce motion', exact: true }).check();
+  await expect.poll(stored).toBe('reduce');
+  await settings.getByRole('checkbox', { name: 'Reduce motion', exact: true }).uncheck();
+  await expect.poll(stored).toBe('full');
+  await settings.getByRole('tab', { name: 'Editor', exact: true }).click();
+  await settings.getByRole('checkbox', { name: 'Performance mode', exact: true }).check();
+  await expect.poll(stored).toBe('reduce');
+});

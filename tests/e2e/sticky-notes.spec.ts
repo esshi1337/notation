@@ -776,3 +776,24 @@ test('multiple failures stay scrollable inside the minimum window without displa
   await errors.getByRole('alert').filter({ hasText: 'disk full' }).getByRole('button', { name: 'Retry', exact: true }).click();
   await expect.poll(async () => (await mockState(page)).updates.at(-1)?.text).toBe('Keep writing visible');
 });
+
+test('a sticky window follows the main window\'s Reduce motion setting on open and when it changes', async ({ page }) => {
+  await page.addInitScript(() => { if (!sessionStorage.getItem('seeded')) { localStorage.setItem('notation.motion', 'reduce'); sessionStorage.setItem('seeded', '1'); } });
+  await stickyWindow(page, { note: { title: 'Motion', text: 'Body', html: null, color: 'yellow' } });
+  await expect(page.getByRole('textbox', { name: 'Sticky text' })).toBeEnabled();
+  const root = page.locator('html');
+  const token = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--motion-base').trim());
+  await expect(root).toHaveAttribute('data-motion', 'reduce');
+  expect(await token()).toBe('0ms');
+  // With motion off the options popover appears without an animation.
+  await page.getByRole('button', { name: 'Note options', exact: true }).click();
+  expect(await page.locator('#note-options').evaluate((element) => element.getAnimations().length)).toBe(0);
+
+  // The main window turns motion back on: another document's write arrives as a storage event.
+  await page.evaluate(() => { localStorage.setItem('notation.motion', 'full'); window.dispatchEvent(new StorageEvent('storage', { key: 'notation.motion', newValue: 'full' })); });
+  await expect(root).toHaveAttribute('data-motion', 'full');
+  expect(await token()).toBe('180ms');
+  // A missed event is picked up when the window regains focus.
+  await page.evaluate(() => { localStorage.setItem('notation.motion', 'reduce'); window.dispatchEvent(new Event('focus')); });
+  await expect(root).toHaveAttribute('data-motion', 'reduce');
+});
