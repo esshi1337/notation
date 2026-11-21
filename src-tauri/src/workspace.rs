@@ -2,7 +2,7 @@
 use crate::storage::{clear_cache, Database, MAX_CONTENT};
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use regex::Regex;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
@@ -182,164 +182,229 @@ impl Database {
         // Resolve every link before taking the database lock: resolution only
         // needs the scanned note set, and other commands wait on that lock.
         let lookup = crate::wiki::NoteLookup::new(&notes);
-        let mut graph_refs = 0;
-        let mut block_refs = 0;
+        let mut limits = ReferenceLimits::default();
         let mut resolved_files = Vec::with_capacity(files.len());
         for file in &files {
-            let mut blocks = 0;
-            for _ in &file.metadata.blocks {
-                if block_refs >= 100000 {
-                    report_error(
-                        &mut report,
-                        "Workspace block references exceeded the 100,000 reference limit.",
-                    );
-                    break;
-                }
-                block_refs += 1;
-                blocks += 1;
-            }
-            let mut links = Vec::new();
-            for (line, text, target, wiki) in &file.metadata.links {
-                if graph_refs >= 100000 {
-                    report_error(
-                        &mut report,
-                        "Workspace links exceeded the 100,000 reference limit.",
-                    );
-                    break;
-                }
-                let Some((display, heading, alias)) =
-                    crate::wiki::scoped_link(&root, &file.path, target, *wiki)
-                else {
-                    continue;
-                };
-                graph_refs += 1;
-                let matches = if *wiki {
-                    lookup.matches(&root, &file.path, target)
-                } else if display.is_empty() {
-                    vec![file.path.clone()]
-                } else {
-                    link_target(&root, &file.path, target, false, &paths)
-                        .into_iter()
-                        .collect::<Vec<_>>()
-                };
-                let resolved =
-                    (matches.len() == 1).then(|| matches[0].to_string_lossy().into_owned());
-                let status = match matches.len() {
-                    0 => "missing",
-                    1 => "resolved",
-                    _ => "ambiguous",
-                };
-                let candidates = if matches.len() > 1 {
-                    matches
-                        .iter()
-                        .map(|path| path.to_string_lossy().into_owned())
-                        .collect::<Vec<_>>()
-                } else {
-                    vec![]
-                };
-                links.push(ResolvedLink {
-                    line: *line,
-                    text,
-                    display,
-                    wiki: *wiki,
-                    resolved,
-                    status,
-                    candidates: serde_json::to_string(&candidates)
-                        .map_err(|error| error.to_string())?,
-                    heading,
-                    alias,
-                });
-            }
-            resolved_files.push((blocks, links));
+            resolved_files.push(resolve_references(
+                file,
+                &root,
+                &lookup,
+                &paths,
+                &mut limits,
+                &mut report,
+            )?);
         }
+        // Later saves may update single notes in place only when this rebuild
+        // indexed everything: nothing skipped, no limit reached, and no error
+        // other than the per-note YAML ones (one for each affected note).
+        let yaml_errors = files
+            .iter()
+            .filter(|file| file.metadata.frontmatter.error.is_some())
+            .count();
+        let complete = report.skipped == 0
+            && report.errors.len() < MAX_ERRORS
+            && report.errors.len() == yaml_errors;
         let mut connection = self.lock()?;
         let tx = connection
             .transaction()
             .map_err(|error| error.to_string())?;
         crate::workspace_catalog::validate_index_snapshot(&tx, &scope, revision)?;
         clear_cache(&tx)?;
-        for (file, (blocks, links)) in files.iter().zip(resolved_files) {
-            let path = file.path.to_string_lossy();
-            let name = file.path.file_name().unwrap_or_default().to_string_lossy();
-            let title = if file.metadata.title.is_empty() {
-                name.as_ref()
-            } else {
-                &file.metadata.title
+        for (file, references) in files.iter().zip(&resolved_files) {
+            insert_file(&tx, file, references, false)?;
+        }
+        if complete {
+            let baseline = Baseline {
+                workspace: scope.id.clone(),
+                revision,
+                files: report.files,
+                indexed: report.indexed,
+                errors: report.errors.clone(),
             };
             tx.execute(
-                "INSERT INTO cache_files(path,name,title,content) VALUES(?1,?2,?3,?4)",
-                params![path, name, title, file.content],
-            )
-            .map_err(|error| error.to_string())?;
-            tx.execute(
-                "INSERT INTO cache_fts(path,title,body) VALUES(?1,?2,?3)",
-                params![path, title, file.content],
-            )
-            .map_err(|error| error.to_string())?;
-            tx.execute(
-                "INSERT INTO cache_frontmatter(path,json) VALUES(?1,?2)",
+                "INSERT OR REPLACE INTO app_meta(key,value) VALUES(?1,?2)",
                 params![
-                    path,
-                    serde_json::to_string(&file.metadata.frontmatter)
-                        .map_err(|error| error.to_string())?
+                    crate::storage::INDEX_BASELINE_KEY,
+                    serde_json::to_string(&baseline).map_err(|error| error.to_string())?
                 ],
             )
             .map_err(|error| error.to_string())?;
-            if let Some(properties) = file.metadata.frontmatter.properties.as_object() {
-                for (key, value) in properties {
-                    let kind = match value {
-                        serde_json::Value::Null => "null",
-                        serde_json::Value::Bool(_) => "boolean",
-                        serde_json::Value::Number(_) => "number",
-                        serde_json::Value::String(_) => "string",
-                        serde_json::Value::Array(_) => "array",
-                        serde_json::Value::Object(_) => "object",
-                    };
-                    tx.execute("INSERT INTO cache_properties(path,key,kind,json_value) VALUES(?1,?2,?3,?4)",params![path,key,kind,value.to_string()]).map_err(|error|error.to_string())?;
-                }
-            }
-            for heading in &file.metadata.headings {
-                tx.execute(
-                    "INSERT INTO cache_headings(path,text,line,level) VALUES(?1,?2,?3,?4)",
-                    params![
-                        path,
-                        heading.text,
-                        heading.line as i64,
-                        heading.level as i64
-                    ],
-                )
-                .map_err(|error| error.to_string())?;
-            }
-            for block in file.metadata.blocks.iter().take(blocks) {
-                tx.execute(
-                    "INSERT INTO cache_blocks(path,id,line) VALUES(?1,?2,?3)",
-                    params![path, block.id, block.line as i64],
-                )
-                .map_err(|error| error.to_string())?;
-            }
-            for link in links {
-                tx.execute("INSERT INTO cache_graph_links(source_path,line,raw_target,kind,target_path,status,candidates_json,heading,alias) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![path,link.line as i64,link.display,if link.wiki{"wiki"}else{"markdown"},link.resolved,link.status,link.candidates,link.heading,link.alias]).map_err(|error|error.to_string())?;
-                if let Some(target) = link.resolved {
-                    tx.execute("INSERT INTO cache_links(source_path,line,text,target_path) VALUES(?1,?2,?3,?4)",params![path,link.line as i64,link.text,target]).map_err(|error|error.to_string())?;
-                }
-            }
-            for (line, tag) in &file.metadata.tags {
-                tx.execute(
-                    "INSERT INTO cache_tags(path,line,tag) VALUES(?1,?2,?3)",
-                    params![path, *line as i64, tag],
-                )
-                .map_err(|error| error.to_string())?;
-            }
-            for (line, text, checked) in &file.metadata.tasks {
-                tx.execute(
-                    "INSERT INTO cache_tasks(path,line,text,checked) VALUES(?1,?2,?3,?4)",
-                    params![path, *line as i64, text, checked],
-                )
-                .map_err(|error| error.to_string())?;
-            }
         }
         tx.commit().map_err(|error| error.to_string())?;
         Ok(report)
+    }
+    /// Update the index for one saved note without rescanning the workspace.
+    ///
+    /// Wiki-link resolution depends only on the set of note paths, names and
+    /// aliases. When a save changes none of those, only this note's rows can
+    /// differ from a full rebuild, so they are replaced in one transaction.
+    /// Returns `None` whenever that cannot be shown; the caller then runs the
+    /// full rebuild, exactly as every save did before.
+    pub fn index_saved_file(
+        &self,
+        path: &str,
+        content: &str,
+    ) -> Result<Option<IndexReport>, String> {
+        if content.len() > MAX_CONTENT {
+            return Ok(None);
+        }
+        let (scope, revision) = self.workspace_snapshot()?;
+        let root = scope.link_root();
+        let file = IndexedFile {
+            path: PathBuf::from(path),
+            content: content.to_string(),
+            metadata: metadata_for(Path::new(path), content),
+        };
+        if file.metadata.frontmatter.error.is_some() {
+            return Ok(None);
+        }
+        let aliases =
+            crate::frontmatter::string_list(file.metadata.frontmatter.properties.get("aliases"));
+        let mut connection = self.lock()?;
+        let tx = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        if crate::workspace_catalog::validate_index_snapshot(&tx, &scope, revision).is_err() {
+            return Ok(None);
+        }
+        // The last full rebuild must have been complete for this workspace
+        // and membership revision.
+        let baseline: Option<String> = tx
+            .query_row(
+                "SELECT value FROM app_meta WHERE key=?1",
+                [crate::storage::INDEX_BASELINE_KEY],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        let Some(baseline) = baseline
+            .and_then(|value| serde_json::from_str::<Baseline>(&value).ok())
+            .filter(|baseline| baseline.workspace == scope.id && baseline.revision == revision)
+        else {
+            return Ok(None);
+        };
+        // The note must already be indexed, without a YAML error, under the
+        // same aliases: then no other note's links can resolve differently.
+        let previous: Option<(i64, String)> = tx
+            .query_row(
+                "SELECT octet_length(f.content), m.json FROM cache_files f JOIN cache_frontmatter m ON m.path=f.path WHERE f.path=?1",
+                [path],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        let Some((previous_size, previous_frontmatter)) = previous else {
+            return Ok(None);
+        };
+        let Ok(previous_frontmatter) =
+            serde_json::from_str::<crate::frontmatter::Frontmatter>(&previous_frontmatter)
+        else {
+            return Ok(None);
+        };
+        if previous_frontmatter.error.is_some()
+            || crate::frontmatter::string_list(previous_frontmatter.properties.get("aliases"))
+                != aliases
+        {
+            return Ok(None);
+        }
+        // Stay strictly inside the rebuild's limits, so a rebuild would not
+        // have skipped or truncated anything either.
+        let count = |sql: &str, parameter: Option<&str>| -> Result<i64, String> {
+            match parameter {
+                Some(parameter) => tx.query_row(sql, [parameter], |row| row.get(0)),
+                None => tx.query_row(sql, [], |row| row.get(0)),
+            }
+            .map_err(|error| error.to_string())
+        };
+        let total = count(
+            "SELECT COALESCE(sum(octet_length(content)),0) FROM cache_files",
+            None,
+        )?;
+        if total - previous_size + content.len() as i64 >= MAX_TOTAL as i64 {
+            return Ok(None);
+        }
+        // Rebuild the lookup the full index used: every indexed note in scan
+        // order, with its aliases.
+        let mut alias_rows: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        {
+            let mut statement = tx
+                .prepare("SELECT path,json_value FROM cache_properties WHERE key='aliases'")
+                .map_err(|error| error.to_string())?;
+            let rows = statement
+                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .map_err(|error| error.to_string())?;
+            for row in rows {
+                let (note, value) = row.map_err(|error| error.to_string())?;
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(&value) else {
+                    return Ok(None);
+                };
+                alias_rows.insert(note, crate::frontmatter::string_list(Some(&value)));
+            }
+        }
+        let notes = {
+            let mut statement = tx
+                .prepare("SELECT path,name FROM cache_files ORDER BY rowid")
+                .map_err(|error| error.to_string())?;
+            let rows = statement
+                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .map_err(|error| error.to_string())?;
+            let mut notes = Vec::new();
+            for row in rows {
+                let (note, name) = row.map_err(|error| error.to_string())?;
+                let aliases = alias_rows.remove(&note).unwrap_or_default();
+                notes.push(crate::wiki::Candidate {
+                    path: note,
+                    name,
+                    title: String::new(),
+                    relative_path: String::new(),
+                    link: String::new(),
+                    aliases,
+                    headings: vec![],
+                    blocks: vec![],
+                });
+            }
+            notes
+        };
+        let paths: HashSet<PathBuf> = notes.iter().map(|note| PathBuf::from(&note.path)).collect();
+        let lookup = crate::wiki::NoteLookup::new(&notes);
+        let mut limits = ReferenceLimits::default();
+        let mut report = IndexReport::default();
+        let references =
+            resolve_references(&file, &root, &lookup, &paths, &mut limits, &mut report)?;
+        let blocks = count("SELECT count(*) FROM cache_blocks", None)?
+            - count("SELECT count(*) FROM cache_blocks WHERE path=?1", Some(path))?
+            + references.blocks as i64;
+        let links = count("SELECT count(*) FROM cache_graph_links", None)?
+            - count(
+                "SELECT count(*) FROM cache_graph_links WHERE source_path=?1",
+                Some(path),
+            )?
+            + references.links.len() as i64;
+        if blocks >= REFERENCE_LIMIT as i64 || links >= REFERENCE_LIMIT as i64 {
+            return Ok(None);
+        }
+        for statement in [
+            "DELETE FROM cache_fts WHERE rowid=(SELECT rowid FROM cache_files WHERE path=?1)",
+            "DELETE FROM cache_properties WHERE path=?1",
+            "DELETE FROM cache_headings WHERE path=?1",
+            "DELETE FROM cache_blocks WHERE path=?1",
+            "DELETE FROM cache_graph_links WHERE source_path=?1",
+            "DELETE FROM cache_links WHERE source_path=?1",
+            "DELETE FROM cache_tags WHERE path=?1",
+            "DELETE FROM cache_tasks WHERE path=?1",
+        ] {
+            tx.execute(statement, [path])
+                .map_err(|error| error.to_string())?;
+        }
+        insert_file(&tx, &file, &references, true)?;
+        tx.commit().map_err(|error| error.to_string())?;
+        Ok(Some(IndexReport {
+            files: baseline.files,
+            indexed: baseline.indexed,
+            skipped: 0,
+            errors: baseline.errors,
+        }))
     }
     pub fn search_workspace(
         &self,
@@ -439,6 +504,218 @@ impl Database {
         rows.collect::<Result<_, _>>()
             .map_err(|error| error.to_string())
     }
+}
+const REFERENCE_LIMIT: usize = 100_000;
+/// What a complete full rebuild leaves behind for single-note updates.
+#[derive(Serialize, serde::Deserialize)]
+struct Baseline {
+    workspace: String,
+    revision: i64,
+    files: usize,
+    indexed: usize,
+    errors: Vec<String>,
+}
+#[derive(Default)]
+struct ReferenceLimits {
+    blocks: usize,
+    links: usize,
+}
+struct FileReferences<'a> {
+    /// Leading block references kept under the workspace limit.
+    blocks: usize,
+    links: Vec<ResolvedLink<'a>>,
+}
+fn metadata_for(path: &Path, content: &str) -> Metadata {
+    if path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("mmd"))
+    {
+        Metadata::default()
+    } else {
+        parse_metadata(content)
+    }
+}
+fn resolve_references<'a>(
+    file: &'a IndexedFile,
+    root: &Path,
+    lookup: &crate::wiki::NoteLookup<'_>,
+    paths: &HashSet<PathBuf>,
+    limits: &mut ReferenceLimits,
+    report: &mut IndexReport,
+) -> Result<FileReferences<'a>, String> {
+    let mut blocks = 0;
+    for _ in &file.metadata.blocks {
+        if limits.blocks >= REFERENCE_LIMIT {
+            report_error(
+                report,
+                "Workspace block references exceeded the 100,000 reference limit.",
+            );
+            break;
+        }
+        limits.blocks += 1;
+        blocks += 1;
+    }
+    let mut links = Vec::new();
+    for (line, text, target, wiki) in &file.metadata.links {
+        if limits.links >= REFERENCE_LIMIT {
+            report_error(
+                report,
+                "Workspace links exceeded the 100,000 reference limit.",
+            );
+            break;
+        }
+        let Some((display, heading, alias)) =
+            crate::wiki::scoped_link(root, &file.path, target, *wiki)
+        else {
+            continue;
+        };
+        limits.links += 1;
+        let matches = if *wiki {
+            lookup.matches(root, &file.path, target)
+        } else if display.is_empty() {
+            vec![file.path.clone()]
+        } else {
+            link_target(root, &file.path, target, false, paths)
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        let resolved = (matches.len() == 1).then(|| matches[0].to_string_lossy().into_owned());
+        let status = match matches.len() {
+            0 => "missing",
+            1 => "resolved",
+            _ => "ambiguous",
+        };
+        let candidates = if matches.len() > 1 {
+            matches
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        } else {
+            vec![]
+        };
+        links.push(ResolvedLink {
+            line: *line,
+            text,
+            display,
+            wiki: *wiki,
+            resolved,
+            status,
+            candidates: serde_json::to_string(&candidates).map_err(|error| error.to_string())?,
+            heading,
+            alias,
+        });
+    }
+    Ok(FileReferences { blocks, links })
+}
+/// Write one note's rows. `existing` keeps the note's `cache_files` and
+/// `cache_frontmatter` rows in place (and so their scan order) and expects
+/// the caller to have removed its other rows.
+fn insert_file(
+    tx: &rusqlite::Transaction<'_>,
+    file: &IndexedFile,
+    references: &FileReferences<'_>,
+    existing: bool,
+) -> Result<(), String> {
+    let path = file.path.to_string_lossy();
+    let name = file.path.file_name().unwrap_or_default().to_string_lossy();
+    let title = if file.metadata.title.is_empty() {
+        name.as_ref()
+    } else {
+        &file.metadata.title
+    };
+    let frontmatter =
+        serde_json::to_string(&file.metadata.frontmatter).map_err(|error| error.to_string())?;
+    if existing {
+        tx.execute(
+            "UPDATE cache_files SET name=?2,title=?3,content=?4 WHERE path=?1",
+            params![path, name, title, file.content],
+        )
+        .map_err(|error| error.to_string())?;
+        tx.execute(
+            "UPDATE cache_frontmatter SET json=?2 WHERE path=?1",
+            params![path, frontmatter],
+        )
+        .map_err(|error| error.to_string())?;
+    } else {
+        tx.execute(
+            "INSERT INTO cache_files(path,name,title,content) VALUES(?1,?2,?3,?4)",
+            params![path, name, title, file.content],
+        )
+        .map_err(|error| error.to_string())?;
+        tx.execute(
+            "INSERT INTO cache_frontmatter(path,json) VALUES(?1,?2)",
+            params![path, frontmatter],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    // The full-text row shares the note's rowid, so a later single-note
+    // update can find it without scanning the full-text table.
+    tx.execute(
+        "INSERT INTO cache_fts(rowid,path,title,body) VALUES((SELECT rowid FROM cache_files WHERE path=?1),?1,?2,?3)",
+        params![path, title, file.content],
+    )
+    .map_err(|error| error.to_string())?;
+    if let Some(properties) = file.metadata.frontmatter.properties.as_object() {
+        for (key, value) in properties {
+            let kind = match value {
+                serde_json::Value::Null => "null",
+                serde_json::Value::Bool(_) => "boolean",
+                serde_json::Value::Number(_) => "number",
+                serde_json::Value::String(_) => "string",
+                serde_json::Value::Array(_) => "array",
+                serde_json::Value::Object(_) => "object",
+            };
+            tx.execute(
+                "INSERT INTO cache_properties(path,key,kind,json_value) VALUES(?1,?2,?3,?4)",
+                params![path, key, kind, value.to_string()],
+            )
+            .map_err(|error| error.to_string())?;
+        }
+    }
+    for heading in &file.metadata.headings {
+        tx.execute(
+            "INSERT INTO cache_headings(path,text,line,level) VALUES(?1,?2,?3,?4)",
+            params![
+                path,
+                heading.text,
+                heading.line as i64,
+                heading.level as i64
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    for block in file.metadata.blocks.iter().take(references.blocks) {
+        tx.execute(
+            "INSERT INTO cache_blocks(path,id,line) VALUES(?1,?2,?3)",
+            params![path, block.id, block.line as i64],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    for link in &references.links {
+        tx.execute("INSERT INTO cache_graph_links(source_path,line,raw_target,kind,target_path,status,candidates_json,heading,alias) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![path,link.line as i64,link.display,if link.wiki{"wiki"}else{"markdown"},link.resolved,link.status,link.candidates,link.heading,link.alias]).map_err(|error|error.to_string())?;
+        if let Some(target) = &link.resolved {
+            tx.execute(
+                "INSERT INTO cache_links(source_path,line,text,target_path) VALUES(?1,?2,?3,?4)",
+                params![path, link.line as i64, link.text, target],
+            )
+            .map_err(|error| error.to_string())?;
+        }
+    }
+    for (line, tag) in &file.metadata.tags {
+        tx.execute(
+            "INSERT INTO cache_tags(path,line,tag) VALUES(?1,?2,?3)",
+            params![path, *line as i64, tag],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    for (line, text, checked) in &file.metadata.tasks {
+        tx.execute(
+            "INSERT INTO cache_tasks(path,line,text,checked) VALUES(?1,?2,?3,?4)",
+            params![path, *line as i64, text, checked],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 fn report_error(report: &mut IndexReport, error: impl Into<String>) {
     if report.errors.len() < MAX_ERRORS {

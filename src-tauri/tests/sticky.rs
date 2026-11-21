@@ -266,7 +266,7 @@ PRAGMA user_version=8;").unwrap();
     assert_eq!(db.read_sticky(&new.id).unwrap().color, "black");
     drop(db);
     let connection = rusqlite::Connection::open(&path).unwrap();
-    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 10);
+    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 11);
     assert!(connection.execute("UPDATE sticky_notes SET color='red'", []).is_err());
     assert!(connection.execute("UPDATE sticky_notes SET text=?1", ["x".repeat(MAX_TEXT + 1)]).is_err());
     assert!(connection.execute("UPDATE sticky_notes SET title=?1", ["x".repeat(MAX_TITLE + 1)]).is_err());
