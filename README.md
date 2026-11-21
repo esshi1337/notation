@@ -28,7 +28,7 @@ Built with Svelte 5, CodeMirror 6 and a Rust/Tauri 2 backend. It ships as a stan
 | Area | Highlights |
 | --- | --- |
 | **Write** | Source, Split, Preview and Live Preview modes; tasks, callouts, tables, folding, wiki links and properties |
-| **Diagram** | Mermaid and Graphviz render inline; LaTeX math through bundled KaTeX, with no network |
+| **Diagram** | Mermaid and Graphviz render inline; math is Typst first with LaTeX (KaTeX) as the fallback, both bundled, with no network |
 | **Organize** | Workspaces, an explorer, a note graph, history, templates and Canvas boards |
 | **Export** | HTML, self-contained webpages, PDF, DOCX and slides, with Pandoc and Typst bundled in the AppImage |
 | **Desktop** | Native sticky note windows, a Git view for the active file, and an MCP connection for agents |
@@ -195,7 +195,7 @@ been validated** by a person on a Mac. A macOS CI workflow that builds, ad-hoc s
 ## Editing basics
 
 - Edit Markdown, standalone `.mmd` diagrams, and JSON Canvas boards.
-- Preview Mermaid and other diagram fences, KaTeX math, and note embeds, with localized errors.
+- Preview Mermaid and other diagram fences, Typst and LaTeX math, and note embeds, with localized errors.
 - Switch between Source, Split, Preview, and inline Live Preview.
 - Choose a Dark or Light mode and preset, a custom local theme, font size, and word wrapping.
 - Restore open tabs, drafts, and preferences from local application storage.
@@ -209,7 +209,7 @@ Desktop drafts and preferences use SQLite, with a webview recovery cache. Browse
 
 ## Hemingway mode
 
-Choose **Hemingway mode** through Commands (`Ctrl/Cmd+K`) to write literal, unformatted text in the current tab. Markdown, LaTeX, embeds, and canvas JSON remain ordinary source text. The mode preserves the file extension, selection, and previous layout, and recovers separately for each tab.
+Choose **Hemingway mode** through Commands (`Ctrl/Cmd+K`) to write literal, unformatted text in the current tab. Markdown, math in either syntax (Typst or LaTeX), embeds, and canvas JSON remain ordinary source text. The mode preserves the file extension, selection, and previous layout, and recovers separately for each tab.
 
 Typing at an empty caret works. Deletion, selection replacement, cut, drag/drop, undo, and redo are blocked. Copy, navigation, Find, and Save remain available. Script results, revision restoration, formatting commands, and agent edits cannot replace a protected tab. Undo history is retained for after you turn the mode off through the same command.
 
@@ -235,7 +235,17 @@ Tasks are clickable in Live Preview and in the rendered preview. A click changes
 
 Typing `[]` followed by a space and a label shows a checkbox in Live Preview. Use Source mode to see all markers. Brackets in code, links, or escaped text remain literal.
 
-LaTeX math uses bundled KaTeX and fonts, with no network requirement. Write `$x^2 + \alpha$` for inline math, or put a display equation between `$$` delimiters:
+Math is written in [Typst](https://typst.app/docs/reference/math/) by default, with LaTeX as the fallback. Write `$x^2 + alpha$` for inline math, or put a display equation between `$$` delimiters:
+
+```typ
+$$
+1/2 + sum_(i=1)^n i
+$$
+```
+
+Typst math is rendered by a bundled Typst 0.15 compiler (the same version that produces PDF exports) and the New Computer Modern Math font. It loads the first time a note needs it and never uses the network. Equations take the text colour of the current theme, sit on the text baseline, and scroll sideways when a display equation is wider than the page.
+
+LaTeX keeps working. An equation is read as LaTeX and rendered by bundled KaTeX when it contains a backslash command (`\frac`, `\alpha`, `\begin{…}`), a `\\` line break, a TeX spacing or delimiter escape (`\,` `\;` `\{` `\%`), or brace-grouped scripts (`x^{2}`, `a_{ij}`):
 
 ```tex
 $$
@@ -243,7 +253,16 @@ $$
 $$
 ```
 
-Click an equation in Live Preview to edit its LaTeX, then leave its line/block to render it again. Invalid or unsupported commands show a local math error. This supports KaTeX mathematical notation; it is not a full LaTeX document compiler. Dollars inside code, escaped dollar signs, and ordinary currency such as `$5 and $10` stay literal.
+An equation with none of these markers is tried as Typst first. If Typst rejects it and KaTeX accepts it, as with plain TeX such as `$E = mc^2$` (Typst reads `mc` as one name), KaTeX renders it. Hover an equation to see which engine rendered it and, for a fallback, why.
+
+To choose the engine yourself:
+
+- For one note, add a `math` property: `math: typst` (Typst only, no fallback), `math: latex` (KaTeX only), or `math: auto` (the default behaviour).
+- For all notes without that property, set **Settings → Editor → Math syntax** to *Typst, LaTeX fallback* (default), *Typst only* or *LaTeX only*.
+
+Notes written before Typst support render as before wherever they use LaTeX commands. An equation that has no LaTeX marker and is also valid Typst now follows Typst: `$a/b$` is a fraction, `$x^10$` raises `10` (TeX raises only the `1`), and `<=` becomes ≤. Choose *LaTeX only*, or `math: latex` in the note, to keep the old rendering exactly.
+
+Click an equation in Live Preview to edit its source, then leave its line or block to render it again. An invalid equation shows a local math error from the engine that owns it (`Typst: …` or `KaTeX parse error: …`). This is mathematical notation only: neither a Typst document nor a LaTeX document is compiled, and Typst code inside an equation cannot read files, import packages or reach the network. Dollars inside code, escaped dollar signs, and ordinary currency such as `$5 and $10` stay literal.
 
 ## Block editing and callouts
 
@@ -388,6 +407,17 @@ A blank note card offers **Choose note**. Search for a note or enter a workspace
 
 **Export** captures a note snapshot as HTML, a self-contained webpage, PDF, DOCX, or PowerPoint slides. Rendered diagrams, math, note embeds, and query results are included. HTML includes its stylesheet and fonts; self-contained export also embeds supported local resources and reports any it cannot include. Remote resources are not fetched for export. Exports do not run code cells or change source files. Layout fidelity varies by format; Office/PDF conversions use a light theme.
 
+Math is exported according to its syntax:
+
+| Format | Typst math | LaTeX math |
+| --- | --- | --- |
+| HTML, self-contained webpage | Embedded as SVG in the page's text colour | KaTeX markup with its fonts embedded |
+| PDF | Passed to the Typst engine as written and typeset natively | Converted to Typst by Pandoc |
+| DOCX | Converted to a native Office equation by Pandoc; an equation Pandoc cannot convert is embedded as an image | Native Office equation |
+| PPTX | Converted to a native Office equation; an equation Pandoc cannot convert is shown as its source text | Native Office equation |
+
+Office equations are Pandoc's translation of the Typst source, so decoration with no Office equivalent (for example `cancel(x)` or coloured text) is dropped, and the export tells you how many equations fell back to an image or to source text. PDF needs no translation and keeps everything.
+
 The Linux x86-64 package bundles Pandoc and Typst, so conversion does not depend on system installations. For a fresh desktop build, run `npm run desktop:engines` first. It downloads pinned, checksum-verified artifacts described in `scripts/engines.lock.json`; generated binaries and licenses live under `src-tauri/resources/engines/`. Engine and font notices ship in the package. Runtime engine resolution does not fall back to PATH.
 
 ## Linux sticky notes
@@ -476,6 +506,7 @@ npm run test:store
 npm run test:preferences
 npm run test:documents
 npm run test:markdown
+npm run test:math
 npm run test:tables
 npm run test:canvas
 npm run test:workspace

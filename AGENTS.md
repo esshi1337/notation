@@ -146,7 +146,7 @@ npm run test:e2e       # Playwright suite
 ```
 
 Focused suites: `test:store`, `test:preferences`, `test:documents`,
-`test:markdown`, `test:tables`, `test:export`, `test:canvas`,
+`test:markdown`, `test:math`, `test:tables`, `test:export`, `test:canvas`,
 `test:workspace`, `test:citations`, `test:hemingway`. Run the suite that
 covers the touched area and report any checks that were not run.
 
