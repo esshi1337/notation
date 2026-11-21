@@ -10,17 +10,18 @@
   import SelectControl from './SelectControl.svelte';
   import NumberControl from './NumberControl.svelte';
   import ThemeEditor from './ThemeEditor.svelte';
+  import DatabaseSettings from './DatabaseSettings.svelte';
   import type { UserTheme } from './themes';
   import { COMMANDS, defaultShortcut, formatShortcut, normalizeShortcut, shortcutFor, shortcutFromEvent, validateShortcut } from './shortcuts';
   import { isMac } from './platform';
   import type { CommandId, ShortcutOverrides } from './shortcuts';
 
   type Layout = 'split' | 'source' | 'preview' | 'live';
-  type Section = 'Appearance' | 'Editor' | 'Shortcuts' | 'Agents';
+  type Section = 'Appearance' | 'Editor' | 'Shortcuts' | 'Databases' | 'Agents';
   type AgentStatus = { available: boolean; ready: boolean; socketPath?: string; command?: string; args?: string[]; error?: string };
   let { builtInTheme = $bindable(), theme, fontSize = $bindable(), wrap = $bindable(), layout = $bindable(), prefs = $bindable(), shortcuts = $bindable(), agentEditsEnabled = $bindable(), close, onpreview, disableTheme, themeImportReset }: { builtInTheme: 'dark' | 'light'; theme: 'dark' | 'light'; fontSize: number; wrap: boolean; layout: Layout; prefs: UIPreferences; shortcuts: ShortcutOverrides; agentEditsEnabled: boolean; close: () => void; onpreview: (theme: UserTheme | null) => void; disableTheme: () => void; themeImportReset: { generation: number } } = $props();
 
-  const sections: Section[] = ['Appearance', 'Editor', 'Shortcuts', 'Agents'];
+  const sections: Section[] = ['Appearance', 'Editor', 'Shortcuts', 'Databases', 'Agents'];
   const themeOptions = [{ value: 'dark', label: 'Dark' }, { value: 'light', label: 'Light' }];
   const densityOptions = [{ value: 'compact', label: 'Compact' }, { value: 'comfortable', label: 'Comfortable' }];
   const sidebarRailWidthOptions = [{ value: 'narrow', label: 'Narrow' }, { value: 'standard', label: 'Standard' }, { value: 'wide', label: 'Wide' }];
@@ -285,6 +286,8 @@
         <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable list needs keyboard access.) -->
         <div class="shortcut-list" role="region" aria-label="Keyboard shortcuts" tabindex="0">{#each filteredCommands as item}<div class="shortcut-row"><label for={'shortcut-' + item.id}>{item.label}<span>{item.group}</span></label><input id={'shortcut-' + item.id} data-shortcut-capture aria-label={'Shortcut for ' + item.label} bind:value={drafts[item.id]} placeholder="Unassigned" spellcheck="false" onkeydown={(event) => capture(item.id, event)} onchange={() => commitShortcut(item.id)} /><button type="button" aria-label={'Reset shortcut: ' + item.label} title={'Default: ' + formatShortcut(defaultShortcut(item.id, mac), mac)} onclick={() => resetShortcut(item.id)}>↺</button></div>{/each}{#if !filteredCommands.length}<p class="panel-note">No matching shortcuts.</p>{/if}</div>
         <button type="button" class="settings-reset" onclick={() => { shortcuts = {}; resetDrafts(); shortcutError = ''; }}>Reset shortcuts</button>
+      {:else if section === 'Databases'}
+        <DatabaseSettings {theme} />
       {:else}
         <div class="settings-intro"><strong>Connect your agents.</strong><p>Read open documents and apply guarded, undoable edits. Agent edits stay in the editor until you save.</p></div>
         <div class="settings-mcp">
