@@ -876,7 +876,8 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .sql-block { min-width: 0; max-width: 100%; margin: 1em 0; }
 .sql-block > pre { margin: 0 0 8px; }
 .sql-block > pre[hidden], .sql-block-compact > pre { display: none; }
-.sql-table-scroll { max-width: 100%; max-height: 420px; overflow: auto; overscroll-behavior: contain; }
+/* Long results scroll inside; in a short window the caption line stays in view. */
+.sql-table-scroll { max-width: 100%; max-height: min(420px, 60vh); overflow: auto; overscroll-behavior: contain; }
 .sql-table-scroll:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 /* The look of a regular preview table. Borders are drawn per cell, not
    collapsed, so the sticky header keeps its lines while rows scroll under it. */
