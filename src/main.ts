@@ -1,6 +1,13 @@
 import { mount } from 'svelte';
 import './style.css';
+import './motion.css';
 import { isTauri } from '@tauri-apps/api/core';
+import { trackInputModality } from './motion';
+import { markOverlayScrollbars } from './scrollbars';
+
+// Sticky windows and the main window share the pointer/keyboard focus-ring rule.
+trackInputModality();
+markOverlayScrollbars();
 
 const target = document.getElementById('app')!;
 target.textContent = 'Loading Notation…';

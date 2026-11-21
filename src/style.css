@@ -152,6 +152,16 @@
 @media (forced-colors: active) {
   :root { --scrollbar-track: Canvas; --scrollbar-thumb: ButtonText; --scrollbar-thumb-hover: Highlight; }
 }
+/* Overlay scrollbar thumbs are composited above everything, so a scroller
+   underneath an open header menu or modal dialog would draw its thumb across
+   that surface. Hide those thumbs while the surface is open; scrollers inside
+   the dialog keep theirs. main.ts sets data-scrollbars. */
+:root[data-scrollbars='overlay'] .app:has(> .workspace-bar .compact-menu) > .content-area,
+:root[data-scrollbars='overlay'] .app:has(> .workspace-bar .compact-menu) > .content-area *,
+:root[data-scrollbars='overlay']:has(dialog[open]) .app > :not(dialog),
+:root[data-scrollbars='overlay']:has(dialog[open]) .app > :not(dialog) * {
+  scrollbar-color: transparent transparent;
+}
 
 .identity-icon { display: block; flex: 0 0 auto; max-width: none; pointer-events: none; }
 .workspace-bar { display: flex; align-items: center; flex-shrink: 0; height: var(--chrome-height); min-height: var(--chrome-height); gap: 8px; padding: 0 12px 0 6px; border-bottom: 1px solid var(--border); background: var(--bar); }

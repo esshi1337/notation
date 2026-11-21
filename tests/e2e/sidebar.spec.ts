@@ -99,3 +99,66 @@ test('narrow windows keep tools reachable on either side and appearance reset re
   await checkGeometry(page, 'left', true);
   await page.screenshot({ path: 'test-results/sidebar-narrow.png' });
 });
+
+test('overlay scrollbar thumbs hide beneath an open header menu and modal dialogs', async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 420 });
+  await page.goto('/');
+  await sidebar(page).getByRole('button', { name: 'Templates panel', exact: true }).click();
+  const panel = page.locator('.sidebar-panel .utility-panel');
+  await expect(panel).toBeVisible();
+  const color = (selector: string) => page.locator(selector).first().evaluate((element) => getComputedStyle(element).scrollbarColor);
+  const hidden = 'rgba(0, 0, 0, 0) rgba(0, 0, 0, 0)';
+  const underneath = ['.sidebar-panel .utility-panel', '.cm-scroller', '.sidebar-tools'];
+
+  // Chromium here has classic scrollbars, which already paint beneath overlays.
+  await expect(page.locator('html')).toHaveAttribute('data-scrollbars', /^(classic|overlay)$/);
+  const appMenu = page.getByRole('button', { name: 'App menu', exact: true });
+  const menu = page.getByRole('menu', { name: 'App menu', exact: true });
+  if (await page.locator('html').getAttribute('data-scrollbars') === 'classic') {
+    await appMenu.click();
+    await expect(menu).toBeVisible();
+    for (const selector of underneath) expect(await color(selector), selector).not.toBe(hidden);
+    await page.keyboard.press('Escape');
+  }
+
+  // WebKitGTK and WKWebView composite overlay thumbs above every surface.
+  await page.evaluate(() => { document.documentElement.dataset.scrollbars = 'overlay'; });
+  // Hover and focus change the thumb shade, so compare against hidden only.
+  const restored = async () => { for (const selector of underneath) expect(await color(selector), 'restored ' + selector).not.toBe(hidden); };
+  await restored();
+  for (const name of ['App menu', 'Layout']) {
+    await page.getByRole('button', { name, exact: true }).click();
+    await expect(page.getByRole('menu', { name, exact: true })).toBeVisible();
+    for (const selector of underneath) expect(await color(selector), name + ' ' + selector).toBe(hidden);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('menu', { name, exact: true })).toHaveCount(0);
+    await restored();
+  }
+
+  await appMenu.click();
+  await menu.getByRole('menuitem', { name: 'Settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await expect(settings).toBeVisible();
+  for (const selector of underneath) expect(await color(selector), 'settings ' + selector).toBe(hidden);
+  // Scrollers inside the dialog keep their thumbs and still scroll.
+  expect(await color('.settings-dialog .settings-content')).not.toBe(hidden);
+  await settings.locator('.settings-content').hover();
+  await page.mouse.wheel(0, 200);
+  await expect.poll(() => settings.locator('.settings-content').evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await settings.getByRole('button', { name: 'Close settings' }).click();
+  await expect(settings).toHaveCount(0);
+  await restored();
+
+  await page.getByRole('button', { name: 'Commands', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Commands', exact: true })).toBeVisible();
+  for (const selector of underneath) expect(await color(selector), 'palette ' + selector).toBe(hidden);
+  expect(await color('.command-palette .command-results')).not.toBe(hidden);
+  await page.keyboard.press('Escape');
+  await restored();
+
+  // The sidebar still scrolls once the overlay is gone.
+  const before = await panel.evaluate((element) => element.scrollTop);
+  await panel.hover();
+  await page.mouse.wheel(0, 240);
+  await expect.poll(() => panel.evaluate((element) => element.scrollTop)).toBeGreaterThan(before);
+});
