@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pop } from './motion';
   import '@fontsource/source-sans-3/latin-400-italic.css';
   import '@fontsource/source-sans-3/latin-600-italic.css';
   import { onMount } from 'svelte';
@@ -198,7 +199,7 @@
     <button aria-label="Close sticky" title="Close note" disabled={closing || creating} onclick={closeNote}><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg></button>
   </header>
   {#if menu}
-    <div id="note-options" class="options" role="group" aria-label="Note options">
+    <div id="note-options" class="options" role="group" aria-label="Note options" in:pop={{ origin: 'top right' }} out:pop={{ origin: 'top right', exit: true }}>
       <div class="colors" role="group" aria-label="Note color">
         {#each stickyColors as swatch}
           <button class="swatch" title={`${swatch[0].toUpperCase() + swatch.slice(1)} paper`} data-color={swatch} aria-label={`${swatch[0].toUpperCase() + swatch.slice(1)} paper`} aria-pressed={color === swatch} disabled={!loaded || closing} onclick={() => { color = swatch; changed(); }}></button>
@@ -209,7 +210,7 @@
   {/if}
   <div class="paper" class:empty={loaded && empty} data-placeholder="Write something…" bind:this={editor} role="textbox" aria-label="Sticky text" aria-multiline="true" aria-disabled={!loaded || closing} tabindex="0" contenteditable={loaded && !closing} spellcheck="true" oninput={changed} onbeforeinput={beforeinput} onkeydown={keydown} onpaste={plainInsert} ondrop={plainInsert} ondragover={(event) => event.preventDefault()}></div>
   {#if toolbar}
-    <div class="formats" role="toolbar" aria-label="Formatting">
+    <div class="formats" role="toolbar" aria-label="Formatting" in:pop={{ y: 6, scale: 1 }} out:pop={{ y: 6, scale: 1, exit: true }}>
       <button aria-label="Bold" title="Bold (Ctrl/Cmd+B)" aria-pressed={bold} disabled={!loaded || closing} onpointerdown={(event) => event.preventDefault()} onclick={() => format('bold')}><b>B</b></button>
       <button aria-label="Italic" title="Italic (Ctrl/Cmd+I)" aria-pressed={italic} disabled={!loaded || closing} onpointerdown={(event) => event.preventDefault()} onclick={() => format('italic')}><i>I</i></button>
       <button aria-label="Underline" title="Underline (Ctrl/Cmd+U)" aria-pressed={underline} disabled={!loaded || closing} onpointerdown={(event) => event.preventDefault()} onclick={() => format('underline')}><u>U</u></button>
@@ -227,6 +228,8 @@
   {/if}
 </main>
 <style>
+  /* The note fades in when its window opens. */
+  .sticky-note { animation: fade-in var(--motion-base) var(--ease-out); }
   [data-color="black"] { --paper: #000000; }
   [data-color="yellow"] { --paper: #fff3b0; } [data-color="green"] { --paper: #d9edbd; } [data-color="blue"] { --paper: #cde8fa; } [data-color="pink"] { --paper: #f9d4df; } [data-color="purple"] { --paper: #e5d8f5; } [data-color="gray"] { --paper: #e5e5e2; }
   .sticky-note { --ink: #302b17; --muted: #615735; --bar: #0000000c; --hover: #00000012; --error: #8c221b; box-sizing: border-box; height: 100dvh; position: relative; display: flex; flex-direction: column; background: var(--paper); color: var(--ink); font-family: 'Source Sans 3', ui-sans-serif, sans-serif; }
