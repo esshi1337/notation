@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const MAX_CONTENT: usize = 4 * 1024 * 1024;
 const REVISION_LIMIT: usize = 50;
 const RUN_LIMIT: usize = 200;
-const SCHEMA_VERSION: i64 = 13;
+const SCHEMA_VERSION: i64 = 14;
 /// Version of the separate, disposable index database.
 const INDEX_SCHEMA_VERSION: i64 = 1;
 
@@ -374,6 +374,13 @@ PRAGMA user_version=9;").map_err(database_error)?;
                 }
             }
             tx.execute_batch("PRAGMA user_version=13;").map_err(database_error)?;
+            tx.commit().map_err(database_error)?;
+        }
+        if version < 14 {
+            // SQL block connections: metadata only. Passwords are never
+            // stored here; see `sql::secrets`.
+            let tx = connection.transaction().map_err(database_error)?;
+            tx.execute_batch("CREATE TABLE IF NOT EXISTS sql_connections(name TEXT PRIMARY KEY, json TEXT NOT NULL); PRAGMA user_version=14;").map_err(database_error)?;
             tx.commit().map_err(database_error)?;
         }
         let (index, index_reader) = open_index(&index_path)?;
