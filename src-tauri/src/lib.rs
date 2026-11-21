@@ -953,6 +953,91 @@ mod desktop {
             }
         });
     }
+    /// Whether closing has work to do that must not be skipped: app state is
+    /// being written or the last write failed. Reported by the frontend.
+    static QUIT_GUARD_NEEDED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+    /// Set once the app is on its way out, so nothing holds it back again.
+    static EXITING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    #[tauri::command]
+    fn set_quit_guard(window: tauri::WebviewWindow, needed: bool) -> Result<(), String> {
+        sticky::authorize_main(window.label())?;
+        QUIT_GUARD_NEEDED.store(needed, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+    /// macOS sends Quit from the Dock menu, logout, shutdown and AppleScript
+    /// straight to the application object. The window library has no
+    /// `applicationShouldTerminate:` handler, so such a quit ends the process
+    /// without the main window's close guard and without a preventable
+    /// `RunEvent::ExitRequested`. This adds the handler to the existing
+    /// application delegate: when the guard has work to do, the termination
+    /// is cancelled and a normal main-window close is requested instead (the
+    /// guard ends the app when it is done); otherwise the app terminates at
+    /// once, so logout is not interrupted without reason.
+    #[cfg(target_os = "macos")]
+    mod quit_guard {
+        use super::{EXITING, QUIT_GUARD_NEEDED};
+        use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
+        use objc2::{class, msg_send, sel};
+        use std::sync::atomic::Ordering;
+        use std::sync::OnceLock;
+        use tauri::Manager;
+
+        static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
+        // NSApplicationTerminateReply
+        const TERMINATE_CANCEL: usize = 0;
+        const TERMINATE_NOW: usize = 1;
+
+        extern "C-unwind" fn should_terminate(
+            _this: *mut AnyObject,
+            _selector: Sel,
+            _sender: *mut AnyObject,
+        ) -> usize {
+            if EXITING.load(Ordering::SeqCst) || !QUIT_GUARD_NEEDED.load(Ordering::SeqCst) {
+                return TERMINATE_NOW;
+            }
+            let Some(main) = APP.get().and_then(|app| app.get_webview_window("main")) else {
+                return TERMINATE_NOW;
+            };
+            let _ = main.unminimize();
+            let _ = main.show();
+            if main.close().is_err() {
+                return TERMINATE_NOW;
+            }
+            TERMINATE_CANCEL
+        }
+
+        /// Call on the main thread once the application delegate exists.
+        pub fn install(app: &tauri::AppHandle) {
+            if APP.set(app.clone()).is_err() {
+                return;
+            }
+            // SAFETY: plain Objective-C runtime calls on the main thread. The
+            // method is added only if the delegate class does not define it,
+            // and its signature (`NSUInteger (id, SEL, id)`, "Q@:@") matches
+            // `applicationShouldTerminate:` on 64-bit macOS.
+            unsafe {
+                let application: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+                if application.is_null() {
+                    return;
+                }
+                let delegate: *mut AnyObject = msg_send![application, delegate];
+                if delegate.is_null() {
+                    return;
+                }
+                let class = objc2::ffi::object_getClass(delegate) as *mut AnyClass;
+                let handler: extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) -> usize =
+                    should_terminate;
+                let implementation: Imp = std::mem::transmute(handler);
+                let _ = objc2::ffi::class_addMethod(
+                    class,
+                    sel!(applicationShouldTerminate:),
+                    implementation,
+                    c"Q@:@".as_ptr(),
+                );
+            }
+        }
+    }
     fn handle_menu_event(app: &tauri::AppHandle, id: &str) {
         if let Some(command) = id.strip_prefix(MENU_COMMAND_PREFIX) {
             let _ = app.emit_to("main", "notation:menu-command", command);
@@ -1137,6 +1222,8 @@ mod desktop {
                 app.manage(AgentState { backend, endpoint });
                 app.manage(DatabaseState(database));
                 present_fallback(app.handle().clone());
+                #[cfg(target_os = "macos")]
+                quit_guard::install(app.handle());
                 Ok(())
             })
             .plugin(tauri_plugin_dialog::init())
@@ -1186,6 +1273,7 @@ mod desktop {
                 render_citations,
                 open_external,
                 set_menu_shortcuts,
+                set_quit_guard,
                 present_main_window,
                 get_tasks,
                 get_tags,
@@ -1265,6 +1353,10 @@ mod desktop {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Opened { urls } = &event {
                 open_file_urls(handle, &opened_queue, urls);
+            }
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                // Nothing prevents this exit; a later system quit must pass.
+                EXITING.store(true, std::sync::atomic::Ordering::SeqCst);
             }
             if matches!(event, tauri::RunEvent::Exit) {
                 handle.state::<language_server::Service>().stop_all();

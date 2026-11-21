@@ -853,6 +853,17 @@
     }
     void invoke('set_menu_shortcuts', { shortcuts: bindings }).catch(() => undefined);
   });
+  // macOS: a quit from the Dock or at logout bypasses the window close guard
+  // unless the backend knows the guard has work to do (a save in flight or
+  // failed). Reported only when it changes.
+  let quitGuard = false;
+  $effect(() => {
+    if (!desktop || !mac) return;
+    const needed = persistence.state === 'saving' || persistence.state === 'error';
+    if (needed === quitGuard) return;
+    quitGuard = needed;
+    void invoke('set_quit_guard', { needed }).catch(() => undefined);
+  });
   function runMenuCommand(id: unknown) {
     const command = COMMANDS.find((item) => item.id === id);
     if (!command || closingWindow || document.querySelector('dialog[open]')) return;
