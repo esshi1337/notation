@@ -109,8 +109,12 @@ Do not claim leak freedom without runtime memory/lifecycle evidence.
 Commit only scoped files, then create a PR using
 `scripts/notation-task pr --title '<title>' --body-file <file>`. The body must
 include `Closes #<issue>`, `## Validation` and `## Review` with exact results,
-fixes and remaining gaps. Keep one coherent issue per PR. No CI is configured
-or requested: all checks and review evidence are local.
+fixes and remaining gaps. Keep one coherent issue per PR. The only CI is the
+macOS workflow (`.github/workflows/macos.yml`): on PRs that touch app, native,
+test or tooling files it builds the `.app`/`.dmg` on Apple Silicon and Intel,
+launches the built app as a smoke test, runs the Rust tests and runs the
+Playwright suite on WebKit. Wait for it and report its result in the PR. All
+other checks and review evidence are local.
 
 After inspecting the reports and accepting the exact committed result,
 Astra can use `scripts/notation-task record-review --checks-file <file>

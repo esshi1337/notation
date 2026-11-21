@@ -1,0 +1,170 @@
+name: macOS
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'public/**'
+      - 'index.html'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'playwright.config.ts'
+      - 'vite.config.ts'
+      - 'svelte.config.js'
+      - 'tsconfig.json'
+      - '.github/workflows/macos.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build + launch smoke (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: aarch64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: desktop
+
+      - name: Setup (tool checks, npm ci, disabled-engine stub)
+        run: python3 scripts/setup-macos.py
+
+      - name: Svelte and TypeScript check
+        run: npm run check
+
+      # macOS temporary directories live under /var, a symlink to
+      # /private/var. The setup script refuses symlinked resource paths, so
+      # the suites get a symlink-free temporary directory.
+      - name: Native Python suites
+        run: |
+          export TMPDIR="$RUNNER_TEMP/python-suites"
+          mkdir -p "$TMPDIR"
+          python3 tests/native/macos_platform_test.py
+          python3 tests/native/packaging_test.py
+          # tests/native/language_packaging_test.py exercises the optional
+          # language-pack installer, which refuses non-Linux hosts by design.
+
+      - name: Desktop build (.app + .dmg)
+        run: npm run desktop:build
+
+      - name: Verify bundle metadata and signature
+        run: |
+          set -euo pipefail
+          APP=$(find "$PWD/src-tauri/target" -maxdepth 5 -path '*/bundle/macos/*.app' | head -1)
+          test -n "$APP"
+          echo "APP=$APP" >> "$GITHUB_ENV"
+          /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv "$APP" 2>&1 | grep -i 'Signature=adhoc'
+          lipo -archs "$APP/Contents/MacOS/notation"
+          ls -la "$(dirname "$(dirname "$APP")")/dmg"
+
+      - name: Launch smoke test
+        run: |
+          set -euo pipefail
+          BIN="$APP/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
+          export HOME="$RUNNER_TEMP/notation-home"
+          mkdir -p "$HOME"
+          "$BIN" > "$RUNNER_TEMP/notation.log" 2>&1 &
+          PID=$!
+          sleep 20
+          if ! kill -0 "$PID" 2>/dev/null; then
+            echo "Notation exited during the first 20 seconds"
+            cat "$RUNNER_TEMP/notation.log"
+            exit 1
+          fi
+          screencapture -x "$RUNNER_TEMP/notation-launch.png" || true
+          if ! find "$HOME/Library/Application Support" -name 'state.sqlite3' | grep -q .; then
+            echo "No state database was created"
+            find "$HOME" -maxdepth 5 || true
+            cat "$RUNNER_TEMP/notation.log"
+            exit 1
+          fi
+          kill "$PID"
+          wait "$PID" || true
+          cat "$RUNNER_TEMP/notation.log"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: notation-macos-${{ matrix.arch }}
+          path: |
+            src-tauri/target/**/bundle/dmg/*.dmg
+            ${{ runner.temp }}/notation-launch.png
+            ${{ runner.temp }}/notation.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  rust-tests:
+    name: Rust tests (aarch64)
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: core-tests
+      # Workspace operations reject paths with symlinked components, and the
+      # default macOS TMPDIR is under the /var symlink. Until that is handled
+      # in the app, give the tests a symlink-free temporary directory.
+      - name: Rust tests (core, no desktop feature)
+        run: |
+          export TMPDIR="$RUNNER_TEMP/rust-tests"
+          mkdir -p "$TMPDIR"
+          cargo test --manifest-path src-tauri/Cargo.toml --no-fail-fast
+
+  webkit-e2e:
+    name: Playwright WebKit e2e
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install webkit
+      - name: Playwright (WebKit)
+        run: npx playwright test --project=webkit
+        env:
+          NOTATION_E2E_WEBKIT: '1'
+          NOTATION_TEST_WORKERS: '3'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-webkit-report
+          path: playwright-report/html
+          retention-days: 7

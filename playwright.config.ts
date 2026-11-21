@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { webkitGrepInvert } from './tests/e2e/webkit-exclusions';
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -13,9 +14,21 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:1420',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    launchOptions: { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined },
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    {
+      name: 'chromium',
+      use: {
+        ...devices['Desktop Chrome'],
+        launchOptions: { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined },
+      },
+    },
+    // WebKit is the closest automatable stand-in for the macOS WKWebView. Its
+    // Playwright build does not start on every Linux host, so the project is
+    // opt-in; the macOS workflow enables it. Tests that cannot run there are
+    // listed with reasons in tests/e2e/webkit-exclusions.ts.
+    ...(process.env.NOTATION_E2E_WEBKIT ? [{ name: 'webkit', use: { ...devices['Desktop Safari'] }, grepInvert: webkitGrepInvert }] : []),
+  ],
   webServer: {
     command: 'node scripts/prepare-pdf-assets.mjs && npm --ignore-scripts run dev',
     url: 'http://127.0.0.1:1420',

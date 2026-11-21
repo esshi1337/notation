@@ -177,7 +177,7 @@ test('shortcut remapping persists, conflicting bindings are rejected, and reset 
 
   await page.keyboard.press('Escape');
   await source(page).focus();
-  await page.keyboard.press('Control+Shift+J');
+  await page.keyboard.press('ControlOrMeta+Shift+J');
   await expect(page.getByRole('tablist', { name: 'Documents', exact: true }).getByRole('tab')).toHaveCount(2);
   await runCommand(page, 'Settings');
   settings = settingsDialog(page);

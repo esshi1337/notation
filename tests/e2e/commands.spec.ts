@@ -34,7 +34,7 @@ test('searches command labels, runs a command by keyboard, and restores focus on
   await expect(trigger).toBeFocused();
 
   await source(page).focus();
-  await page.keyboard.press('Control+k');
+  await page.keyboard.press('ControlOrMeta+k');
   await expect(palette).toBeVisible();
   await expect(palette.getByRole('textbox', { name: 'Search commands' })).toBeFocused();
   await page.keyboard.press('Escape');

@@ -23,6 +23,7 @@ fn request(id: &str, output: &std::path::Path, format: &str) -> ExportRequest {
     serde_json::from_value(json!({"id":id,"content":"<h1>Offline export</h1><p>Readable native document.</p><p>\\(x^2 + y^2\\)</p><img src=\"figure.svg\" alt=\"Diagram\">","inputFormat":"html","format":format,"outputPath":output,"title":"Notation export","assets":[{"name":"figure.svg","svg":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"240\" height=\"80\"><rect x=\"1\" y=\"1\" width=\"238\" height=\"78\" fill=\"white\" stroke=\"black\"/><text x=\"20\" y=\"45\" font-size=\"20\">Alpha → Beta</text></svg>"}]})).unwrap()
 }
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "bundled engines run only inside the Linux sandbox")]
 fn bundled_diagram_engines_render_actual_offline_svg() {
     let runtime = runtime();
     let status = runtime.status();
@@ -45,6 +46,7 @@ fn bundled_diagram_engines_render_actual_offline_svg() {
     }
 }
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "bundled engines run only inside the Linux sandbox")]
 fn bundled_converters_produce_pdf_and_office_archives_with_text_math_and_images() {
     let runtime = runtime();
     let temporary = tempfile::tempdir().unwrap();
@@ -82,6 +84,7 @@ fn bundled_converters_produce_pdf_and_office_archives_with_text_math_and_images(
     }
 }
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "bundled engines run only inside the Linux sandbox")]
 fn engine_failures_report_program_and_exit_status_without_stderr() {
     use notation_lib::engine_process::{run, JobSpec};
     use std::sync::{atomic::AtomicBool, Arc};
@@ -112,6 +115,7 @@ fn engine_failures_report_program_and_exit_status_without_stderr() {
     }
 }
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "bundled engines run only inside the Linux sandbox")]
 fn export_errors_cancel_and_invalid_destinations_preserve_original_files() {
     let runtime = runtime();
     let temporary = tempfile::tempdir().unwrap();
@@ -147,6 +151,7 @@ fn export_errors_cancel_and_invalid_destinations_preserve_original_files() {
     assert_eq!(fs::read_to_string(&destination).unwrap(), "original export");
 }
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "bundled engines run only inside the Linux sandbox")]
 fn automatic_diagrams_cannot_load_user_files_or_connect_to_network() {
     let runtime = runtime();
     let temporary = tempfile::tempdir().unwrap();
@@ -169,6 +174,7 @@ fn automatic_diagrams_cannot_load_user_files_or_connect_to_network() {
     assert!(listener.accept().is_err());
 }
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "bundled engines run only inside the Linux sandbox")]
 fn native_citations_render_inline_references_and_local_footnote_styles() {
     let runtime = runtime();
     let source="---\nreferences:\n - id: doe2024\n   type: book\n   title: A Test Book\n   author:\n    - family: Doe\n      given: Jane\n   issued:\n     date-parts: [[2024]]\n---\nSource [@doe2024].\n";
@@ -247,6 +253,7 @@ fn workspace_media_is_bounded_typed_and_confined_with_inert_svg() {
 }
 
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "AppDir layouts are Linux-only and need a case-sensitive volume")]
 fn runtime_resource_discovery_supports_product_and_executable_appdir_names() {
     let temporary = tempfile::tempdir().unwrap();
     let appdir = temporary.path().join("Notation.AppDir");

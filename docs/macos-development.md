@@ -1,8 +1,10 @@
 # macOS development audit (issue #41)
 
 The [README setup sequence](../README.md#macos-development) prepares a host
-development checkout. This is preparation from Linux, not evidence of a working
-macOS build. No macOS executable, signed app or notarized DMG was produced.
+development checkout. The audit below was prepared from Linux. Since issue #54
+a CI workflow builds, ad-hoc signs and launches the macOS app (see
+[Continuous integration](#continuous-integration)); no Developer ID signed or
+notarized DMG is produced.
 
 ## Platform boundaries
 
@@ -51,4 +53,43 @@ the one profile instance before relaunching. Test native scripts and language
 server termination separately before relying on them. Later validate
 `npm run desktop:build` on each desired host architecture. Signing/notarization
 and any distributable validation are separate future work; do not represent
-either host output as universal. No CI is configured or requested.
+either host output as universal.
+
+## Continuous integration
+
+`.github/workflows/macos.yml` runs on pull requests that touch app, native,
+test or tooling files, and on demand (`workflow_dispatch`):
+
+- **Build + launch smoke** on Apple Silicon (`macos-15`) and Intel
+  (`macos-15-intel`): `scripts/setup-macos.py`, `npm run check`, the Python
+  native suites, `npm run desktop:build`, a bundle check (minimum system
+  version, ad-hoc signature, architecture), then a launch of the built
+  executable in an isolated `HOME` that must stay alive for 20 seconds and
+  create `state.sqlite3`. The DMG, launch log and a screenshot are uploaded.
+- **Rust tests** (`cargo test`, core features) on Apple Silicon.
+- **Playwright WebKit e2e**: the browser-mode suite against Playwright's WebKit
+  build, the closest automatable stand-in for WKWebView. The `webkit` project
+  is opt-in through `NOTATION_E2E_WEBKIT=1` because that build does not start
+  on every Linux host.
+
+A green run proves the app compiles, bundles, launches and that the browser
+suite passes in WebKit. It does not exercise trackpad scrolling, the native
+menu, window dragging, Finder integration or native dialogs; those still need a
+person on a Mac.
+
+## Signing and Gatekeeper
+
+The bundle is ad-hoc signed (`bundle.macOS.signingIdentity: "-"`), which Apple
+Silicon requires to run at all, and declares macOS 13.0 as its minimum system
+version. It is not signed with a Developer ID and not notarized, so a DMG
+downloaded through a browser is quarantined and Gatekeeper refuses it or calls
+it damaged. After copying the app to `/Applications`, clear the quarantine
+flag once:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Notation.app
+```
+
+Alternatively, Control-click the app, choose Open, and confirm (on macOS 15,
+allow it under System Settings → Privacy & Security). Developer ID signing and
+notarization remain future work.

@@ -177,24 +177,29 @@ fn wiki_resolution_prefers_current_folder_then_unique_match_and_never_guesses_am
     let local = database.resolve_wiki_link("Note", from).unwrap();
     assert_eq!(local.status, "resolved");
     assert!(local.path.unwrap().ends_with("source/Note.md"));
-    assert!(database
-        .resolve_wiki_link("Foo", from)
-        .unwrap()
-        .path
-        .unwrap()
-        .ends_with("Foo.md"));
-    assert!(database
-        .resolve_wiki_link("foo", from)
-        .unwrap()
-        .path
-        .unwrap()
-        .ends_with("foo.md"));
+    // Default macOS volumes fold case, so `foo.md` replaced `Foo.md` above and
+    // only one of the two notes exists there.
+    let case_sensitive = fs::read_to_string(root.join("Foo.md")).unwrap() == "# Foo\n";
+    if case_sensitive {
+        assert!(database
+            .resolve_wiki_link("Foo", from)
+            .unwrap()
+            .path
+            .unwrap()
+            .ends_with("Foo.md"));
+        assert!(database
+            .resolve_wiki_link("foo", from)
+            .unwrap()
+            .path
+            .unwrap()
+            .ends_with("foo.md"));
+    }
     assert_eq!(
         database.resolve_wiki_link("FOO", from).unwrap().status,
         "missing"
     );
     let completions = database.wiki_candidates("fOo", from, None).unwrap();
-    assert_eq!(completions.len(), 2);
+    assert_eq!(completions.len(), if case_sensitive { 2 } else { 1 });
     assert_eq!(
         database
             .wiki_candidates("Shortcut#Section", from, None)

@@ -250,6 +250,8 @@ class MacosPlatformTest(unittest.TestCase):
         scripts = json.loads((ROOT / 'package.json').read_text())['scripts']
         self.assertEqual(base['bundle']['targets'], ['appimage'])
         self.assertEqual(macos['bundle']['targets'], ['app', 'dmg'])
+        # Apple Silicon refuses unsigned code; the CSS needs Safari 16.2+ (macOS 13).
+        self.assertEqual(macos['bundle']['macOS'], {'minimumSystemVersion': '13.0', 'signingIdentity': '-'})
         self.assertEqual(base['bundle']['resources'], {'resources/engines/': 'engines/'})
         for name in ['desktop', 'desktop:build', 'desktop:bundle']:
             self.assertIn('scripts/native-cli.py', scripts[name])

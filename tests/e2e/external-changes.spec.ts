@@ -102,7 +102,7 @@ test('focused clean document refreshes source and Markdown preview without a foc
   await setup(page);
   const editor = await source(page).elementHandle();
   await source(page).focus();
-  await page.keyboard.press('Control+End');
+  await page.keyboard.press('ControlOrMeta+End');
   await change(page, '# Updated externally\n\n**Fresh preview**');
   await expectSource(page, '# Updated externally\n\n**Fresh preview**', 1800);
   await expect(page.locator('.preview-pane').getByRole('heading', { name: 'Updated externally' })).toBeVisible();
@@ -136,7 +136,7 @@ test('undo after automatic reload keeps the restored text as a protected unsaved
   await change(page, '# Reloaded from disk');
   await expectSource(page, '# Reloaded from disk');
   await source(page).focus();
-  await page.keyboard.press('Control+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await expectSource(page, original);
   await expect(page).toHaveTitle('• one.md — Notation');
   await nextPoll(page);
@@ -166,14 +166,14 @@ for (const action of ['typing', 'typing then undo', 'disable', 'switch away and 
     await setup(page);
     await holdRead(page);
     if (action === 'typing') await source(page).fill('Typed while reading');
-    if (action === 'typing then undo') { await source(page).fill('Temporary edit'); await page.keyboard.press('Control+z'); await expectSource(page, original); }
+    if (action === 'typing then undo') { await source(page).fill('Temporary edit'); await page.keyboard.press('ControlOrMeta+z'); await expectSource(page, original); }
     if (action === 'disable') await toggle(page, false);
     if (action === 'toggle off and on') { await toggle(page, false); await toggle(page, true); }
     if (action === 'switch away and back') { await tab(page, 'two.md').click(); await tab(page, 'one.md').click(); }
     if (action === 'Hemingway on and off') { await runCommand(page, 'Hemingway mode'); await runCommand(page, 'Hemingway mode'); }
     if (action === 'close') await page.getByRole('button', { name: 'Close tab: one.md', exact: true }).click();
     if (action === 'save unchanged content') {
-      await page.keyboard.press('Control+s');
+      await page.keyboard.press('ControlOrMeta+s');
       await expect.poll(async () => (await state(page)).writes).toBe(1);
       await expect(page.getByRole('status').filter({ hasText: 'Saved one.md' })).toBeVisible();
     }
@@ -194,7 +194,7 @@ test('read finishing during a delayed save preserves the buffer and checked-writ
   await setup(page);
   await holdRead(page);
   await page.evaluate(() => { (window as unknown as { externalMock: Mock }).externalMock.delaySave = true; });
-  await page.keyboard.press('Control+s');
+  await page.keyboard.press('ControlOrMeta+s');
   await expect.poll(async () => (await state(page)).saves).toBe(1);
   await release(page);
   await expectSource(page, original);
@@ -276,7 +276,7 @@ test('saving a dirty conflict still uses the checked write and preserves both ve
   await source(page).fill('My unsaved text');
   await change(page, '# External version');
   await expect(banner(page)).toContainText('changed on disk');
-  await page.keyboard.press('Control+s');
+  await page.keyboard.press('ControlOrMeta+s');
   await expect(page.locator('.app-error')).toContainText('Changed on disk');
   await expectSource(page, 'My unsaved text');
   expect(await page.evaluate(() => (window as unknown as { externalMock: Mock }).externalMock.disk['/one.md'])).toBe('# External version');
