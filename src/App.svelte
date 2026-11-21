@@ -272,7 +272,7 @@
   async function readCodeFile(path: string) { return documents.find(tab=>tab.path===path || tab.id===path)?.content ?? await readDiskFile(path); }
   configureLanguageIntelligence({
     read: readCodeFile,
-    display: async path => { if (!await openPath(path)) return null; await tick(); return editors[documents.find(tab=>tab.path===path)?.id ?? '']?.getView() ?? null; },
+    display: async path => { const tab = await openTab(path); if (!tab) return null; await tick(); return editors[tab.id]?.getView() ?? null; },
     views: () => new Map(documents.flatMap(tab => { const view=editors[tab.id]?.getView(); return tab.path && view ? [[tab.path,view] as const] : []; })),
     editable: path => documents.some(tab=>tab.path===path && !tab.hemingway),
     error: message => { error = message; },
@@ -482,9 +482,18 @@
     return tab;
   }
   async function openPath(selected: string, line?: number, expiresAt?: number, launched = false): Promise<boolean> {
-    if (busy || workspaceBusy) return false;
+    return await openTab(selected, line, expiresAt, launched) !== null;
+  }
+  /**
+   * Open `selected` and return its tab. The backend answers under the file's
+   * canonical path (symbolic links resolved; on a case-insensitive volume the
+   * stored letter case), which need not be the spelling that was asked for,
+   * so callers must use the returned tab rather than look it up by `selected`.
+   */
+  async function openTab(selected: string, line?: number, expiresAt?: number, launched = false): Promise<DocumentTab | null> {
+    if (busy || workspaceBusy) return null;
     const existing = documents.find((tab) => tab.path === selected);
-    if (existing) { selectTab(existing.id); if (line) { layout = 'source'; await tick(); editors[existing.id]?.revealLine(line); } return true; }
+    if (existing) { selectTab(existing.id); if (line) { layout = 'source'; await tick(); editors[existing.id]?.revealLine(line); } return existing; }
     invalidateDiskCheck();
     busy = true; error = '';
     try {
@@ -492,8 +501,8 @@
       if (expiresAt !== undefined && Date.now() >= expiresAt) throw new Error('Agent request expired before the document opened.');
       const tab = receiveDocument(result);
       if (line) { layout = 'source'; await tick(); editors[tab.id]?.revealLine(line); }
-      return true;
-    } catch (cause) { error = 'Could not open document: ' + String(cause); return false; }
+      return tab;
+    } catch (cause) { error = 'Could not open document: ' + String(cause); return null; }
     finally { busy = false; }
   }
   function queueLaunchRequest(request: LaunchRequest) {
@@ -726,7 +735,7 @@
       const resolution = await invoke<WikiResolution>('resolve_wiki_link', { target, sourcePath: relativePath === '' ? null : relativePath && !documents.some(tab=>tab.id===relativePath) ? relativePath : source.path });
       if (ticket !== wikiSerial || !documents.some((tab) => tab.id === sourceId)) return;
       if (resolution.status === 'resolved' && resolution.path) {
-        if (await openPath(resolution.path)) { const tab = documents.find((item) => item.path === resolution.path); if (tab) await jumpToWiki(tab, resolution.heading); }
+        const tab = await openTab(resolution.path); if (tab) await jumpToWiki(tab, resolution.heading);
       } else wikiChoice = { resolution, sourceId, sourcePath: relativePath === '' ? null : relativePath && !documents.some(tab=>tab.id===relativePath) ? relativePath : source.path, ticket };
     } catch (cause) { if (ticket === wikiSerial) error = 'Could not follow wiki link: ' + String(cause); }
     finally { if (ticket === wikiSerial) wikiBusy = false; }
@@ -739,7 +748,7 @@
     wikiBusy = true; error = '';
     try {
       let tab: DocumentTab | undefined;
-      if (path) { if (await openPath(path)) tab = documents.find((item) => item.path === path); }
+      if (path) tab = await openTab(path) ?? undefined;
       else {
         const result = await invoke<DocumentResult>('create_wiki_note', { target: choice.resolution.target, sourcePath: choice.sourcePath !== undefined ? choice.sourcePath : source.path, content: '' });
         if (choice.ticket !== wikiSerial || !documents.some((item) => item.id === source.id)) return;
@@ -970,9 +979,10 @@
             let result: unknown;
             if (request.operation === 'list_tabs') result = { activeTabId: activeId, tabs: documents.map((tab) => ({ id: tab.id, name: tab.name, path: tab.path, dirty: tabDirty(tab), active: tab.id === activeId })) };
             else if (request.operation === 'open_document') {
-              if (!request.path || !await openPath(request.path, undefined, request.expiresAt)) throw new Error(error || 'The editor is busy or the document could not be opened.');
+              const openedTab = request.path ? await openTab(request.path, undefined, request.expiresAt) : null;
+              if (!openedTab) throw new Error(error || 'The editor is busy or the document could not be opened.');
               await tick();
-              const opened = documents.find((tab) => tab.path === request.path);
+              const opened = documents.find((tab) => tab.id === openedTab.id);
               if (!opened) throw new Error('The opened tab is no longer available.');
               result = tabSnapshot(opened);
             } else {
