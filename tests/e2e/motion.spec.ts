@@ -489,3 +489,55 @@ test('only the edited block fades in the Split preview, and document switches fa
   await expect(page.locator('.preview-pane .markdown-body p').last()).toHaveText('Third paragraph. More. Again.');
   expect(await fades()).toHaveLength(1);
 });
+
+test('changing the view mode fades the editor area once and nothing else does', async ({ page }) => {
+  await page.goto('/');
+  await page.evaluate(() => {
+    const original = Element.prototype.animate;
+    const state = window as unknown as { workspaceFades: string[] };
+    state.workspaceFades = [];
+    Element.prototype.animate = function (keyframes, options) {
+      if (this instanceof HTMLElement && this.classList.contains('workspace')) state.workspaceFades.push(`${Object.keys((keyframes as Keyframe[])[0]).join()}:${(keyframes as Keyframe[])[0].opacity}:${(options as KeyframeAnimationOptions).duration}`);
+      return original.call(this, keyframes, options);
+    };
+  });
+  const fades = () => page.evaluate(() => (window as unknown as { workspaceFades: string[] }).workspaceFades);
+  const run = async (label: string) => {
+    await page.getByRole('button', { name: 'Commands', exact: true }).click();
+    const palette = page.getByRole('dialog', { name: 'Commands', exact: true });
+    await palette.getByRole('textbox', { name: 'Search commands' }).fill(label);
+    await palette.getByRole('option', { name: label, exact: true }).click();
+  };
+  const layout = page.getByRole('button', { name: 'Layout', exact: true });
+  const source = page.getByRole('textbox', { name: 'Document source' });
+
+  // Typing, a tab switch and a panel toggle do not fade the editor area.
+  await source.fill('# Heading\n\nSome text.');
+  await page.getByRole('button', { name: 'New document', exact: true }).click();
+  await page.getByRole('tab', { name: 'welcome.md', exact: true }).click();
+  await page.getByRole('navigation', { name: 'App sidebar' }).getByRole('button', { name: 'Templates panel', exact: true }).click();
+  await page.getByRole('navigation', { name: 'App sidebar' }).getByRole('button', { name: 'Templates panel', exact: true }).click();
+  expect(await fades()).toEqual([]);
+
+  await run('Source');
+  await expect(layout).toContainText('Source');
+  await expect.poll(fades).toEqual(['opacity:0.35:180']);
+  // The editor takes input while the fade runs.
+  await source.focus();
+  await page.keyboard.press('Control+End');
+  await page.keyboard.type(' typed during fade');
+  await expect(source).toContainText('typed during fade');
+  await run('Live Preview');
+  await expect(layout).toContainText('Live');
+  await expect.poll(async () => (await fades()).length).toBe(2);
+  // Choosing the mode that is already active changes nothing.
+  await run('Live Preview');
+  await expect(page.getByRole('dialog', { name: 'Commands', exact: true })).toHaveCount(0);
+  expect(await fades()).toHaveLength(2);
+  await expect(page.locator('.content-area > .workspace')).toHaveCSS('opacity', '1');
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await run('Split');
+  await expect(layout).toContainText('Split');
+  expect(await fades()).toHaveLength(2);
+});
