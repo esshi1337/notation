@@ -65,7 +65,7 @@
     const top = showAbove
       ? Math.max(topBound, rect.top - 4 - height)
       : Math.min(rect.bottom + 4, Math.max(topBound, bottomBound - height));
-    listStyle = `left:${left}px;top:${top}px;width:${width}px;max-height:${availableHeight}px;visibility:visible`;
+    listStyle = `left:${left}px;top:${top}px;width:${width}px;max-height:${availableHeight}px;visibility:visible;--pop-shift:${showAbove ? 4 : -4}px`;
   }
   function closeList(restoreFocus = false) {
     if (!open) return;

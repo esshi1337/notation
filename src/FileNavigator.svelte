@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { scrimExit } from './motion';
   import { onMount } from 'svelte';
   let { mode, files, label, read, open, close }: { mode:'files'|'search'; files:string[]; label:(path:string)=>string; read:(path:string)=>Promise<string>; open:(path:string,line?:number)=>Promise<void>; close:()=>void } = $props();
   let query=$state(''), results=$state<{path:string;line?:number;text?:string}[]>([]), pending=$state(false), error=$state('');
@@ -27,7 +28,7 @@
   async function choose(path:string,line?:number){serial++;close();await open(path,line);}
   onMount(()=>{dialog.showModal();input.focus();return()=>{serial++;dialog.close();};});
 </script>
-<dialog class="file-navigator" aria-label={mode==='files'?'Go to file':'Search workspace files'} bind:this={dialog} oncancel={(event)=>{event.preventDefault();close();}}>
+<dialog class="file-navigator" use:scrimExit aria-label={mode==='files'?'Go to file':'Search workspace files'} bind:this={dialog} oncancel={(event)=>{event.preventDefault();close();}}>
   <form onsubmit={(event)=>{event.preventDefault();if(mode==='search')void search();else if(matches[0])void choose(matches[0].path);}}>
     <div class="navigator-heading"><strong>{mode==='files'?'Go to file':'Search workspace files'}</strong><button type="button" aria-label="Close file navigator" onclick={close}>×</button></div>
     <p>Open tabs and files referenced by this workspace.</p>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { motionMs, scrimExit } from './motion';
   import { onDestroy, onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { nativeStore } from './store';
@@ -42,6 +43,14 @@
   ];
   const mac = /Mac|iPhone|iPad/u.test(navigator.platform);
   let section = $state<Section>('Appearance');
+  // Fade the incoming section; the previous one leaves at once.
+  let content: HTMLDivElement;
+  let shownSection: Section | null = null;
+  $effect(() => {
+    const next = section;
+    if (shownSection && shownSection !== next) content?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: motionMs('fast'), easing: 'cubic-bezier(.2, .8, .2, 1)' });
+    shownSection = next;
+  });
   let status = $state<AgentStatus | null>(null);
   let refreshing = $state(false);
   let error = $state('');
@@ -178,11 +187,11 @@
   });
 </script>
 
-<dialog class="settings-dialog settings-workbench" aria-label="Settings" bind:this={dialog} onkeydown={trapFocus} oncancel={(event) => { event.preventDefault(); close(); }}>
+<dialog class="settings-dialog settings-workbench" use:scrimExit aria-label="Settings" bind:this={dialog} onkeydown={trapFocus} oncancel={(event) => { event.preventDefault(); close(); }}>
   <div class="settings-heading"><strong>Settings</strong><button type="button" class="settings-close" aria-label="Close settings" onclick={close}><Icon name="close" size={14} {theme} /></button></div>
   <div class="settings-body">
     <div class="settings-sections" role="tablist" aria-label="Settings sections" aria-orientation="vertical">{#each sections as item, index}<button type="button" role="tab" data-section={item} aria-selected={section === item} tabindex={section === item ? 0 : -1} onclick={() => section = item} onkeydown={(event) => sectionKey(event, index)}>{item}</button>{/each}</div>
-    <div class="settings-content" class:settings-shortcuts={section === 'Shortcuts'} class:settings-editor={section === 'Editor'} role="tabpanel" aria-label={section} tabindex="-1">
+    <div class="settings-content" class:settings-shortcuts={section === 'Shortcuts'} class:settings-editor={section === 'Editor'} role="tabpanel" aria-label={section} tabindex="-1" bind:this={content}>
       {#if section === 'Appearance'}
         <div class="settings-intro"><strong>Make room for your thoughts.</strong><p>A quiet workspace, adjusted to you.</p></div>
         <div class="settings-fields">

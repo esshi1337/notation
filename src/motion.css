@@ -42,3 +42,23 @@ button:active:not(:disabled) { background-color: var(--active); }
    Text fields always show theirs, and any key press brings rings back. */
 :root[data-input='pointer'] :is(button, summary, a, [role='tab'], [role='option'], [role^='menuitem'], [tabindex]):focus-visible:not(input, textarea, select, [contenteditable='true']) { outline-color: transparent; }
 .compact-menu:focus-visible { outline: none; }
+
+/* Menus and popovers. Header menus use Svelte transitions (motion.ts `pop`)
+   so they can also animate out; the select popover and editor tooltips only
+   fade in, because their owners reposition or reuse them. */
+@keyframes popover-in { from { opacity: 0; transform: translateY(var(--pop-shift, -4px)); } }
+@keyframes fade-in { from { opacity: 0; } }
+.select-listbox { animation: popover-in var(--motion-base) var(--ease-out); }
+.cm-tooltip { animation: fade-in var(--motion-fast) var(--ease-out); }
+
+/* Modal dialogs rise and fade in with their backdrop. They stay interactive
+   from the first frame; on close the dialog leaves at once and only the dim
+   fades (motion.ts `scrimExit`), so focus is never held back. */
+@keyframes dialog-in { from { opacity: 0; transform: translateY(8px); } }
+@keyframes palette-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } }
+@keyframes backdrop-in { from { opacity: 0; } }
+dialog[open] { animation: dialog-in var(--motion-slow) var(--ease-out); }
+dialog.command-palette[open] { animation: palette-in var(--motion-base) var(--ease-out); transform-origin: top center; }
+dialog[open]::backdrop { animation: backdrop-in var(--motion-slow) var(--ease-out); }
+dialog.command-palette[open]::backdrop { animation-duration: var(--motion-base); }
+.modal-scrim-exit { position: fixed; inset: 0; z-index: 2000; background: #0000007a; pointer-events: none; }

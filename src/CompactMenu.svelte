@@ -5,6 +5,7 @@
   import Icon from './Icon.svelte';
   import { commandIcon } from './icons';
   import type { IconTheme } from './icons';
+  import { pop } from './motion';
 
   let { label, text, items, execute, open = $bindable(false), radio = false, theme }: { label: string; text: string; items: CommandItem[]; execute: (id: CommandId) => void; open?: boolean; radio?: boolean; theme: IconTheme } = $props();
   let host: HTMLDivElement, trigger: HTMLButtonElement;
@@ -38,7 +39,7 @@
   <button class="compact-menu-trigger" class:brand-trigger={branded} bind:this={trigger} aria-label={label} aria-haspopup="menu" aria-expanded={open} onclick={(event) => { pointerOpened = !open && event.detail > 0; open = !open; }}>
     {#if branded}<Icon name="mark" size={18} {theme} />{:else}<span class="compact-menu-label">{text}</span><Icon name="chevron" size={14} {theme} />{/if}
   </button>
-  {#if open}<div class="compact-menu" class:app-menu={branded} role="menu" aria-label={label} tabindex="-1" onkeydown={keyboard}>
+  {#if open}<div class="compact-menu" class:app-menu={branded} role="menu" aria-label={label} tabindex="-1" onkeydown={keyboard} in:pop={{ origin: branded ? 'top left' : 'top right' }} out:pop={{ origin: branded ? 'top left' : 'top right', exit: true }}>
     {#if branded}<div class="compact-menu-brand"><Icon name="mark" size={18} {theme} /><strong>Notation</strong></div>{/if}
     {#each items as item, index (item.id)}
       {#if index === 0 || items[index - 1].group !== item.group}<div class="menu-group">{item.group}</div>{/if}

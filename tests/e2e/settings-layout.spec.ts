@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { runCommand, setSetting } from './commands';
+import { runCommand, setSetting, settled } from './commands';
 
 for (const size of [{ width: 720, height: 520 }, { width: 1266, height: 1357 }]) {
   test(`Settings stays fixed and shortcuts scroll internally at ${size.width}x${size.height}`, async ({ page }, testInfo) => {
@@ -7,6 +7,7 @@ for (const size of [{ width: 720, height: 520 }, { width: 1266, height: 1357 }])
     await page.goto('/');
     await runCommand(page, 'Settings');
     const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
+    await settled(dialog);
     const original = await dialog.boundingBox();
     expect(original).not.toBeNull();
     expect(original!.height).toBeLessThanOrEqual(620);
