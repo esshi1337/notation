@@ -369,3 +369,41 @@ fn block_candidates_match_reference_syntax_exclusions_duplicate_ids_and_crlf_loc
         Some("^one")
     );
 }
+
+#[test]
+fn excerpts_come_from_each_returned_hit_and_name_matches_fall_back_to_the_note_start() {
+    let temporary = tempfile::tempdir().unwrap();
+    let (database, root) = setup(temporary.path());
+    let filler = "plain filler sentence without the term. ".repeat(40);
+    for index in 0..30 {
+        fs::write(root.join(format!("note{index:02}.md")), format!("# Note {index}\n{filler}\nThe quasar{index:02} marker sits beside the shared nebula here.\n{filler}\n")).unwrap();
+    }
+    fs::write(root.join("nebula-named.md"), "# Only the name matches\nNothing else of interest.\n").unwrap();
+    database.index_workspace().unwrap();
+    // Every hit on the page carries the excerpt around its own match.
+    let mut seen = Vec::new();
+    for offset in [0, 10, 20, 30] {
+        let page = database.search_workspace_advanced(request(json!({"text":"nebula","sort":"path","limit":10,"offset":offset}))).unwrap();
+        assert_eq!(page.total, 31);
+        for item in &page.results {
+            if item.path.ends_with("nebula-named.md") {
+                assert!(item.snippet.starts_with("# Only the name matches"), "{}", item.snippet);
+            } else {
+                let number = &item.path[item.path.len() - 5..item.path.len() - 3];
+                assert!(item.snippet.contains("nebula"), "{}", item.snippet);
+                assert!(item.snippet.contains(&format!("quasar{number}")), "{} for {}", item.snippet, item.path);
+                assert!(item.snippet.len() < 400, "an excerpt, not the note");
+                assert!(item.score < 0.0);
+            }
+            seen.push(item.path.clone());
+        }
+    }
+    seen.sort();
+    seen.dedup();
+    assert_eq!(seen.len(), 31);
+    // Relevance order still ranks by the full-text score.
+    let ranked = database.search_workspace_advanced(request(json!({"text":"quasar07","limit":5}))).unwrap();
+    assert_eq!(ranked.total, 1);
+    assert!(ranked.results[0].path.ends_with("note07.md"));
+    assert!(ranked.results[0].snippet.contains("quasar07"));
+}
