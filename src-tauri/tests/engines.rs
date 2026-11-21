@@ -311,3 +311,61 @@ fn status_tells_an_unsupported_platform_from_a_damaged_install() {
     let json = serde_json::to_value(&status).unwrap();
     assert_eq!(json["platformSupported"], cfg!(target_os = "linux"));
 }
+
+#[test]
+fn unchanged_media_is_confirmed_without_reading_and_changes_are_reloaded() {
+    use notation_lib::assets::{read_if_changed, AssetResponse};
+    use std::time::{Duration, SystemTime};
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().join("notes");
+    fs::create_dir(&root).unwrap();
+    let db = Database::open(&temporary.path().join("app/state.sqlite3")).unwrap();
+    db.set_workspace(root.to_str().unwrap()).unwrap();
+    let image = root.join("image.png");
+    let age = |path: &std::path::Path, seconds: u64| {
+        fs::File::options().write(true).open(path).unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(seconds)).unwrap();
+    };
+    fs::write(&image, b"\x89PNG\r\n\x1a\nfirst").unwrap();
+    age(&image, 60);
+    let first = assets::read(&db, "image.png", None).unwrap();
+    assert!(!first.fingerprint.is_empty());
+    // The caller's copy is current: no data comes back.
+    match read_if_changed(&db, "image.png", None, Some(&first.fingerprint)).unwrap() {
+        AssetResponse::Unchanged { unchanged, fingerprint } => {
+            assert!(unchanged);
+            assert_eq!(fingerprint, first.fingerprint);
+        }
+        AssetResponse::Asset(_) => panic!("an unchanged file must not be re-sent"),
+    }
+    let json = serde_json::to_value(read_if_changed(&db, "image.png", None, Some(&first.fingerprint)).unwrap()).unwrap();
+    assert_eq!(json, json!({"unchanged": true, "fingerprint": first.fingerprint}));
+    // No or another fingerprint: the asset itself.
+    for known in [None, Some("0:0:0:0"), Some("")] {
+        match read_if_changed(&db, "image.png", None, known).unwrap() {
+            AssetResponse::Asset(asset) => assert_eq!(asset.data_url, first.data_url),
+            AssetResponse::Unchanged { .. } => panic!("unknown fingerprint"),
+        }
+    }
+    // Changed content (same length) is re-sent with a new fingerprint.
+    fs::write(&image, b"\x89PNG\r\n\x1a\nother").unwrap();
+    age(&image, 30);
+    let second = match read_if_changed(&db, "image.png", None, Some(&first.fingerprint)).unwrap() {
+        AssetResponse::Asset(asset) => asset,
+        AssetResponse::Unchanged { .. } => panic!("a changed file must be re-sent"),
+    };
+    assert_ne!(second.fingerprint, first.fingerprint);
+    assert_ne!(second.data_url, first.data_url);
+    // A file modified a moment ago is not trusted to be unchanged yet.
+    fs::write(&image, b"\x89PNG\r\n\x1a\nfresh").unwrap();
+    let fresh = assets::read(&db, "image.png", None).unwrap();
+    assert!(matches!(read_if_changed(&db, "image.png", None, Some(&fresh.fingerprint)).unwrap(), AssetResponse::Asset(_)));
+    // Knowing a fingerprint opens nothing: checks run before it is compared.
+    fs::write(temporary.path().join("outside.png"), b"\x89PNG\r\n\x1a\nsecret").unwrap();
+    age(&temporary.path().join("outside.png"), 60);
+    assert!(read_if_changed(&db, "../outside.png", None, Some(&first.fingerprint)).is_err());
+    assert!(read_if_changed(&db, "missing.png", None, Some(&first.fingerprint)).is_err());
+    fs::write(root.join("fake.png"), "<html>not an image</html>").unwrap();
+    age(&root.join("fake.png"), 60);
+    assert!(read_if_changed(&db, "fake.png", None, Some("1:2:3:4")).is_err());
+}

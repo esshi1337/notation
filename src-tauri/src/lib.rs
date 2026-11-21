@@ -346,10 +346,11 @@ mod desktop {
     async fn read_workspace_asset(
         path: String,
         source_path: Option<String>,
+        known: Option<String>,
         database: State<'_, DatabaseState>,
-    ) -> Result<assets::Asset, String> {
+    ) -> Result<assets::AssetResponse, String> {
         database_work(database.get()?, move |database| {
-            assets::read(&database, &path, source_path.as_deref())
+            assets::read_if_changed(&database, &path, source_path.as_deref(), known.as_deref())
         })
         .await
     }

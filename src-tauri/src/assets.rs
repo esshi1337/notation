@@ -7,9 +7,63 @@ use std::{io::Read, path::Path};
 pub struct Asset {
     pub mime: String,
     pub data_url: String,
+    /// Identifies the file content this was read from; see `read_if_changed`.
+    pub fingerprint: String,
+}
+/// Either the asset, or the confirmation that the caller's copy is current.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum AssetResponse {
+    Unchanged { unchanged: bool, fingerprint: String },
+    Asset(Asset),
+}
+/// Size, modification time and identity of an opened file.
+fn fingerprint(metadata: &std::fs::Metadata) -> (String, bool) {
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok());
+    #[cfg(unix)]
+    let identity = {
+        use std::os::unix::fs::MetadataExt;
+        (metadata.dev(), metadata.ino())
+    };
+    #[cfg(not(unix))]
+    let identity = (0u64, 0u64);
+    // A rewrite within the filesystem's timestamp granularity can keep the
+    // same size and time; only a fingerprint two seconds old is trusted.
+    let settled = modified.is_some_and(|modified| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .is_ok_and(|now| now.saturating_sub(modified) >= std::time::Duration::from_secs(2))
+    });
+    (
+        format!(
+            "{}:{}:{}:{}",
+            metadata.len(),
+            modified.map_or(0, |modified| modified.as_nanos()),
+            identity.0,
+            identity.1
+        ),
+        settled,
+    )
 }
 const LIMIT: usize = 20 * 1024 * 1024;
 pub fn read(database: &Database, path: &str, source: Option<&str>) -> Result<Asset, String> {
+    match read_if_changed(database, path, source, None)? {
+        AssetResponse::Asset(asset) => Ok(asset),
+        AssetResponse::Unchanged { .. } => unreachable!("no known fingerprint was given"),
+    }
+}
+/// Read a workspace media file unless the caller already holds it: `known`
+/// is the fingerprint of the caller's copy. The path and scope checks run
+/// either way; only reading and encoding the bytes is skipped.
+pub fn read_if_changed(
+    database: &Database,
+    path: &str,
+    source: Option<&str>,
+    known: Option<&str>,
+) -> Result<AssetResponse, String> {
     if path.is_empty() || path.len() > 4096 || path.contains(':') {
         return Err("Choose a workspace-local media path. Remote media is loaded only after an explicit click.".into());
     }
@@ -28,6 +82,13 @@ pub fn read(database: &Database, path: &str, source: Option<&str>) -> Result<Ass
     }
     if metadata.len() > LIMIT as u64 {
         return Err("Local media exceeds the 20 MiB limit.".into());
+    }
+    let (fingerprint, settled) = fingerprint(&metadata);
+    if settled && known == Some(fingerprint.as_str()) {
+        return Ok(AssetResponse::Unchanged {
+            unchanged: true,
+            fingerprint,
+        });
     }
     let mut bytes = Vec::new();
     file.take((LIMIT + 1) as u64)
@@ -79,10 +140,11 @@ pub fn read(database: &Database, path: &str, source: Option<&str>) -> Result<Ass
                 .into(),
         ),
     };
-    Ok(Asset {
+    Ok(AssetResponse::Asset(Asset {
         mime: mime.into(),
         data_url: format!("data:{mime};base64,{}", STANDARD.encode(bytes)),
-    })
+        fingerprint,
+    }))
 }
 /// SVG media and engine output are inert and self-contained. XML entities are
 /// decoded before checking URLs; DTDs, script, foreign HTML and remote/file URLs
