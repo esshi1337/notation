@@ -53,8 +53,12 @@ Saved files remain ordinary Markdown or Mermaid source. Use `.md` for notes and
 `.mmd` for a standalone diagram. Fenced `mermaid`, `dot`/`graphviz`, `d2`, and
 `plantuml`/`puml` blocks render diagrams, with errors shown in place. Mermaid works
 in both modes; the other engines require the desktop renderer. Inline math
-uses `$...$`; display math uses `$$...$$` with bundled KaTeX fonts and no network
-request.
+uses `$...$`; display math uses `$$...$$`. Math is read as Typst by default and
+rendered by a bundled Typst compiler; equations written in LaTeX (backslash
+commands, `^{…}`) are detected and rendered by bundled KaTeX. Neither makes a
+network request. A `math: typst`, `math: latex` or `math: auto` property
+overrides this for one note, and **Settings → Editor → Math syntax** sets the
+default.
 
 To follow file edits made by an external editor or agent, enable
 **Settings → Editor → Automatically reload external changes**. It starts off.
