@@ -1,16 +1,19 @@
 // The rendered SQL block: Run, Cancel, the last result of this session.
 //
 // Nothing here runs a query on its own. `runSql` is reached only from the
-// Run button, the block's Ctrl/Cmd+Enter, or the unlock form the user
-// submits. Every database value is put on the page with textContent.
+// Run button or the block's Ctrl/Cmd+Enter, and `runSql` confirms the first
+// run from a note in a native dialog. Every database value is put on the
+// page with textContent and never into an attribute, so note-authored CSS
+// has nothing to select on. Passwords are never asked for here: a note
+// could imitate such a prompt.
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { motionMs } from './motion';
 import { isMac } from './platform';
-import { DESKTOP_ONLY, kindLabels, knownConnection, connectionsLoaded, listConnections, subscribeConnections, unlockConnection, sqlFailure } from './sql-connections';
-import { cellCut, cellKind, cellNote, cellText, formatDuration, formatRows, sortedRows, sqlParameters, toCsv, toMarkdownTable, truncationNotice } from './sql-format';
+import { DESKTOP_ONLY, kindLabels, knownConnection, connectionsLoaded, listConnections, subscribeConnections, sqlFailure } from './sql-connections';
+import { cellCut, cellKind, cellText, formatDuration, formatRows, sortedRows, sqlParameters, toCsv, toMarkdownTable, truncationNotice } from './sql-format';
 import type { SqlResult } from './sql-format';
-import { cancelSql, clearSql, runSql, sqlKey, sqlState, subscribeSql } from './sql-session';
+import { cancelSql, runSql, sqlKey, sqlState, subscribeSql } from './sql-session';
 
 export type SqlBlockContext = {
   /** The document the block belongs to; results are kept per document. */
@@ -51,10 +54,8 @@ function table(result: SqlResult, key: string, redraw: () => void): HTMLElement 
     const active = sort?.column === index;
     th.setAttribute('aria-sort', active ? sort!.descending ? 'descending' : 'ascending' : 'none');
     const button = element('button', 'sql-sort'); button.type = 'button';
-    button.append(element('span', 'sql-column-name', column.name || ' '), element('span', 'sql-sort-mark', active ? sort!.descending ? '▼' : '▲' : ''));
+    button.append(element('span', 'sql-hidden', 'Sort by '), element('span', 'sql-column-name', column.name || `column ${index + 1}`), element('span', 'sql-sort-mark', active ? sort!.descending ? '▼' : '▲' : ''));
     button.lastElementChild!.setAttribute('aria-hidden', 'true');
-    button.title = column.typeName ? `${column.name} · ${column.typeName}` : column.name;
-    button.setAttribute('aria-label', `Sort by ${column.name || 'column ' + (index + 1)}`);
     button.addEventListener('click', (event) => {
       event.stopPropagation();
       // Ascending, descending, then back to the order the database returned.
@@ -77,7 +78,7 @@ function table(result: SqlResult, key: string, redraw: () => void): HTMLElement 
         const td = element('td', 'sql-cell-' + cellKind(cell));
         // Text only: a value can never become markup.
         td.textContent = cellText(cell);
-        if (cellCut(cell)) { td.classList.add('sql-cell-cut'); td.title = cellNote(cell); }
+        if (cellCut(cell)) td.classList.add('sql-cell-cut');
         tr.append(td);
       }
       body.append(tr);
@@ -110,7 +111,7 @@ export function renderSqlBlock(target: HTMLElement, block: { connection: string;
 
   let timer: ReturnType<typeof setInterval> | undefined, alive = true, drawn = '';
   const stopTimer = () => { if (timer) { clearInterval(timer); timer = undefined; } };
-  const start = () => { if (alive && context.current() && !run.disabled) void runSql(key, block.connection, block.sql, sqlParameters(block.sql, context.variables)); };
+  const start = () => { if (alive && context.current() && !run.disabled) void runSql(context.scope, block.connection, block.sql, sqlParameters(block.sql, context.variables)); };
 
   const status = (text: string) => { const line = element('p', 'sql-status', text); line.setAttribute('role', 'status'); return line; };
   const failure = (text: string) => { const line = element('div', 'sql-error', text); line.setAttribute('role', 'alert'); return line; };
@@ -141,26 +142,6 @@ export function renderSqlBlock(target: HTMLElement, block: { connection: string;
     bar.append(note);
     return bar;
   };
-  const unlock = () => {
-    // Ask-every-session: the password goes straight to the backend, which
-    // keeps it in memory. It is not stored on the page.
-    const form = element('form', 'sql-unlock'); form.autocomplete = 'off';
-    const field = element('input'); field.type = 'password'; field.autocomplete = 'new-password'; field.spellcheck = false;
-    field.setAttribute('aria-label', 'Password for ' + block.connection); field.placeholder = 'Password for ' + block.connection;
-    const submit = element('button', '', 'Unlock and run'); submit.type = 'submit';
-    const problem = element('span', 'sql-error'); problem.setAttribute('role', 'alert');
-    form.append(field, submit, problem);
-    form.addEventListener('click', (event) => event.stopPropagation());
-    form.addEventListener('submit', (event) => {
-      event.preventDefault(); event.stopPropagation();
-      const value = field.value; field.value = '';
-      if (!value || submit.disabled) return;
-      submit.disabled = true;
-      unlockConnection(block.connection, value).then(() => { if (alive) { clearSql(key); start(); } }, (cause) => { if (alive) { problem.textContent = sqlFailure(cause).message; submit.disabled = false; } });
-    });
-    return form;
-  };
-
   const update = () => {
     if (!alive) return;
     if (!target.isConnected && drawn) { cleanup(); return; }
@@ -185,7 +166,7 @@ export function renderSqlBlock(target: HTMLElement, block: { connection: string;
       const tick = () => { const seconds = Math.floor((Date.now() - state.startedAt) / 1000); line.textContent = state.cancelling ? 'Cancelling on the server…' : seconds ? `Running… ${seconds} s` : 'Running…'; };
       tick(); timer = setInterval(tick, 1000); output.append(line);
     } else if (state.status === 'error') {
-      if (state.code === 'password_required') output.append(status(state.message), unlock());
+      if (state.code === 'password_required') output.append(status(`${block.connection} asks for its password once per session. Enter it in Settings → Databases, then run again.`));
       else if (state.code === 'cancelled') output.append(status('Query cancelled.'));
       else output.append(failure(state.message));
     } else {
@@ -206,7 +187,6 @@ export function renderSqlBlock(target: HTMLElement, block: { connection: string;
   cancel.addEventListener('click', (event) => { event.stopPropagation(); void cancelSql(key); });
   const keydown = (event: KeyboardEvent) => {
     if (event.key !== 'Enter' || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
-    if ((event.target as HTMLElement).closest('.sql-unlock')) return;
     event.preventDefault(); event.stopPropagation(); start();
   };
   target.addEventListener('keydown', keydown);
@@ -220,5 +200,5 @@ export function renderSqlBlock(target: HTMLElement, block: { connection: string;
 
 /** Run the block at a source position, for the editor's Ctrl/Cmd+Enter. */
 export function runSqlBlock(scope: string, block: { connection: string; sql: string }, variables: Record<string, unknown>) {
-  void runSql(sqlKey(scope, block.connection, block.sql), block.connection, block.sql, sqlParameters(block.sql, variables));
+  void runSql(scope, block.connection, block.sql, sqlParameters(block.sql, variables));
 }

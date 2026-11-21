@@ -421,6 +421,8 @@
 .database-row-copy p { margin: 2px 0 0; overflow: hidden; color: var(--muted); font-size: 12px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
 .database-row-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
 .database-confirm { color: var(--muted); font-size: 12px; }
+.database-unlock { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.settings-content .database-unlock input { flex: 0 1 220px; width: auto; min-width: 0; }
 .settings-databases .database-danger { border-color: var(--error); color: var(--error); }
 .settings-databases .database-add { align-self: flex-start; }
 .settings-databases .database-primary { border-color: var(--muted); background: var(--active); color: var(--heading); }
@@ -877,8 +879,8 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .sql-block-compact .sql-actions { border-bottom: 0; }
 .sql-actions strong { color: var(--muted); font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; font-weight: 400; line-height: 18px; text-transform: uppercase; }
 .sql-connection { min-width: 0; margin-right: auto; overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.sql-actions button, .sql-toolbar button, .sql-unlock button, .sql-more { min-height: 26px; padding: 2px 8px; border-radius: var(--radius-control); background: var(--hover); font: 13px/20px 'Source Sans 3', sans-serif; transition: var(--control-transition); }
-.sql-actions button:disabled, .sql-unlock button:disabled { cursor: default; opacity: .55; }
+.sql-actions button, .sql-toolbar button, .sql-more { min-height: 26px; padding: 2px 8px; border-radius: var(--radius-control); background: var(--hover); font: 13px/20px 'Source Sans 3', sans-serif; transition: var(--control-transition); }
+.sql-actions button:disabled { cursor: default; opacity: .55; }
 .sql-actions .sql-run:not(:disabled) { background: var(--active); color: var(--heading); }
 .sql-output { order: 2; min-width: 0; border-top: 1px solid var(--border); font: 13px/20px 'Source Sans 3', sans-serif; }
 .sql-output .sql-status { margin: 0; padding: 8px 16px; color: var(--muted); font-size: 12px; line-height: 18px; }
@@ -907,9 +909,7 @@ input[type='checkbox']:disabled { cursor: default; opacity: .6; }
 .sql-table .sql-cell-date { font-variant-numeric: tabular-nums; }
 .sql-table .sql-cell-other, .sql-table .sql-cell-cut { color: var(--muted); }
 .sql-more { margin: 6px 16px 8px; }
-.sql-unlock { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 16px 10px; }
-.sql-unlock input { flex: 0 1 240px; min-width: 0; min-height: 26px; padding: 2px 8px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--bg); color: var(--text); font: 13px/20px 'Source Sans 3', sans-serif; }
-.sql-unlock .sql-error { padding: 0; }
+.sql-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .cm-live-sql-result .sql-block { margin: 6px 0 12px; }
 .media-embed { display: block; margin: .8em 0; max-width: 100%; font: 12px/1.5 'Source Sans 3', sans-serif; overflow: hidden; }
 .media-embed img, .media-embed video, .media-embed canvas { display: block; max-width: 100%; height: auto; }

@@ -16,8 +16,8 @@ test('cells keep their kind and are shown as text', () => {
   assert.equal(cellText(null), 'NULL');
   assert.equal(cellText(false), 'false');
   assert.equal(cellText({ t: 'bytes', v: '00ff', n: 2 }), '0x00ff');
-  assert.equal(cellText({ t: 'bytes', v: '00ff', n: 300 }), '0x00ff…');
-  assert.equal(cellText({ t: 'text', v: 'abc', n: 9000 }), 'abc…');
+  assert.equal(cellText({ t: 'bytes', v: '00ff', n: 300 }), '0x00ff… (300 bytes)');
+  assert.equal(cellText({ t: 'text', v: 'abc', n: 9000 }), 'abc… (9,000 bytes)');
   assert.equal(cellText('<img src=x onerror=alert(1)>'), '<img src=x onerror=alert(1)>');
   assert.equal(cellCut({ t: 'bytes', v: '00ff', n: 2 }), false);
   assert.equal(cellCut({ t: 'text', v: 'abc', n: 9000 }), true);

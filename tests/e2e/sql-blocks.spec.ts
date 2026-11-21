@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { openSettings } from './commands';
 
 const PASSWORD = 'dummy-Pa55word-7f3a91-do-not-leak';
 const NOTE = '---\nmin_id: 2\nlabel: "x\' or 1=1 --"\n---\n# Report\n\n```sql connection:analytics\nselect id, name, note from customers where id >= :min_id\n```\n\nAfter.\n';
@@ -17,7 +18,7 @@ const result = { connection: 'analytics', kind: 'postgres', columns: [{ name: 'i
 async function desktop(page: Page, options: Options = {}) {
   await page.addInitScript(({ content, layout, connections, result }) => {
     const state = {
-      calls: [] as Call[], mode: 'ok' as 'ok' | 'hang' | 'error' | 'locked' | 'truncated', unlocked: false,
+      calls: [] as Call[], mode: 'ok' as 'ok' | 'hang' | 'error' | 'locked' | 'truncated', unlocked: false, confirm: true,
       pending: [] as { id: string; reject: (error: unknown) => void }[],
     };
     const tab = { id: 'note', name: 'report.md', path: '/notes/report.md', content, savedContent: content, savedName: 'report.md', updatedAt: 1 };
@@ -29,8 +30,10 @@ async function desktop(page: Page, options: Options = {}) {
         if (cmd === 'bootstrap_state') return { settings: { layout }, draft: null, scriptDraft: null, scripts: [], recents: [], workspace: null, workspaceCatalog: { activeId: null, workspaces: [] }, session: { activeTabId: 'note', tabs: [tab], updatedAt: 1 } };
         if (cmd === 'launch_ready') return [];
         if (cmd === 'plugin:event|listen') return 1;
+        // The native confirmation for the first run from a note.
+        if (cmd === 'plugin:dialog|message') return state.confirm ? 'Allow and run' : 'Cancel';
         if (cmd === 'read_document_snapshot') return { path: args.path, content };
-        if (cmd === 'sql_list_connections') return { connections, keychainAvailable: true, keychainReason: null, maxRowLimit: 10000, maxTimeoutSeconds: 600 };
+        if (cmd === 'sql_list_connections') return { connections: connections.map((item: Record<string, unknown>) => state.unlocked && item.passwordStorage === 'session' ? { ...item, passwordState: 'session' } : item), keychainAvailable: true, keychainReason: null, maxRowLimit: 10000, maxTimeoutSeconds: 600 };
         if (cmd === 'sql_unlock_connection') { state.unlocked = true; return null; }
         if (cmd === 'sql_cancel') { const run = state.pending.find(item => item.id === args.id); run?.reject({ code: 'cancelled', message: 'Query cancelled.' }); return !!run; }
         if (cmd === 'sql_run') {
@@ -72,6 +75,12 @@ test('rendering a note runs nothing; Run shows a sortable text-only table', asyn
   // The property is sent as a parameter beside the SQL, never pasted into it.
   expect(runs[0].args.request).toMatchObject({ connection: 'analytics', sql: 'select id, name, note from customers where id >= :min_id', parameters: { min_id: 2 } });
   expect(Object.keys(runs[0].args.request)).toEqual(['id', 'connection', 'sql', 'parameters']);
+  // The first run from this note was confirmed once, in a native dialog that names the connection and shows the query.
+  const asked = await calls(page, 'plugin:dialog|message');
+  expect(asked).toHaveLength(1);
+  expect(asked[0].args.message).toContain('Run this query on analytics (Postgres, reader@db.example.test:5432/app)?');
+  expect(asked[0].args.message).toContain('select id, name, note from customers where id >= :min_id');
+  expect(asked[0].args.message).toContain('read-only');
   await expect(sql.locator('.sql-meta')).toHaveText(/^Ran at .+ · 38 ms · 3 rows$/u);
   await expect(sql.getByRole('button', { name: 'Run query: analytics' })).toHaveText('Run again');
 
@@ -99,6 +108,13 @@ test('rendering a note runs nothing; Run shows a sortable text-only table', asyn
   await table.getByRole('button', { name: 'Sort by note' }).click();
   expect((await table.locator('tbody tr td:nth-child(3)').allTextContents()).at(-1)).toBe('NULL');
   expect(await calls(page, 'sql_run')).toHaveLength(1);
+  // No database value or column name is in an attribute, where note CSS could select on it.
+  const attributes = await sql.evaluate((element) => [...element.querySelectorAll('.sql-output *')].flatMap(node => [...node.attributes].map(attribute => attribute.value)).join('\n'));
+  for (const value of ['Linus', 'Grace', 'onerror', 'example.test', 'int4']) expect(attributes.split('\n')).not.toContainEqual(expect.stringContaining(value));
+  // Running again asks nothing more for this note and connection.
+  await sql.getByRole('button', { name: 'Run query: analytics' }).click();
+  await expect.poll(async () => (await calls(page, 'sql_run')).length).toBe(2);
+  expect(await calls(page, 'plugin:dialog|message')).toHaveLength(1);
 
   // The result survives a re-render of the preview and is not written anywhere.
   await page.locator('.cm-content').click();
@@ -151,19 +167,52 @@ test('an unknown connection is named, with nothing to run', async ({ page }) => 
   expect(await calls(page, 'sql_run')).toHaveLength(0);
 });
 
-test('an ask-every-session connection takes its password inline and passes it straight to the backend', async ({ page }) => {
+test('a declined confirmation runs nothing, and note HTML cannot restyle or relabel the Run button', async ({ page }) => {
+  // A note from someone else tries to stretch Run over the window and to trigger it from its own label.
+  await desktop(page, { content: '<style>.sql-run{position:fixed;inset:0;opacity:0}</style>\n\n<div style="position:fixed;inset:0;pointer-events:none">Click anywhere to continue</div>\n\n<label for="run">Continue</label>\n\n```sql connection:analytics\nselect * from customers\n```\n' });
+  const sql = block(page), run = sql.getByRole('button', { name: 'Run query: analytics' });
+  await expect(run).toBeVisible();
+  const preview = page.getByRole('region', { name: 'Document preview' });
+  expect(await preview.locator('style, [style*="fixed"]').count()).toBe(0);
+  await expect(run).toHaveCSS('position', 'static');
+  await expect(run).toHaveCSS('opacity', '1');
+  expect(await run.getAttribute('id')).toBeNull();
+  await preview.getByText('Continue', { exact: true }).click();
+  expect(await calls(page, 'plugin:dialog|message')).toHaveLength(0);
+  // Even a real click on Run starts nothing until the native dialog is accepted.
+  await page.evaluate(() => { (window as unknown as { sqlMock: { confirm: boolean } }).sqlMock.confirm = false; });
+  await run.click();
+  await expect.poll(async () => (await calls(page, 'plugin:dialog|message')).length).toBe(1);
+  await run.click();
+  await expect.poll(async () => (await calls(page, 'plugin:dialog|message')).length).toBe(2);
+  expect(await calls(page, 'sql_run')).toHaveLength(0);
+  await expect(sql.getByRole('status')).toContainText('Not run in this session.');
+});
+
+test('an ask-every-session password is entered in Settings, never in the note', async ({ page }) => {
   await desktop(page, { connections: [{ ...analytics, passwordStorage: 'session', passwordState: 'needed' }] });
   await mode(page, 'locked');
   const sql = block(page);
   await sql.getByRole('button', { name: 'Run query: analytics' }).click();
-  await expect(sql.getByRole('status')).toHaveText('Enter the password for analytics to use it in this session.');
-  const field = sql.getByLabel('Password for analytics');
+  await expect(sql.getByRole('status')).toHaveText('analytics asks for its password once per session. Enter it in Settings → Databases, then run again.');
+  await expect(sql.locator('input')).toHaveCount(0);
+  await openSettings(page);
+  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await settings.getByRole('tab', { name: 'Databases', exact: true }).click();
+  const row = settings.locator('[data-connection="analytics"]');
+  await expect(row).toContainText('asked every session');
+  await row.getByRole('button', { name: 'Enter password: analytics' }).click();
+  const field = row.locator('input[aria-label="Password for analytics"]');
   await expect(field).toHaveAttribute('type', 'password');
+  await expect(field).toBeFocused();
   await field.fill(PASSWORD);
   await field.press('Enter');
-  await expect(sql.locator('tbody tr')).toHaveCount(3);
+  await expect(row).toContainText('entered for this session');
+  await expect(row.locator('input')).toHaveCount(0);
   expect((await calls(page, 'sql_unlock_connection')).map(call => call.args)).toEqual([{ name: 'analytics', password: PASSWORD }]);
-  expect(await calls(page, 'sql_run')).toHaveLength(2);
+  await settings.getByRole('button', { name: 'Close settings' }).click();
+  await sql.getByRole('button', { name: 'Run query: analytics' }).click();
+  await expect(sql.locator('tbody tr')).toHaveCount(3);
   const leaks = await page.evaluate((secret) => {
     const mock = (window as unknown as { sqlMock: { calls: Call[] } }).sqlMock;
     return { dom: document.documentElement.outerHTML.includes(secret), inputs: [...document.querySelectorAll('input')].some(input => input.value.includes(secret)), storage: (JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage })).includes(secret), other: JSON.stringify(mock.calls.filter(call => call.cmd !== 'sql_unlock_connection')).includes(secret) };

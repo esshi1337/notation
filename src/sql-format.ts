@@ -38,18 +38,13 @@ export function cellKind(cell: SqlCell): SqlCellKind {
 export function cellCut(cell: SqlCell): boolean {
   return !!cell && typeof cell === 'object' && (cell.t === 'text' || (cell.t === 'bytes' && (cell.n ?? 0) * 2 > cell.v.length));
 }
-/** The text shown for a cell. Always text: callers set it with textContent. */
+/** The text shown for a cell. Always text: callers set it with textContent. A cut value says how long the full one is. */
 export function cellText(cell: SqlCell): string {
   if (cell === null) return 'NULL';
   if (typeof cell !== 'object') return String(cell);
-  if (cell.t === 'bytes') return `0x${cell.v}${cellCut(cell) ? '…' : ''}`;
-  return cell.t === 'text' ? cell.v + '…' : cell.v;
-}
-/** What a cut cell left out, for a tooltip. */
-export function cellNote(cell: SqlCell): string {
-  if (!cell || typeof cell !== 'object' || cell.n === undefined) return '';
-  if (cell.t === 'bytes') return `${cell.n} bytes`;
-  return cell.t === 'text' ? `Cut for display: the value is ${cell.n} bytes long.` : '';
+  const size = cell.n === undefined ? '' : ` (${cell.n.toLocaleString('en-US')} bytes)`;
+  if (cell.t === 'bytes') return cellCut(cell) ? `0x${cell.v}…${size}` : `0x${cell.v}`;
+  return cell.t === 'text' ? `${cell.v}…${size}` : cell.v;
 }
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
