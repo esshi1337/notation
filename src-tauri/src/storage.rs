@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const MAX_CONTENT: usize = 4 * 1024 * 1024;
 const REVISION_LIMIT: usize = 50;
 const RUN_LIMIT: usize = 200;
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 13;
 /// Version of the separate, disposable index database.
 const INDEX_SCHEMA_VERSION: i64 = 1;
 
@@ -352,6 +352,27 @@ PRAGMA user_version=9;").map_err(database_error)?;
                 .map_err(database_error)?;
             moved?;
         }
+        if version < 13 {
+            let tx = connection.transaction().map_err(database_error)?;
+            // One row per session tab, so autosave rewrites only the tabs
+            // that changed. The session row keeps the envelope and tab order.
+            tx.execute_batch("CREATE TABLE IF NOT EXISTS session_tabs(id TEXT PRIMARY KEY, json TEXT NOT NULL);").map_err(database_error)?;
+            let stored: Option<String> = tx
+                .query_row("SELECT json FROM sessions WHERE id=1", [], |row| row.get(0))
+                .optional()
+                .map_err(database_error)?;
+            if let Some(stored) = stored {
+                // A blob that cannot be split is kept as it is; loading
+                // treats a tab without an `id`-only stub as a full tab.
+                if let Ok(session) = serde_json::from_str::<Value>(&stored) {
+                    if let Some(envelope) = split_session(&tx, &session)? {
+                        tx.execute("UPDATE sessions SET json=?1 WHERE id=1", [envelope]).map_err(database_error)?;
+                    }
+                }
+            }
+            tx.execute_batch("PRAGMA user_version=13;").map_err(database_error)?;
+            tx.commit().map_err(database_error)?;
+        }
         let (index, index_reader) = open_index(&index_path)?;
         let database = Self {
             connection: Arc::new(Mutex::new(connection)),
@@ -486,8 +507,13 @@ PRAGMA user_version=9;").map_err(database_error)?;
         }
         tx.commit().map_err(database_error)?;
         drop(connection);
+        // Its own statement: the guard must be released before the reads below.
+        let session = {
+            let connection = self.lock()?;
+            load_session(&connection)?
+        };
         Ok(BootstrapState {
-            session: self.json_value("sessions")?,
+            session,
             settings: self.json_value("settings")?.unwrap_or_else(|| json!({})),
             draft: self.json_value("drafts")?,
             script_draft: self.json_value("script_drafts")?,
@@ -973,6 +999,9 @@ fn persist_session(connection: &Connection, session: &Value) -> Result<(), Strin
         connection
             .execute("DELETE FROM sessions WHERE id=1", [])
             .map_err(database_error)?;
+        connection
+            .execute("DELETE FROM session_tabs", [])
+            .map_err(database_error)?;
         return Ok(());
     }
     let tabs = session
@@ -983,12 +1012,14 @@ fn persist_session(connection: &Connection, session: &Value) -> Result<(), Strin
         .get("activeTabId")
         .and_then(Value::as_str)
         .ok_or("Session needs an activeTabId.")?;
-    if session.to_string().len() > 32 * 1024 * 1024 {
-        return Err(
-            "Session exceeds the 32 MiB recovery limit. No tabs were dropped or replaced.".into(),
-        );
-    }
+    // A tab given as `{"id": …, "unchanged": true}` keeps its stored row: the
+    // sender asserts it has not changed since the last successful save.
+    let unchanged = |tab: &Value| tab.get("unchanged").and_then(Value::as_bool) == Some(true);
     let mut ids = std::collections::HashSet::new();
+    // Stored size of every tab, for the session limit, and the serialized
+    // text of each tab that was sent in full (serialized once).
+    let mut total = 0usize;
+    let mut sent: Vec<(&str, Option<String>)> = Vec::with_capacity(tabs.len());
     for tab in tabs {
         let id = tab
             .get("id")
@@ -997,6 +1028,18 @@ fn persist_session(connection: &Connection, session: &Value) -> Result<(), Strin
             .ok_or("Every session tab needs an ID of 1–128 characters.")?;
         if !ids.insert(id) {
             return Err("Session contains duplicate tab IDs.".into());
+        }
+        if unchanged(tab) {
+            let stored: Option<i64> = connection
+                .query_row("SELECT octet_length(json) FROM session_tabs WHERE id=?1", [id], |row| row.get(0))
+                .optional()
+                .map_err(database_error)?;
+            let Some(stored) = stored else {
+                return Err(UNKNOWN_UNCHANGED_TAB.into());
+            };
+            total += stored as usize;
+            sent.push((id, None));
+            continue;
         }
         if tab.get("name").and_then(Value::as_str).is_none() {
             return Err("Every session tab needs a name.".into());
@@ -1010,54 +1053,167 @@ fn persist_session(connection: &Connection, session: &Value) -> Result<(), Strin
                 return Err("Session tab text exceeds the 4 MiB limit or is invalid. No tabs were dropped or replaced.".into());
             }
         }
+        let text = tab.to_string();
+        total += text.len();
+        sent.push((id, Some(text)));
     }
     if !tabs.is_empty() && !ids.contains(active) {
         return Err("Session active tab is missing from its tabs.".into());
     }
-    let previous: Option<String> = connection
-        .query_row("SELECT json FROM sessions WHERE id=1", [], |row| row.get(0))
-        .optional()
-        .map_err(database_error)?;
-    let previous: Value = previous
-        .map(|value| serde_json::from_str(&value).map_err(database_error))
-        .transpose()?
-        .unwrap_or_else(|| json!({"tabs":[]}));
-    let old_tabs = previous["tabs"]
-        .as_array()
-        .ok_or("Stored session is invalid. Original data was kept.")?;
-    for old in old_tabs {
-        let replacement = tabs.iter().find(|tab| tab["id"] == old["id"]);
-        if replacement.is_none_or(|tab| tab["content"] != old["content"]) {
-            let path = old.get("path").and_then(Value::as_str);
-            let key = path.or_else(|| old["id"].as_str()).unwrap_or("untitled");
-            let last:Option<i64>=connection.query_row("SELECT created_at FROM revisions WHERE document_key=?1 ORDER BY id DESC LIMIT 1",[key],|row|row.get(0)).optional().map_err(database_error)?;
-            if replacement.is_none() || last.is_none_or(|last| now() - last >= 30_000) {
+    // The envelope is the session without tab bodies: tabs become id stubs.
+    let stubs = sent.iter().map(|(id, _)| json!({ "id": id })).collect::<Vec<_>>();
+    let stub_bytes = stubs.iter().map(|stub| stub.to_string().len()).sum::<usize>();
+    let mut envelope = session.clone();
+    envelope["tabs"] = Value::Array(stubs);
+    let envelope = envelope.to_string();
+    // The same bound as before, to the byte: the size of the whole session
+    // serialized as one document (the envelope with each stub replaced by
+    // its tab).
+    if envelope.len() - stub_bytes + total > 32 * 1024 * 1024 {
+        return Err(
+            "Session exceeds the 32 MiB recovery limit. No tabs were dropped or replaced.".into(),
+        );
+    }
+    let old_ids: Vec<String> = {
+        let mut statement = connection
+            .prepare("SELECT id FROM session_tabs")
+            .map_err(database_error)?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(database_error)?;
+        rows.collect::<Result<_, _>>().map_err(database_error)?
+    };
+    let stored_tab = |id: &str| -> Result<Option<(String, Value)>, String> {
+        let text: Option<String> = connection
+            .query_row("SELECT json FROM session_tabs WHERE id=?1", [id], |row| row.get(0))
+            .optional()
+            .map_err(database_error)?;
+        text.map(|text| {
+            let value = serde_json::from_str::<Value>(&text).map_err(database_error)?;
+            Ok((text, value))
+        })
+        .transpose()
+    };
+    let snapshot_old = |old: &Value, replaced: bool| -> Result<(), String> {
+        let path = old.get("path").and_then(Value::as_str);
+        let key = path.or_else(|| old["id"].as_str()).unwrap_or("untitled");
+        let last:Option<i64>=connection.query_row("SELECT created_at FROM revisions WHERE document_key=?1 ORDER BY id DESC LIMIT 1",[key],|row|row.get(0)).optional().map_err(database_error)?;
+        if !replaced || last.is_none_or(|last| now() - last >= 30_000) {
+            snapshot(
+                connection,
+                key,
+                old["name"].as_str().unwrap_or("untitled.md"),
+                path,
+                "draft",
+                old["content"].as_str().unwrap_or(""),
+            )?;
+        }
+        Ok(())
+    };
+    // Tabs that left the session: keep their last text as a revision.
+    for old_id in &old_ids {
+        if !ids.contains(old_id.as_str()) {
+            if let Some((_, old)) = stored_tab(old_id)? {
+                snapshot_old(&old, false)?;
+            }
+            connection
+                .execute("DELETE FROM session_tabs WHERE id=?1", [old_id])
+                .map_err(database_error)?;
+        }
+    }
+    for (tab, (id, text)) in tabs.iter().zip(&sent) {
+        let Some(text) = text else {
+            continue; // unchanged: nothing to compare, snapshot or write
+        };
+        let stored: Option<String> = connection
+            .query_row("SELECT json FROM session_tabs WHERE id=?1", [id], |row| row.get(0))
+            .optional()
+            .map_err(database_error)?;
+        match stored {
+            Some(stored) => {
+                // Sent in full but identical: nothing to parse or write.
+                if &stored == text {
+                    continue;
+                }
+                let old = serde_json::from_str::<Value>(&stored).map_err(database_error)?;
+                if tab["content"] != old["content"] {
+                    snapshot_old(&old, true)?;
+                }
+            }
+            None => {
+                let path = tab.get("path").and_then(Value::as_str);
                 snapshot(
                     connection,
-                    key,
-                    old["name"].as_str().unwrap_or("untitled.md"),
+                    path.unwrap_or(id),
+                    tab["name"].as_str().unwrap(),
                     path,
                     "draft",
-                    old["content"].as_str().unwrap_or(""),
+                    tab["content"].as_str().unwrap(),
                 )?;
             }
         }
+        connection
+            .execute("INSERT INTO session_tabs(id,json) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET json=excluded.json", params![id, text])
+            .map_err(database_error)?;
+    }
+    connection.execute("INSERT INTO sessions(id,json) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET json=excluded.json",[envelope]).map_err(database_error)?;
+    Ok(())
+}
+/// Returned when a session marks a tab unchanged that is not stored. The
+/// frontend answers by sending the full session.
+pub const UNKNOWN_UNCHANGED_TAB: &str =
+    "Session marks a tab as unchanged that is not stored. Send the full session.";
+/// Move the tabs of a single-document session into `session_tabs` and return
+/// the envelope to store instead. `None` if the value has no tab array.
+fn split_session(connection: &Connection, session: &Value) -> Result<Option<String>, String> {
+    let Some(tabs) = session.get("tabs").and_then(Value::as_array) else {
+        return Ok(None);
+    };
+    let mut stubs = Vec::with_capacity(tabs.len());
+    for tab in tabs {
+        let Some(id) = tab.get("id").and_then(Value::as_str) else {
+            return Ok(None);
+        };
+        stubs.push(json!({ "id": id }));
     }
     for tab in tabs {
-        if !old_tabs.iter().any(|old| old["id"] == tab["id"]) {
-            let path = tab.get("path").and_then(Value::as_str);
-            snapshot(
-                connection,
-                path.unwrap_or(tab["id"].as_str().unwrap()),
-                tab["name"].as_str().unwrap(),
-                path,
-                "draft",
-                tab["content"].as_str().unwrap(),
-            )?;
+        connection
+            .execute("INSERT INTO session_tabs(id,json) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET json=excluded.json", params![tab["id"].as_str().unwrap(), tab.to_string()])
+            .map_err(database_error)?;
+    }
+    let mut envelope = session.clone();
+    envelope["tabs"] = Value::Array(stubs);
+    Ok(Some(envelope.to_string()))
+}
+/// The stored session as one document: the envelope with every tab stub
+/// replaced by its row.
+fn load_session(connection: &Connection) -> Result<Option<Value>, String> {
+    let envelope: Option<String> = connection
+        .query_row("SELECT json FROM sessions WHERE id=1", [], |row| row.get(0))
+        .optional()
+        .map_err(database_error)?;
+    let Some(envelope) = envelope else {
+        return Ok(None);
+    };
+    let mut session: Value = serde_json::from_str(&envelope).map_err(database_error)?;
+    if let Some(tabs) = session.get_mut("tabs").and_then(Value::as_array_mut) {
+        for tab in tabs.iter_mut() {
+            // A stub has nothing but its id; anything else is a full tab
+            // (a session blob that could not be split during migration).
+            let stub = tab.as_object().is_some_and(|fields| fields.len() == 1)
+                && tab.get("id").is_some_and(Value::is_string);
+            if !stub {
+                continue;
+            }
+            let stored: Option<String> = connection
+                .query_row("SELECT json FROM session_tabs WHERE id=?1", [tab["id"].as_str().unwrap()], |row| row.get(0))
+                .optional()
+                .map_err(database_error)?;
+            let stored = stored.ok_or("Stored session is incomplete. Original data was kept.")?;
+            *tab = serde_json::from_str(&stored).map_err(database_error)?;
         }
     }
-    connection.execute("INSERT INTO sessions(id,json) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET json=excluded.json",[session.to_string()]).map_err(database_error)?;
-    Ok(())
+    Ok(Some(session))
 }
 fn snapshot(
     connection: &Connection,

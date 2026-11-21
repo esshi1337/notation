@@ -32,7 +32,7 @@ fn schema_seven_stickies_migrate_to_eight_without_touching_titles_or_maximum_pla
     assert_eq!(state.draft.unwrap()["content"], "ordinary");
     drop(db);
     let connection = rusqlite::Connection::open(&path).unwrap();
-    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 12);
+    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 13);
     // SQLite also rejects invalid color/markup if a future caller misses validation.
     assert!(connection.execute("UPDATE sticky_notes SET color='red' WHERE id=?1", [id]).is_err());
     assert!(connection.execute("UPDATE sticky_notes SET html=?2 WHERE id=?1", rusqlite::params![id, "x".repeat(131073)]).is_err());
@@ -901,7 +901,7 @@ fn the_index_moves_to_its_own_database_with_every_row_and_its_lookup_indexes() {
 
         // The state database keeps user data and no longer holds the index.
         let state = rusqlite::Connection::open(&path).unwrap();
-        assert_eq!(count(&state, "PRAGMA user_version"), 12, "from {version}");
+        assert_eq!(count(&state, "PRAGMA user_version"), 13, "from {version}");
         assert_eq!(count(&state, "SELECT count(*) FROM sqlite_master WHERE name LIKE 'cache_%'"), 0);
         assert_eq!(count(&state, "SELECT count(*) FROM app_meta WHERE key='index_baseline'"), 0);
         assert_eq!(count(&state, "SELECT count(*) FROM settings"), 1);
@@ -969,4 +969,103 @@ fn an_unusable_or_mismatched_index_file_is_replaced_without_touching_state() {
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(fs::metadata(&index_path).unwrap().permissions().mode() & 0o777, 0o600);
     }
+}
+
+fn session_tab(id: &str, content: &str) -> Value {
+    json!({"id":id,"name":format!("{id}.md"),"path":null,"content":content,"savedContent":"saved","savedName":format!("{id}.md"),"selection":{"anchor":1,"head":2}})
+}
+
+#[test]
+fn unchanged_tab_markers_keep_stored_tabs_and_only_changed_tabs_are_rewritten() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("state.sqlite3");
+    let database = Database::open(&path).unwrap();
+    let full = json!({"activeTabId":"b","updatedAt":1,"workspaceViews":{"x":{"layout":"split"}},"tabs":[session_tab("a","alpha"),session_tab("b","beta"),session_tab("c","gamma")]});
+    database.persist(StateUpdate { session: Some(full.clone()), ..Default::default() }).unwrap();
+    assert_eq!(database.bootstrap(None).unwrap().session.as_ref(), Some(&full));
+
+    // One tab edited, order changed, envelope changed; the others are markers.
+    let delta = json!({"activeTabId":"c","updatedAt":2,"workspaceViews":{"x":{"layout":"live"}},"tabs":[{"id":"c","unchanged":true},session_tab("b","beta edited"),{"id":"a","unchanged":true}]});
+    let rowids = |database: &Database| -> Vec<(String, String)> {
+        let connection = rusqlite::Connection::open(&database.path).unwrap();
+        let mut statement = connection.prepare("SELECT id, json FROM session_tabs ORDER BY id").unwrap();
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+        rows.map(Result::unwrap).collect()
+    };
+    let before = rowids(&database);
+    database.persist(StateUpdate { session: Some(delta), ..Default::default() }).unwrap();
+    let expected = json!({"activeTabId":"c","updatedAt":2,"workspaceViews":{"x":{"layout":"live"}},"tabs":[session_tab("c","gamma"),session_tab("b","beta edited"),session_tab("a","alpha")]});
+    assert_eq!(database.bootstrap(None).unwrap().session.as_ref(), Some(&expected));
+    let after = rowids(&database);
+    assert_eq!((&before[0], &before[2]), (&after[0], &after[2]), "unchanged tabs keep their rows");
+    assert_ne!(before[1], after[1]);
+    // The replaced text of the edited tab is kept as a revision; untouched tabs gain none.
+    let revisions = |key: &str| database.list_revisions(key).unwrap().len();
+    assert_eq!((revisions("a"), revisions("b"), revisions("c")), (1, 1, 1));
+
+    // A marker for a tab that is not stored is refused and changes nothing.
+    let unknown = json!({"activeTabId":"a","updatedAt":3,"tabs":[{"id":"a","unchanged":true},{"id":"ghost","unchanged":true}]});
+    let error = database.persist(StateUpdate { session: Some(unknown), settings: Some(json!({"theme":"dark"})), ..Default::default() }).unwrap_err();
+    assert_eq!(error, notation_lib::storage::UNKNOWN_UNCHANGED_TAB);
+    assert_eq!(database.bootstrap(None).unwrap().session.as_ref(), Some(&expected));
+    assert!(database.bootstrap(None).unwrap().settings.get("theme").is_none());
+
+    // Removing a tab drops its row and snapshots it; markers still validate
+    // the active tab, duplicates and the size limit.
+    let fewer = json!({"activeTabId":"a","updatedAt":4,"tabs":[{"id":"a","unchanged":true},{"id":"c","unchanged":true}]});
+    database.persist(StateUpdate { session: Some(fewer), ..Default::default() }).unwrap();
+    assert_eq!(database.bootstrap(None).unwrap().session.unwrap()["tabs"], json!([session_tab("a","alpha"),session_tab("c","gamma")]));
+    assert_eq!(rowids(&database).len(), 2);
+    assert_eq!(revisions("b"), 2);
+    for invalid in [
+        json!({"activeTabId":"missing","updatedAt":5,"tabs":[{"id":"a","unchanged":true}]}),
+        json!({"activeTabId":"a","updatedAt":5,"tabs":[{"id":"a","unchanged":true},{"id":"a","unchanged":true}]}),
+    ] {
+        assert!(database.persist(StateUpdate { session: Some(invalid), ..Default::default() }).is_err());
+    }
+    // Eight tabs of two 4 MiB texts are within the per-text limit but over the
+    // session limit; the ninth save is refused even though earlier tabs are markers.
+    let big = "x".repeat(4 * 1024 * 1024);
+    let mut tabs = vec![json!({"id":"a","unchanged":true}), json!({"id":"c","unchanged":true})];
+    for index in 0..3 {
+        let mut tab = session_tab(&format!("big{index}"), &big);
+        tab["savedContent"] = json!(big);
+        tabs.push(tab);
+        database.persist(StateUpdate { session: Some(json!({"activeTabId":"a","updatedAt":6,"tabs":tabs})), ..Default::default() }).unwrap();
+        let id = format!("big{index}");
+        *tabs.last_mut().unwrap() = json!({"id":id,"unchanged":true});
+    }
+    let mut over = session_tab("big3", &big);
+    over["savedContent"] = json!(big);
+    tabs.push(over);
+    let error = database.persist(StateUpdate { session: Some(json!({"activeTabId":"a","updatedAt":7,"tabs":tabs})), ..Default::default() }).unwrap_err();
+    assert!(error.contains("32 MiB"), "{error}");
+    assert_eq!(database.bootstrap(None).unwrap().session.unwrap()["tabs"].as_array().unwrap().len(), 5);
+
+    // Clearing the session clears the tab rows too.
+    database.persist(StateUpdate { session: Some(Value::Null), ..Default::default() }).unwrap();
+    assert!(database.bootstrap(None).unwrap().session.is_none());
+    assert_eq!(rowids(&database).len(), 0);
+}
+
+#[test]
+fn schema_twelve_session_blob_is_split_into_tab_rows_without_changing_the_session() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("state.sqlite3");
+    drop(Database::open(&path).unwrap());
+    let session = json!({"activeTabId":"two","updatedAt":9,"activeWorkspaceId":null,"tabs":[session_tab("one","first ünï"),session_tab("two","second")]});
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.execute_batch("DROP TABLE session_tabs; PRAGMA user_version=12;").unwrap();
+    connection.execute("INSERT INTO sessions(id,json) VALUES(1,?1)", [session.to_string()]).unwrap();
+    drop(connection);
+    let database = Database::open(&path).unwrap();
+    assert_eq!(database.bootstrap(None).unwrap().session.as_ref(), Some(&session));
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 13);
+    assert_eq!(connection.query_row("SELECT count(*) FROM session_tabs", [], |row| row.get::<_, i64>(0)).unwrap(), 2);
+    let envelope: String = connection.query_row("SELECT json FROM sessions WHERE id=1", [], |row| row.get(0)).unwrap();
+    assert!(!envelope.contains("first"), "tab text no longer lives in the session row: {envelope}");
+    // A following delta save works against the migrated rows.
+    database.persist(StateUpdate { session: Some(json!({"activeTabId":"two","updatedAt":10,"tabs":[{"id":"one","unchanged":true},session_tab("two","second edited")]})), ..Default::default() }).unwrap();
+    assert_eq!(database.bootstrap(None).unwrap().session.unwrap()["tabs"], json!([session_tab("one","first ünï"),session_tab("two","second edited")]));
 }

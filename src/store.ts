@@ -56,8 +56,41 @@ let sessionTooLarge = false;
 let scriptDraftTooLarge = false;
 const sessionSizeError = 'Session too large to autosave; save tabs as files. Keep the app open to preserve unsaved tabs.';
 const scriptDraftSizeError = 'Script draft too large to autosave; shorten the script.';
+const SESSION_LIMIT = 32 * 1024 * 1024;
 function oversizedSession(session: Patch['session']) {
-  return new TextEncoder().encode(JSON.stringify(session ?? null)).byteLength > 32 * 1024 * 1024;
+  if (!session) return false;
+  // This runs on every edit. A UTF-16 unit is at most three UTF-8 bytes and
+  // JSON escaping at most doubles a string, so a session whose text is well
+  // below the limit by that bound needs no serialization to know it fits.
+  let units = 0;
+  for (const tab of session.tabs ?? []) units += (tab.content?.length ?? 0) + (tab.savedContent?.length ?? 0) + 4096;
+  if (units * 6 + 65536 <= SESSION_LIMIT) return false;
+  return new TextEncoder().encode(JSON.stringify(session)).byteLength > SESSION_LIMIT;
+}
+// What the database holds for each session tab after the last successful
+// save. Tabs that still match are sent as `{ id, unchanged: true }`, so an
+// autosave carries only the tabs that changed.
+type SessionTab = DocumentSession['tabs'][number];
+let committedTabs = new Map<string, SessionTab>();
+const UNKNOWN_UNCHANGED_TAB = 'marks a tab as unchanged that is not stored';
+function sameTab(left: SessionTab, right: SessionTab) {
+  if (left === right) return true;
+  if (left.content !== right.content || left.savedContent !== right.savedContent) return false;
+  const rest = (tab: SessionTab) => JSON.stringify({ ...tab, content: undefined, savedContent: undefined });
+  return rest(left) === rest(right);
+}
+/** The state as sent to the backend: unchanged session tabs become markers. */
+export function wireState(state: Patch): Patch {
+  if (!state.session || !committedTabs.size) return state;
+  const tabs = state.session.tabs.map((tab) => {
+    const committed = committedTabs.get(tab.id);
+    return committed && sameTab(committed, tab) ? { id: tab.id, unchanged: true } as unknown as SessionTab : tab;
+  });
+  return { ...state, session: { ...state.session, tabs } };
+}
+function rememberCommitted(state: Patch) {
+  if (!('session' in state)) return;
+  committedTabs = new Map((state.session?.tabs ?? []).map((tab) => [tab.id, tab]));
 }
 function oversizedScriptDraft(scriptDraft: Patch['scriptDraft']) {
   return new TextEncoder().encode(scriptDraft?.code ?? '').byteLength > 128 * 1024;
@@ -192,7 +225,16 @@ export function flushPersistence(): Promise<boolean> {
     if (!Object.keys(pending).length) return lastOutcome;
     const state = pending; pending = {};
     try {
-      await invoke('persist_state', { state });
+      try {
+        await invoke('persist_state', { state: wireState(state) });
+      } catch (error) {
+        // The database does not hold a tab this side believed committed
+        // (for example it was replaced). Send everything once.
+        if (!String(error).includes(UNKNOWN_UNCHANGED_TAB)) throw error;
+        committedTabs = new Map();
+        await invoke('persist_state', { state });
+      }
+      rememberCommitted(state);
       committed(state);
       report(Object.keys(pending).length ? 'saving' : 'saved');
       return true;
