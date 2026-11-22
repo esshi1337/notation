@@ -70,7 +70,7 @@
   let gesture: { snapshot: Snapshot; start: Map<string, Point>; followers: Map<string, { leader: string; from: Point }>; cancelled: boolean } | null = null;
   let resize: { id: string; snapshot: Snapshot; cancelled: boolean } | null = null;
   let connection: { cancelled: boolean; reconnect: { id: string; end: 'source' | 'target' } | null } | null = null;
-  let selecting: { pointerId: number; origin: Point; base: string[]; additive: boolean; moved: boolean } | null = null;
+  let selecting: { pointerId: number; origin: Point; base: string[]; additive: boolean; moved: boolean; group: string } | null = null;
   let nudge: { snapshot: Snapshot; ids: Set<string>; selection: string; timer: ReturnType<typeof setTimeout> } | null = null;
   let pan = $state.raw<{ pointerId: number; x: number; y: number; view: View } | null>(null), spaceHeld = $state(false);
   let pointer: Point | null = null, swallowMouseDown = false, swallowClick = false;
@@ -247,12 +247,15 @@
       return;
     }
     // A press on empty space with Shift (or with the Select tool) draws a selection box.
-    // Shift, Ctrl or Cmd adds to the selection that is already there.
-    if (event.button === 0 && onPane && !spaceHeld && !parseError && (event.shiftKey || marquee)) {
+    // Shift, Ctrl or Cmd adds to the selection that is already there. A group is mostly
+    // empty space too: Shift+drag inside one draws a box instead of dragging the group.
+    const group = event.shiftKey ? event.target.closest('.svelte-flow__node.canvas-flow-group')?.getAttribute('data-id') ?? '' : '';
+    const onGroup = !!group && !event.target.closest('button,input,.svelte-flow__handle,.svelte-flow__resize-control');
+    if (event.button === 0 && !spaceHeld && !parseError && (onPane && (event.shiftKey || marquee) || onGroup)) {
       event.preventDefault(); event.stopPropagation();
       swallowMouseDown = true;
       const additive = event.shiftKey || event.ctrlKey || event.metaKey;
-      selecting = { pointerId: event.pointerId, origin: boardPoint(event.clientX, event.clientY), base: additive ? selectedNodes().map((node) => node.id) : [], additive, moved: false };
+      selecting = { pointerId: event.pointerId, origin: boardPoint(event.clientX, event.clientY), base: additive ? selectedNodes().map((node) => node.id) : [], additive, moved: false, group: onGroup ? group : '' };
       host.setPointerCapture(event.pointerId);
       focusBoard();
     }
@@ -278,8 +281,10 @@
     const active = selecting;
     if (active?.pointerId !== event.pointerId) return;
     endSelecting();
-    // A press that never travelled is a click on empty space: it clears the selection unless it was additive.
-    if (!active.moved && !active.additive) selectOnly([]);
+    // A press that never travelled is a click: on a group (with Shift) it adds or removes that group,
+    // on empty space it clears the selection unless it was additive.
+    if (!active.moved && active.group) selectOnly(active.base.includes(active.group) ? active.base.filter((id) => id !== active.group) : [...active.base, active.group]);
+    else if (!active.moved && !active.additive) selectOnly([]);
     // The click that follows this release belongs to the box, not to the board underneath.
     swallowClick = true;
     setTimeout(() => { swallowClick = false; }, 0);

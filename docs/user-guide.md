@@ -180,29 +180,46 @@ editable in Source. Link cards open only `http`, `https`, and `mailto` targets.
 Drag a card from anywhere on it to move it; drag the handles of a selected card
 to resize. Double-click empty space to write a new text card there, and
 double-click a text card to edit its Markdown in place (Escape, Ctrl/Cmd+Enter or
-clicking away keeps the change). Shift+drag draws a selection box, or turn on
-**Select** to make that the plain drag; Shift+click or Ctrl/Cmd+click adds a card
-to the selection. Selected cards move together and a group moves the cards inside
-it. **Snap** keeps cards on a 20-unit grid; with it off, a card released near a
-neighbour's edge or centre lines up with it. With the board focused, Arrow moves
-the selection by one grid step (1 pixel with Snap off), Shift+Arrow by a larger
-step, and Alt+Arrow resizes; a run of arrow presses is one undo step.
-Ctrl/Cmd+C, V and D copy, paste and duplicate; Delete removes the selection.
+clicking away keeps the change). Shift+drag draws a selection box, also inside a
+group, or turn on **Select** to make that the plain drag; Shift+click or
+Ctrl/Cmd+click adds or removes a card. Selected cards move together and a group
+moves the cards that lie fully inside it. **Snap** keeps cards on a 20-unit grid;
+with it off, a card released near a neighbour's edge or centre lines up with it.
+**Escape** cancels a drag, a resize, a selection box or a connection in progress
+and restores what was there; nothing is written and nothing is added to undo.
 
-The wheel or a two-finger scroll pans; pinch or Ctrl/Cmd+wheel zooms around the
-cursor. Hold Space and drag, middle-drag, or drag empty space to pan. **Fit
-canvas** frames the board; **−** and **+** zoom around its centre; **Map** shows a
-minimap. Right-click the board, a card or a connection for more actions,
-including card colours.
+The wheel or a two-finger scroll pans (Shift+wheel pans sideways); pinch or
+Ctrl/Cmd+wheel zooms around the cursor. Hold Space and drag, middle-drag, or drag
+empty space to pan. **Fit canvas** frames the board; **−** and **+** zoom around
+its centre; **Map** shows a minimap. Below about 40% zoom cards show only their
+title, and their content returns as you zoom in. Right-click the board, a card or
+a connection for more actions, including card colours.
 
 Connect by dragging from a dot on a card's side to another card. Dropping on
-empty space creates a connected card. A connection whose file names no sides
-leaves from the sides that face each other and follows the cards as they move;
-new connections record their sides, and **Choose sides automatically** in a
-connection's menu clears them. Double-click a connection or its label to edit the
-label. **Connect cards** connects by name: choose **From card**, **To card**, a
-**Connection label**, and **Add connection**. Delete a selected connection with
-Delete, or under **Connections**.
+empty space creates a connected card. A connection leaves from the sides that
+face each other and follows the cards as they move. A side is recorded in the
+file only when you choose one other than the automatic side, or pick **Keep these
+sides** in the connection's menu; **Choose sides automatically** there clears
+them. Select a connection to show a grip at each end, then drag a grip to another
+card or side to reconnect that end; dropping it on empty space changes nothing.
+Double-click a connection or its label to edit the label. **Connect cards**
+connects by name: choose **From card**, **To card**, a **Connection label**, and
+**Add connection**. Delete a selected connection with Delete, or under
+**Connections**.
+
+Earlier versions recorded every connection as leaving right and entering left. A
+board like that shows a hint above the board. **Choose connection sides
+automatically** (in Commands, in the board's right-click menu and in the hint)
+frees every connection as one undo step; the file is never changed until you
+choose it.
+
+Keyboard: Tab reaches every card and connection. With nothing selected, the
+arrow keys move focus to the nearest card in that direction, or pan when the
+board itself has focus. Enter selects the focused card and Enter again (or F2)
+edits it. With a selection, Arrow moves it by one grid step (1 pixel with Snap
+off), Shift+Arrow by a larger step and Alt+Arrow resizes; a run of arrow presses
+is one undo step. Ctrl/Cmd+A selects all, Ctrl/Cmd+C, V and D copy, paste and
+duplicate, Delete removes the selection and Escape clears it.
 
 A blank note card shows **Choose note**. In **Card details** (a card's **⋯** button), **Card file** takes a
 workspace-relative path such as `notes/example.md` (not an absolute home path).
@@ -215,8 +232,10 @@ Media cards use workspace-relative images, audio, video, or PDFs. Local media an
 the PDF viewer require desktop; remote resources show **Load external media**.
 Groups move the cards that lie fully inside them. Canvas changes share tab recovery, undo, and Save
 with notes; Save writes the `.canvas` file. Source exposes the JSON and preserves
-unknown fields. Invalid Canvas JSON stays unchanged and disables editing until
-repaired in Source.
+unknown fields; a change keeps the file's indentation and line endings, and
+looking around or cancelling an edit writes nothing. A canvas holds up to 2,000
+cards and 8,000 connections. Invalid Canvas JSON stays unchanged and disables
+editing until repaired in Source.
 
 ## Themes
 

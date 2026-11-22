@@ -233,6 +233,19 @@ test('Ctrl+wheel zooms around the cursor and the buttons zoom around the board c
   expect(after.x).toBeCloseTo(before.x - 30, 0);
   expect(after.y).toBeCloseTo(before.y - 50, 0);
 
+  // Devices that report lines instead of pixels pan by whole lines, and Shift turns a one-axis wheel sideways.
+  const wheelOn = (init: WheelEventInit) => board.evaluate((element, options) => { element.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, ...options })); }, init);
+  let here = (await card(view, 'b').boundingBox())!;
+  await wheelOn({ deltaY: 3, deltaMode: 1 });
+  expect((await card(view, 'b').boundingBox())!.y).toBeCloseTo(here.y - 48, 0);
+  await wheelOn({ deltaY: -3, deltaMode: 1 });
+  await wheelOn({ deltaY: 100, shiftKey: true });
+  here = (await card(view, 'b').boundingBox())!;
+  expect(here.x).toBeCloseTo(before.x - 30 - 100, 0);
+  expect(here.y).toBeCloseTo(before.y - 50, 0);
+  await wheelOn({ deltaY: -100, shiftKey: true });
+  await expect(zoom).toHaveText('146%');
+
   // Buttons keep the document point at the board centre fixed.
   const frame = (await board.boundingBox())!, middle = { x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 };
   const offset = (box: { x: number; y: number }, scale: number) => ({ x: (box.x - middle.x) / scale, y: (box.y - middle.y) / scale });
@@ -411,6 +424,37 @@ test('Shift and Ctrl clicks and the selection box select exactly what they touch
   await boardOf(view).focus();
   await page.keyboard.press('ControlOrMeta+a');
   expect(await selectedIds(view)).toEqual(['a', 'b', 'c']);
+});
+
+test('Shift+drag inside a group draws a selection box instead of dragging the group', async ({ page }) => {
+  await openCanvas(page, { nodes: [{ id: 'g', type: 'group', label: 'Group', x: -40, y: -60, width: 560, height: 240 }, text('a', 0, 0), text('b', 260, 0), text('c', 0, 260)], edges: [] });
+  const view = canvas(page), original = await exportCanvas(page), writes = await trackWrites(page);
+  await snapOff(view);
+  const group = (await card(view, 'Group').boundingBox())!;
+  await page.keyboard.down('Shift');
+  // The press lands on the group's own surface, between its heading and card a.
+  await page.mouse.move(group.x + 12, group.y + 36);
+  await page.mouse.down();
+  await page.mouse.move(group.x + 180, group.y + 150, { steps: 5 });
+  await expect(view.locator('.canvas-marquee')).toBeVisible();
+  await page.mouse.up();
+  // The box touches the group and card a; nothing moved.
+  expect(await selectedIds(view)).toEqual(['a', 'g']);
+  expect(await writes()).toBe(0);
+  // Shift+click on the group's surface takes just the group out again, and puts it back.
+  await page.mouse.click(group.x + 12, group.y + group.height - 12);
+  expect(await selectedIds(view)).toEqual(['a']);
+  await page.mouse.click(group.x + 12, group.y + group.height - 12);
+  expect(await selectedIds(view)).toEqual(['a', 'g']);
+  await page.keyboard.up('Shift');
+  expect(await exportCanvas(page)).toBe(original);
+  // Without Shift the same press drags the group and the cards inside it.
+  await page.mouse.move(group.x + 12, group.y + group.height - 12);
+  await page.mouse.down();
+  await page.mouse.move(group.x + 52, group.y + group.height + 18, { steps: 5 });
+  await page.mouse.up();
+  const data = await canvasData(page);
+  expect(data.nodes.map((node) => [node.id, node.x, node.y])).toEqual([['g', 0, -30], ['a', 40, 30], ['b', 300, 30], ['c', 0, 260]]);
 });
 
 test('arrow-key nudges coalesce into one undo step and Alt+arrows resize', async ({ page }) => {

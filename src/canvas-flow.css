@@ -1,7 +1,10 @@
 /* Canvas view. The interaction layer is Svelte Flow (base.css supplies its
    layout); everything visible reads the app's tokens so both themes, the
    motion tokens and Reduce motion apply here as they do elsewhere. */
-.canvas-view{display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;flex:1;background:var(--bg)}
+/* The app's --accent is a quiet neutral in the built-in themes. Selection, focus and the
+   connection being drawn need to read at a glance in both, so they use the same stronger
+   mix the app's focus rings use; a user theme's accent colour carries through. */
+.canvas-view{--canvas-accent:color-mix(in srgb,var(--accent) 65%,var(--text));display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;flex:1;background:var(--bg)}
 .canvas-tools{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border);flex-wrap:nowrap;min-height:41px}
 .canvas-tools button{font-size:13px;line-height:18px;padding:3px 10px;min-width:28px;min-height:28px;border-color:var(--border);white-space:nowrap}
 .canvas-tools .canvas-zoom-button{padding:3px 0;font-size:15px}
@@ -24,11 +27,11 @@
 .canvas-board.panning,.canvas-board.panning *{cursor:grabbing!important}
 .canvas-viewport{outline:none;
   --xy-background-color:var(--bg);--xy-background-pattern-color:var(--border);
-  --xy-edge-stroke:var(--muted);--xy-edge-stroke-selected:var(--accent);--xy-edge-stroke-width:1.5;
-  --xy-connectionline-stroke:var(--accent);--xy-connectionline-stroke-width:1.5;
-  --xy-handle-background-color:var(--accent);--xy-resize-background-color:var(--accent);
+  --xy-edge-stroke:var(--muted);--xy-edge-stroke-selected:var(--canvas-accent);--xy-edge-stroke-width:1.5;
+  --xy-connectionline-stroke:var(--canvas-accent);--xy-connectionline-stroke-width:1.5;
+  --xy-handle-background-color:var(--canvas-accent);--xy-resize-background-color:var(--canvas-accent);
   --xy-minimap-background-color:var(--panel);--xy-minimap-mask-background-color:color-mix(in srgb,var(--bg) 70%,transparent);--xy-minimap-mask-stroke-color:var(--border);--xy-minimap-mask-stroke-width:1}
-.canvas-viewport:focus-visible{box-shadow:inset 0 0 0 2px var(--accent)}
+.canvas-viewport:focus-visible{box-shadow:inset 0 0 0 2px var(--canvas-accent)}
 .canvas-viewport .svelte-flow__pane{cursor:default}
 .canvas-viewport .svelte-flow__pane.dragging{cursor:grabbing}
 .canvas-board.select-tool .svelte-flow__pane{cursor:crosshair}
@@ -36,47 +39,47 @@
 .canvas-viewport .svelte-flow__node{cursor:default;border-radius:6px;outline:none}
 .canvas-viewport .svelte-flow__node.dragging{cursor:grabbing}
 .canvas-viewport .svelte-flow__edge{cursor:pointer}
-.canvas-viewport .svelte-flow__edge:hover .svelte-flow__edge-path{stroke:color-mix(in srgb,var(--accent) 60%,var(--muted))}
-.canvas-viewport .svelte-flow__node:focus-visible .canvas-node{box-shadow:0 0 0 2px var(--accent)}
+.canvas-viewport .svelte-flow__edge:hover .svelte-flow__edge-path{stroke:color-mix(in srgb,var(--canvas-accent) 60%,var(--muted))}
+.canvas-viewport .svelte-flow__node:focus-visible .canvas-node{box-shadow:0 0 0 2px var(--canvas-accent)}
 .canvas-viewport .svelte-flow__arrowhead polyline{stroke:var(--muted);fill:var(--muted)}
 .canvas-viewport .svelte-flow__edge.selected .svelte-flow__edge-path{stroke-width:2.5}
-.canvas-viewport .svelte-flow__edge:focus-visible .svelte-flow__edge-path{stroke:var(--accent);stroke-width:2.5}
+.canvas-viewport .svelte-flow__edge:focus-visible .svelte-flow__edge-path{stroke:var(--canvas-accent);stroke-width:2.5}
 .canvas-viewport .svelte-flow__minimap{border:1px solid var(--border);border-radius:6px;overflow:hidden;box-shadow:0 2px 12px #0003;margin:10px}
 
 .canvas-node{position:relative;display:flex;flex-direction:column;width:100%;height:100%;border:1px solid var(--border);border-radius:6px;background:var(--panel);color:var(--text);overflow:hidden;box-shadow:0 2px 12px #0002;transition:border-color var(--motion-fast) var(--ease-out),box-shadow var(--motion-fast) var(--ease-out)}
 /* A card answers the pointer before it is pressed. */
 .canvas-viewport .svelte-flow__node:hover .canvas-node:not(.selected):not(.editing){border-color:color-mix(in srgb,var(--canvas-color,var(--muted)) 70%,var(--border))}
 .canvas-node.colored{border-color:var(--canvas-color);background:color-mix(in srgb,var(--canvas-color) 9%,var(--panel))}
-.canvas-node.selected{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 4px 16px #0003}
-.canvas-node.editing{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent),0 4px 16px #0003}
+.canvas-node.selected{border-color:var(--canvas-accent);box-shadow:0 0 0 1px var(--canvas-accent),0 4px 16px #0003}
+.canvas-node.editing{border-color:var(--canvas-accent);box-shadow:0 0 0 2px var(--canvas-accent),0 4px 16px #0003}
 .canvas-node-heading{display:flex;align-items:center;flex-shrink:0;height:26px;padding:0 30px 0 9px;border-bottom:1px solid var(--border);background:var(--bar);font-size:12px;color:var(--muted)}
 .canvas-node-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .canvas-node-more{position:absolute;top:2px;right:2px;z-index:2;width:22px;height:22px;min-width:0;padding:0;border:0;border-radius:4px;background:var(--panel);color:var(--muted);font-size:13px;line-height:1;opacity:0;transition:opacity var(--motion-fast) var(--ease-out)}
 .canvas-node:hover .canvas-node-more,.canvas-node.selected .canvas-node-more,.canvas-node-more:focus-visible{opacity:1}
 .canvas-node.editing .canvas-node-more{display:none}
-.canvas-group{background:color-mix(in srgb,var(--canvas-color,var(--muted)) 5%,transparent);border-style:dashed;box-shadow:none}
-.canvas-group.selected{box-shadow:0 0 0 1px var(--accent)}
+.canvas-group{background:color-mix(in srgb,var(--canvas-color,var(--muted)) 5%,transparent);border-style:dashed;border-color:color-mix(in srgb,var(--canvas-color,var(--muted)) 55%,transparent);box-shadow:none}
+.canvas-group.selected{box-shadow:0 0 0 1px var(--canvas-accent)}
 .canvas-group .canvas-node-heading{border-bottom:0;background:transparent;font-weight:600}
-.canvas-inline-label{width:100%;min-width:0;height:20px;padding:0 4px;border:1px solid var(--accent);border-radius:3px;background:var(--bg);color:var(--text);font:inherit}
+.canvas-inline-label{width:100%;min-width:0;height:20px;padding:0 4px;border:1px solid var(--canvas-accent);border-radius:3px;background:var(--bg);color:var(--text);font:inherit}
 .canvas-inline-editor{flex:1;min-height:0;width:100%;margin:0;padding:10px;border:0;outline:none;resize:none;background:var(--bg);color:var(--text);font:12px/1.5 'IBM Plex Mono',monospace;cursor:text}
 .canvas-file{min-height:0;display:flex;flex-direction:column;flex:1;overflow:hidden}
 .canvas-file>button{font-size:12px;align-self:flex-start;margin:6px 8px}
 .canvas-link{margin:12px;overflow-wrap:anywhere;white-space:normal}
 
 /* Connection dots: quiet until the card is hovered or selected, or a connection is being drawn. */
-.canvas-viewport .canvas-handle{width:10px;height:10px;min-width:0;min-height:0;border:2px solid var(--panel);border-radius:50%;background:var(--accent);opacity:0;transition:opacity var(--motion-fast) var(--ease-out),transform var(--motion-fast) var(--ease-out);cursor:crosshair}
+.canvas-viewport .canvas-handle{width:10px;height:10px;min-width:0;min-height:0;border:2px solid var(--panel);border-radius:50%;background:var(--canvas-accent);opacity:0;transition:opacity var(--motion-fast) var(--ease-out),transform var(--motion-fast) var(--ease-out);cursor:crosshair}
 .canvas-viewport .svelte-flow__node:hover .canvas-handle,.canvas-viewport .svelte-flow__node.selected .canvas-handle,.canvas-board.connecting .canvas-handle{opacity:1}
 .canvas-viewport .canvas-handle.svelte-flow__handle-top:hover{transform:translate(-50%,-50%) scale(1.3)}
 .canvas-viewport .canvas-handle.svelte-flow__handle-bottom:hover{transform:translate(-50%,50%) scale(1.3)}
 .canvas-viewport .canvas-handle.svelte-flow__handle-left:hover{transform:translate(-50%,-50%) scale(1.3)}
 .canvas-viewport .canvas-handle.svelte-flow__handle-right:hover{transform:translate(50%,-50%) scale(1.3)}
 .canvas-viewport .canvas-resize-line{border-color:transparent}
-.canvas-viewport .canvas-resize-handle{width:9px;height:9px;border:1px solid var(--panel);border-radius:2px;background:var(--accent)}
+.canvas-viewport .canvas-resize-handle{width:9px;height:9px;border:1px solid var(--panel);border-radius:2px;background:var(--canvas-accent)}
 
 .canvas-edge-label{padding:1px 6px;border-radius:4px;background:var(--bg);color:var(--muted);font-size:11px;line-height:16px;white-space:nowrap}
 .canvas-edge-label.editing{padding:0;background:transparent}
-.canvas-edge-input{height:22px;padding:0 6px;border:1px solid var(--accent);border-radius:4px;background:var(--bg);color:var(--text);font:11px/16px inherit}
-.canvas-guide{position:absolute;background:var(--accent);pointer-events:none}
+.canvas-edge-input{height:22px;padding:0 6px;border:1px solid var(--canvas-accent);border-radius:4px;background:var(--bg);color:var(--text);font:11px/16px inherit}
+.canvas-guide{position:absolute;background:var(--canvas-accent);pointer-events:none}
 .canvas-guide.vertical{top:-1000000px;height:2000000px}
 .canvas-guide.horizontal{left:-1000000px;width:2000000px}
 
@@ -108,25 +111,25 @@
 /* The details of a card: hidden, not removed, while a placeholder stands in for them. */
 .canvas-node-body{display:flex;flex-direction:column;flex:1;min-height:0}
 .canvas-node-body.paused{display:none}
-.canvas-placeholder{display:flex;align-items:center;flex:1;min-height:0;padding:18px 20px;overflow:hidden;color:var(--heading);font-size:34px;font-weight:600;line-height:1.2}
-.canvas-placeholder span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden;overflow-wrap:anywhere}
+.canvas-placeholder{display:flex;align-items:center;flex:1;min-height:0;padding:10px 20px;overflow:hidden;color:var(--heading);font-size:30px;font-weight:600;line-height:1.15}
+.canvas-placeholder span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
 @keyframes canvas-detail-in{from{opacity:0}}
 .canvas-board.detail-in .canvas-node-body{animation:canvas-detail-in var(--motion-base) var(--ease-out)}
 /* Far out, cards are thumbnails: grid, shadows, side dots and the details button would be a pixel each and still cost paint. */
 .canvas-board.far .canvas-node{box-shadow:none;transition:none}
-.canvas-board.far .canvas-node.selected{box-shadow:0 0 0 2px var(--accent)}
+.canvas-board.far .canvas-node.selected{box-shadow:0 0 0 2px var(--canvas-accent)}
 .canvas-board.far:not(.connecting) .canvas-handle{visibility:hidden}
 .canvas-board.far .canvas-group .canvas-node-heading{height:auto;padding:10px 14px;font-size:30px;line-height:1.2}
 
 /* Selection box, drawn in board pixels over everything. */
-.canvas-marquee{position:absolute;z-index:5;border:1px solid var(--accent);border-radius:3px;background:color-mix(in srgb,var(--accent) 12%,transparent);pointer-events:none}
+.canvas-marquee{position:absolute;z-index:5;border:1px solid var(--canvas-accent);border-radius:3px;background:color-mix(in srgb,var(--canvas-accent) 12%,transparent);pointer-events:none}
 /* A removed card fades out where it stood. */
 .canvas-ghost{position:absolute;border:1px solid var(--border);border-radius:6px;background:var(--panel);pointer-events:none;transform-origin:center}
 .canvas-ghost.colored{border-color:var(--canvas-color);background:color-mix(in srgb,var(--canvas-color) 9%,var(--panel))}
 .canvas-ghost.canvas-group{background:transparent;border-style:dashed}
 /* Grips at the ends of a selected connection. */
 .canvas-viewport .canvas-edge-end{display:flex;align-items:center;justify-content:center;border-radius:50%;cursor:grab}
-.canvas-viewport .canvas-edge-end span{width:10px;height:10px;border:2px solid var(--panel);border-radius:50%;background:var(--accent);transition:transform var(--motion-fast) var(--ease-out)}
+.canvas-viewport .canvas-edge-end span{width:10px;height:10px;border:2px solid var(--panel);border-radius:50%;background:var(--canvas-accent);transition:transform var(--motion-fast) var(--ease-out)}
 .canvas-viewport .canvas-edge-end:hover span{transform:scale(1.35)}
 /* One-line advice above the board; it never blocks the board. */
 .canvas-hint{position:absolute;left:50%;top:10px;z-index:6;display:flex;align-items:center;gap:8px;max-width:calc(100% - 24px);transform:translateX(-50%);padding:6px 6px 6px 12px;border:1px solid var(--border);border-radius:var(--radius-menu,6px);background:var(--menu);box-shadow:0 8px 24px #0004;color:var(--text);font-size:12px;line-height:16px}
