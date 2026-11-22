@@ -448,6 +448,15 @@ test('the canvas has a centered empty state, eases toolbar zoom and animates onl
   await expect(view.locator('.canvas-node')).toHaveCount(2);
   await expect.poll(async () => (await animations()).length).toBe(2);
 
+  // A deleted card fades out where it stood; only that one element animates.
+  await view.locator('.svelte-flow__node').first().click();
+  await page.keyboard.press('Delete');
+  await expect(view.locator('.canvas-node')).toHaveCount(1);
+  await expect(view.locator('.canvas-ghost')).toHaveCount(1);
+  await expect(view.locator('.canvas-ghost')).toHaveCount(0);
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(view.locator('.canvas-node')).toHaveCount(2);
+
   // Reduced motion: toolbar zoom and fit land at once and a new card does not animate.
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await view.getByRole('button', { name: 'Fit canvas', exact: true }).click();
@@ -457,6 +466,10 @@ test('the canvas has a centered empty state, eases toolbar zoom and animates onl
   await view.getByRole('menuitem', { name: 'Add text card', exact: true }).click();
   await expect(view.locator('.canvas-node')).toHaveCount(3);
   expect((await animations()).length).toBe(2);
+  await view.locator('.svelte-flow__node').first().click();
+  await page.keyboard.press('Delete');
+  await expect(view.locator('.canvas-node')).toHaveCount(2);
+  await expect(view.locator('.canvas-ghost')).toHaveCount(0);
 });
 
 test('only the edited block fades in the Split preview, and document switches fade nothing', async ({ page }) => {

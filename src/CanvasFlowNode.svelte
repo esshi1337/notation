@@ -13,6 +13,8 @@
   let node = $derived(data.node as CanvasNode), title = $derived(canvasNodeTitle(node));
   let group = $derived(node.type === 'group'), color = $derived(canvasColor(node.color));
   let editing = $derived(board.editing === id);
+  // Far out, a card is its title on its colour; the real content stays rendered but hidden.
+  let placeholder = $derived(board.far && !editing && !group);
   let heading = $derived(node.type === 'text' ? node.label ?? '' : title);
   let draft = $state(''), field = $state<HTMLTextAreaElement | HTMLInputElement>();
 
@@ -44,32 +46,35 @@
     const file = card.file || '';
     if (/\.(?:png|jpe?g|gif|webp|avif|svg|bmp)$/iu.test(file)) return '![](' + encodeURI(file).replace(/[()]/gu, (value) => '%' + value.charCodeAt(0).toString(16)) + ')';
     if (/\.(?:md|markdown)$/iu.test(file) && !file.includes(']]')) return '![[' + file + (card.subpath || '') + ']]';
-    return file || 'Choose a note in the card editor.';
+    return file || 'Choose a note in the card details.';
   }
 </script>
 
-<NodeResizer minWidth={MIN_WIDTH} minHeight={MIN_HEIGHT} maxWidth={MAX_SIZE} maxHeight={MAX_SIZE} isVisible={selected && !editing && board.selectionSize === 1} lineClass="canvas-resize-line" handleClass="canvas-resize-handle" onResizeStart={() => board.resizeStart(id)} onResizeEnd={(_event, params) => board.resizeEnd(id, params)} />
+<NodeResizer minWidth={MIN_WIDTH} minHeight={MIN_HEIGHT} maxWidth={MAX_SIZE} maxHeight={MAX_SIZE} isVisible={selected && !editing && !board.far && board.selectionSize === 1} lineClass="canvas-resize-line" handleClass="canvas-resize-handle" onResizeStart={() => board.resizeStart(id)} onResizeEnd={(_event, params) => board.resizeEnd(id, params)} />
 <!-- svelte-ignore a11y_no_static_element_interactions (The Svelte Flow wrapper is the focusable, labelled card; this is its surface.) -->
 <div class="canvas-node" class:canvas-group={group} class:selected class:editing class:colored={!!color} style={color ? '--canvas-color:' + color : undefined} use:appear onmousedown={press} ontouchstart={press} ondblclick={doubleClick}>
-  {#if editing && group}
-    <div class="canvas-node-heading"><input class="canvas-inline-label nodrag nopan" aria-label="Group label" bind:this={field} bind:value={draft} onkeydown={editorKey} onblur={editorBlur} /></div>
-  {:else if heading}
-    <div class="canvas-node-heading"><span class="canvas-node-title">{heading}</span></div>
-  {/if}
-  <button type="button" class="canvas-node-more nodrag" aria-label={'Edit card: ' + title} title="Card details" onclick={() => board.details(id)}>⋯</button>
-  {#if node.type === 'text'}
-    {#if editing}
-      <textarea class="canvas-inline-editor nodrag nopan nowheel" aria-label={'Card text: ' + title} spellcheck="true" bind:this={field} bind:value={draft} onkeydown={editorKey} onblur={editorBlur}></textarea>
-    {:else}
-      <CanvasCard markdown={node.text || ''} sourcePath={board.path} render={board.render} />
+  {#if placeholder}<div class="canvas-placeholder" aria-hidden="true"><span>{title}</span></div>{/if}
+  <div class="canvas-node-body" class:paused={placeholder}>
+    {#if editing && group}
+      <div class="canvas-node-heading"><input class="canvas-inline-label nodrag nopan" aria-label="Group label" bind:this={field} bind:value={draft} onkeydown={editorKey} onblur={editorBlur} /></div>
+    {:else if heading}
+      <div class="canvas-node-heading"><span class="canvas-node-title">{heading}</span></div>
     {/if}
-  {:else if node.type === 'file'}
-    <div class="canvas-file">
-      {#if node.file?.trim()}<button type="button" class="nodrag" onclick={() => board.openFile(node)} aria-label={'Open card file: ' + node.file}>Open original</button>{:else}<button type="button" class="nodrag" onclick={() => board.linkNote(node)}>Choose note</button>{/if}
-      <CanvasCard markdown={fileMarkdown(node)} sourcePath="" render={board.render} />
-    </div>
-  {:else if node.type === 'link'}
-    <button type="button" class="canvas-link nodrag" onclick={() => board.openLink(node.url || '')}>{node.url}</button>
-  {/if}
+    <button type="button" class="canvas-node-more nodrag" aria-label={'Edit card: ' + title} title="Card details" onclick={() => board.details(id)}>⋯</button>
+    {#if node.type === 'text'}
+      {#if editing}
+        <textarea class="canvas-inline-editor nodrag nopan nowheel" aria-label={'Card text: ' + title} spellcheck="true" bind:this={field} bind:value={draft} onkeydown={editorKey} onblur={editorBlur}></textarea>
+      {:else}
+        <CanvasCard markdown={node.text || ''} sourcePath={board.path} render={board.render} paused={placeholder} />
+      {/if}
+    {:else if node.type === 'file'}
+      <div class="canvas-file">
+        {#if node.file?.trim()}<button type="button" class="nodrag" onclick={() => board.openFile(node)} aria-label={'Open card file: ' + node.file}>Open original</button>{:else}<button type="button" class="nodrag" onclick={() => board.linkNote(node)}>Choose note</button>{/if}
+        <CanvasCard markdown={fileMarkdown(node)} sourcePath="" render={board.render} paused={placeholder} />
+      </div>
+    {:else if node.type === 'link'}
+      <button type="button" class="canvas-link nodrag" onclick={() => board.openLink(node.url || '')}>{node.url}</button>
+    {/if}
+  </div>
 </div>
 {#each SIDES as [side, position] (side)}<Handle type="source" {position} id={side} class="canvas-handle" />{/each}

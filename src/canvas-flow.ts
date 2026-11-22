@@ -68,6 +68,60 @@ export function edgeSides(edge: Pick<CanvasEdge, 'fromSide' | 'toSide'>, from: R
 
 export const oppositeSide = (side: Side): Side => side === 'left' ? 'right' : side === 'right' ? 'left' : side === 'top' ? 'bottom' : 'top';
 
+/**
+ * The sides a connection should record. A side is written only where the
+ * user chose one that differs from the automatic choice, so an ordinary
+ * connection stays free to follow its cards and a deliberate one stays put.
+ */
+export function pinnedSides(from: Rect, to: Rect, chosen: { fromSide?: Side | null; toSide?: Side | null }): { fromSide?: Side; toSide?: Side } {
+  const auto = autoSides(from, to), sides: { fromSide?: Side; toSide?: Side } = {};
+  if (chosen.fromSide && chosen.fromSide !== auto.fromSide) sides.fromSide = chosen.fromSide;
+  if (chosen.toSide && chosen.toSide !== auto.toSide) sides.toSide = chosen.toSide;
+  return sides;
+}
+
+/**
+ * True for a board whose connections all leave right and enter left although
+ * the cards are not all laid out that way: what the first Notation canvas wrote
+ * for every connection. Such a board draws arrows that loop around cards.
+ */
+export function looksRightToLeftOnly(canvas: CanvasDocument): boolean {
+  if (!canvas.edges.length || !canvas.edges.every((edge) => edge.fromSide === 'right' && edge.toSide === 'left')) return false;
+  const rects = new Map(canvas.nodes.map((node) => [node.id, node]));
+  return canvas.edges.some((edge) => { const from = rects.get(edge.fromNode), to = rects.get(edge.toNode); return !!from && !!to && autoSides(from, to).fromSide !== 'right'; });
+}
+
+/** Clear the recorded sides of every connection; returns how many changed. */
+export function unpinAllSides(canvas: CanvasDocument): number {
+  let changed = 0;
+  for (const edge of canvas.edges) if (edge.fromSide !== undefined || edge.toSide !== undefined) { delete edge.fromSide; delete edge.toSide; changed++; }
+  return changed;
+}
+
+/** Cards a selection rectangle touches (document coordinates). */
+export function rectsTouching<T extends Rect>(items: T[], area: Rect): T[] {
+  return items.filter((item) => item.x < area.x + area.width && item.x + item.width > area.x && item.y < area.y + area.height && item.y + item.height > area.y);
+}
+
+export type Direction = 'up' | 'down' | 'left' | 'right';
+/**
+ * The card to move keyboard focus to from `from`: the nearest one whose centre
+ * lies in that direction, preferring cards in line with the current one.
+ */
+export function neighbourInDirection<T extends Rect & { id: string }>(items: T[], from: T, direction: Direction): T | null {
+  const centre = (rect: Rect) => ({ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }), origin = centre(from);
+  let best: T | null = null, bestScore = Infinity;
+  for (const item of items) {
+    if (item.id === from.id) continue;
+    const at = centre(item), dx = at.x - origin.x, dy = at.y - origin.y;
+    const along = direction === 'left' ? -dx : direction === 'right' ? dx : direction === 'up' ? -dy : dy, across = Math.abs(direction === 'left' || direction === 'right' ? dy : dx);
+    if (along <= 0 || across > along * 2) continue;
+    const score = along + across * 2;
+    if (score < bestScore) { bestScore = score; best = item; }
+  }
+  return best;
+}
+
 /** Top-left corner for a new card whose `side` midpoint sits at `point`. */
 export function placeBySide(point: { x: number; y: number }, side: Side, width: number, height: number) {
   return { x: point.x - (side === 'left' ? 0 : side === 'right' ? width : width / 2), y: point.y - (side === 'top' ? 0 : side === 'bottom' ? height : height / 2) };

@@ -11,6 +11,8 @@ export type CanvasBoard = {
   readonly editingEdge: string;
   /** How many cards are selected; resize handles show for a single selection only. */
   readonly selectionSize: number;
+  /** Zoomed so far out that cards show a placeholder instead of their content. */
+  readonly far: boolean;
   readonly path: string | undefined;
   readonly render: RenderCard | undefined;
   /** True once for a card this session just added, so only it animates in. */

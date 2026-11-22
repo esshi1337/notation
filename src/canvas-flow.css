@@ -13,7 +13,7 @@
 .canvas-help{margin:0;padding:3px 8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .canvas-area{display:flex;flex:1;min-height:0;overflow:hidden}
 .canvas-add-menu{position:relative}
-.canvas-add-menu [role=menu],.canvas-context-menu{position:absolute;z-index:10;width:188px;padding:4px;background:var(--menu);border:1px solid var(--border);border-radius:var(--radius-menu,4px);box-shadow:0 8px 24px #0005}
+.canvas-add-menu [role=menu],.canvas-context-menu{position:absolute;z-index:10;min-width:188px;max-width:300px;padding:4px;background:var(--menu);border:1px solid var(--border);border-radius:var(--radius-menu,4px);box-shadow:0 8px 24px #0005}
 .canvas-add-menu [role=menu]{left:0;top:calc(100% + 4px)}
 .canvas-add-menu [role=menuitem],.canvas-context-menu>[role=menuitem]{display:block;width:100%;border-color:transparent;text-align:left;padding:6px 8px;font-size:13px;line-height:18px}
 .canvas-context-menu>[role=menuitem]:disabled{color:var(--muted);opacity:.6;cursor:default}
@@ -27,21 +27,25 @@
   --xy-edge-stroke:var(--muted);--xy-edge-stroke-selected:var(--accent);--xy-edge-stroke-width:1.5;
   --xy-connectionline-stroke:var(--accent);--xy-connectionline-stroke-width:1.5;
   --xy-handle-background-color:var(--accent);--xy-resize-background-color:var(--accent);
-  --xy-selection-background-color:color-mix(in srgb,var(--accent) 12%,transparent);--xy-selection-border:1px solid var(--accent);
   --xy-minimap-background-color:var(--panel);--xy-minimap-mask-background-color:color-mix(in srgb,var(--bg) 70%,transparent);--xy-minimap-mask-stroke-color:var(--border);--xy-minimap-mask-stroke-width:1}
 .canvas-viewport:focus-visible{box-shadow:inset 0 0 0 2px var(--accent)}
 .canvas-viewport .svelte-flow__pane{cursor:default}
 .canvas-viewport .svelte-flow__pane.dragging{cursor:grabbing}
+.canvas-board.select-tool .svelte-flow__pane{cursor:crosshair}
+.canvas-board.pan-ready .svelte-flow__pane,.canvas-board.pan-ready .svelte-flow__node{cursor:grab}
 .canvas-viewport .svelte-flow__node{cursor:default;border-radius:6px;outline:none}
 .canvas-viewport .svelte-flow__node.dragging{cursor:grabbing}
+.canvas-viewport .svelte-flow__edge{cursor:pointer}
+.canvas-viewport .svelte-flow__edge:hover .svelte-flow__edge-path{stroke:color-mix(in srgb,var(--accent) 60%,var(--muted))}
 .canvas-viewport .svelte-flow__node:focus-visible .canvas-node{box-shadow:0 0 0 2px var(--accent)}
 .canvas-viewport .svelte-flow__arrowhead polyline{stroke:var(--muted);fill:var(--muted)}
 .canvas-viewport .svelte-flow__edge.selected .svelte-flow__edge-path{stroke-width:2.5}
 .canvas-viewport .svelte-flow__edge:focus-visible .svelte-flow__edge-path{stroke:var(--accent);stroke-width:2.5}
 .canvas-viewport .svelte-flow__minimap{border:1px solid var(--border);border-radius:6px;overflow:hidden;box-shadow:0 2px 12px #0003;margin:10px}
-.canvas-viewport .svelte-flow__selection,.canvas-viewport .svelte-flow__nodesselection-rect{border-radius:4px}
 
 .canvas-node{position:relative;display:flex;flex-direction:column;width:100%;height:100%;border:1px solid var(--border);border-radius:6px;background:var(--panel);color:var(--text);overflow:hidden;box-shadow:0 2px 12px #0002;transition:border-color var(--motion-fast) var(--ease-out),box-shadow var(--motion-fast) var(--ease-out)}
+/* A card answers the pointer before it is pressed. */
+.canvas-viewport .svelte-flow__node:hover .canvas-node:not(.selected):not(.editing){border-color:color-mix(in srgb,var(--canvas-color,var(--muted)) 70%,var(--border))}
 .canvas-node.colored{border-color:var(--canvas-color);background:color-mix(in srgb,var(--canvas-color) 9%,var(--panel))}
 .canvas-node.selected{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 4px 16px #0003}
 .canvas-node.editing{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent),0 4px 16px #0003}
@@ -100,10 +104,31 @@
 .canvas-note-results span{font-size:12px;color:var(--muted)}
 .canvas-viewport .svelte-flow__attribution{background:transparent;padding:2px 6px;font-size:10px;pointer-events:none}
 .canvas-viewport .svelte-flow__attribution a{color:var(--muted);opacity:.6;text-decoration:none}
-/* The box around a multi-selection is an outline only: any selected card
-   drags the whole selection, and cards inside the box stay clickable. */
-.canvas-viewport .svelte-flow__selection-wrapper{pointer-events:none!important}
-/* Far out, cards are thumbnails: four dots per card would be a pixel each and still cost paint. */
-.canvas-board.far:not(.connecting) .canvas-handle{visibility:hidden}
+
+/* The details of a card: hidden, not removed, while a placeholder stands in for them. */
+.canvas-node-body{display:flex;flex-direction:column;flex:1;min-height:0}
+.canvas-node-body.paused{display:none}
+.canvas-placeholder{display:flex;align-items:center;flex:1;min-height:0;padding:18px 20px;overflow:hidden;color:var(--heading);font-size:34px;font-weight:600;line-height:1.2}
+.canvas-placeholder span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden;overflow-wrap:anywhere}
+@keyframes canvas-detail-in{from{opacity:0}}
+.canvas-board.detail-in .canvas-node-body{animation:canvas-detail-in var(--motion-base) var(--ease-out)}
+/* Far out, cards are thumbnails: grid, shadows, side dots and the details button would be a pixel each and still cost paint. */
 .canvas-board.far .canvas-node{box-shadow:none;transition:none}
 .canvas-board.far .canvas-node.selected{box-shadow:0 0 0 2px var(--accent)}
+.canvas-board.far:not(.connecting) .canvas-handle{visibility:hidden}
+.canvas-board.far .canvas-group .canvas-node-heading{height:auto;padding:10px 14px;font-size:30px;line-height:1.2}
+
+/* Selection box, drawn in board pixels over everything. */
+.canvas-marquee{position:absolute;z-index:5;border:1px solid var(--accent);border-radius:3px;background:color-mix(in srgb,var(--accent) 12%,transparent);pointer-events:none}
+/* A removed card fades out where it stood. */
+.canvas-ghost{position:absolute;border:1px solid var(--border);border-radius:6px;background:var(--panel);pointer-events:none;transform-origin:center}
+.canvas-ghost.colored{border-color:var(--canvas-color);background:color-mix(in srgb,var(--canvas-color) 9%,var(--panel))}
+.canvas-ghost.canvas-group{background:transparent;border-style:dashed}
+/* Grips at the ends of a selected connection. */
+.canvas-viewport .canvas-edge-end{display:flex;align-items:center;justify-content:center;border-radius:50%;cursor:grab}
+.canvas-viewport .canvas-edge-end span{width:10px;height:10px;border:2px solid var(--panel);border-radius:50%;background:var(--accent);transition:transform var(--motion-fast) var(--ease-out)}
+.canvas-viewport .canvas-edge-end:hover span{transform:scale(1.35)}
+/* One-line advice above the board; it never blocks the board. */
+.canvas-hint{position:absolute;left:50%;top:10px;z-index:6;display:flex;align-items:center;gap:8px;max-width:calc(100% - 24px);transform:translateX(-50%);padding:6px 6px 6px 12px;border:1px solid var(--border);border-radius:var(--radius-menu,6px);background:var(--menu);box-shadow:0 8px 24px #0004;color:var(--text);font-size:12px;line-height:16px}
+.canvas-hint span{min-width:0}
+.canvas-hint button{flex-shrink:0;min-height:24px;padding:2px 9px;border-color:var(--border);font-size:12px;white-space:nowrap}

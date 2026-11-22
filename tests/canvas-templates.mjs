@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { parseCanvas, mutateCanvas, mutateCanvasDocument, removeCanvasNode, canvasAnchor, canvasNodeTitle, newCanvas } from '../src/canvas.ts';
-import { zoomAtPoint, toDocument, fitBounds, boundsOf, autoSides, edgeSides, placeBySide, groupMembers, alignmentGuides, applyGeometry, copyFragment, pasteFragment, removeElements, canvasColor, MIN_ZOOM, MAX_ZOOM } from '../src/canvas-flow.ts';
+import { parseCanvas, mutateCanvasDocument, canvasFormat, canvasNodeTitle, newCanvas, MAX_CARDS, MAX_CONNECTIONS } from '../src/canvas.ts';
+const mutateCanvas = (text, mutation) => mutateCanvasDocument(text, mutation).text;
+import { zoomAtPoint, toDocument, fitBounds, boundsOf, autoSides, edgeSides, pinnedSides, looksRightToLeftOnly, unpinAllSides, rectsTouching, neighbourInDirection, placeBySide, groupMembers, alignmentGuides, applyGeometry, copyFragment, pasteFragment, removeElements, canvasColor, MIN_ZOOM, MAX_ZOOM } from '../src/canvas-flow.ts';
 import { resolveVariable, substituteVariables, insertTemplate, readTemplateLibrary, validateTemplateLibrary } from '../src/templates.ts';
 let passed = 0;
 function test(name, run) { run(); passed++; console.log('✓ ' + name); }
@@ -12,11 +13,9 @@ test('JSON Canvas 1.0 mutations preserve unknown fields, node metadata, edge dat
   assert.equal(value.edges[0].future,'retained'); assert.equal(value.nodes[0].x,40); assert.equal(value.nodes[0].text,'Changed');
   assert.equal(next.replaceAll('\r\n','').includes('\n'),false); assert.equal(parseCanvas(original).nodes[0].x,10);
 });
-test('card deletion removes only connected edges and standard anchors follow node geometry', () => {
-  const next = mutateCanvas(original, (canvas) => removeCanvasNode(canvas,'a'));
+test('card deletion removes only connected edges and a new canvas is empty', () => {
+  const next = mutateCanvas(original, (canvas) => removeElements(canvas, ['a'], []));
   assert.deepEqual(parseCanvas(next).nodes.map((node) => node.id),['b']); assert.equal(parseCanvas(next).edges.length,0);
-  const node = parseCanvas(original).nodes[0];
-  assert.deepEqual(canvasAnchor(node,'right'),{x:250,y:100}); assert.deepEqual(canvasAnchor(node,'top'),{x:130,y:20});
   assert.deepEqual(parseCanvas(newCanvas()),{nodes:[],edges:[]});
 });
 test('resize and direct connection mutations retain unknown document, card and edge fields', () => {
@@ -36,7 +35,11 @@ test('invalid, dangling, duplicate and oversized Canvas data rejects without rep
     const value = JSON.parse(original); mutate(value); assert.throws(()=>parseCanvas(JSON.stringify(value)));
   }
   assert.throws(()=>parseCanvas('{broken'));
-  assert.throws(()=>parseCanvas(JSON.stringify({nodes:Array.from({length:501},(_,index)=>({id:String(index),type:'text',x:0,y:0,width:1,height:1,text:''}))})),/500/u);
+  const cards=(length)=>Array.from({length},(_,index)=>({id:String(index),type:'text',x:0,y:0,width:1,height:1,text:''}));
+  assert.equal(MAX_CARDS,2000); assert.equal(MAX_CONNECTIONS,8000);
+  assert.equal(parseCanvas(JSON.stringify({nodes:cards(MAX_CARDS)})).nodes.length,MAX_CARDS);
+  assert.throws(()=>parseCanvas(JSON.stringify({nodes:cards(MAX_CARDS+1)})),/2,000 cards/u);
+  assert.throws(()=>parseCanvas(JSON.stringify({nodes:cards(2),edges:Array.from({length:MAX_CONNECTIONS+1},(_,index)=>({id:'e'+index,fromNode:'0',toNode:'1'}))})),/8,000 connections/u);
 });
 test('zoom keeps the document point under the cursor fixed and never pans at a zoom limit', () => {
   const view = { x: 40, y: -25, zoom: 0.8 }, cursor = { x: 317, y: 208 };
@@ -91,6 +94,45 @@ test('connections without pinned sides face each other; pinned sides are kept', 
   assert.deepEqual(placeBySide({ x: 500, y: 300 }, 'top', 280, 180), { x: 360, y: 300 });
   assert.deepEqual(placeBySide({ x: 500, y: 300 }, 'left', 280, 180), { x: 500, y: 210 });
 });
+test('connections record only deliberately chosen sides, and boards written right-to-left are recognised and unpinned on request', () => {
+  const card = (x, y) => ({ x, y, width: 200, height: 120 }), home = card(0, 0);
+  // The automatic choice is never written, so the connection keeps following its cards.
+  assert.deepEqual(pinnedSides(home, card(400, 0), { fromSide: 'right', toSide: 'left' }), {});
+  assert.deepEqual(pinnedSides(home, card(400, 0), {}), {});
+  assert.deepEqual(pinnedSides(home, card(400, 0), { fromSide: 'right' }), {});
+  // A side other than the automatic one is the user's decision and is kept.
+  assert.deepEqual(pinnedSides(home, card(400, 0), { fromSide: 'top', toSide: 'top' }), { fromSide: 'top', toSide: 'top' });
+  assert.deepEqual(pinnedSides(home, card(400, 0), { fromSide: 'bottom', toSide: 'left' }), { fromSide: 'bottom' });
+  assert.deepEqual(pinnedSides(home, card(-400, 0), { fromSide: 'right', toSide: null }), { fromSide: 'right' });
+  const node = (id, x, y) => ({ id, type: 'text', x, y, width: 200, height: 120, text: id }), rl = (id, fromNode, toNode, extra = {}) => ({ id, fromNode, toNode, fromSide: 'right', toSide: 'left', ...extra });
+  const legacy = { nodes: [node('a', 0, 0), node('b', 400, 0), node('c', 0, 300)], edges: [rl('ab', 'a', 'b'), rl('ac', 'a', 'c', { label: 'kept', future: 1 })] };
+  assert.equal(looksRightToLeftOnly(legacy), true);
+  // Left-to-right layouts drawn right → left look right already; one deliberate side means a person chose them.
+  assert.equal(looksRightToLeftOnly({ nodes: legacy.nodes, edges: [rl('ab', 'a', 'b')] }), false);
+  assert.equal(looksRightToLeftOnly({ nodes: legacy.nodes, edges: [rl('ab', 'a', 'b'), { id: 'ac', fromNode: 'a', toNode: 'c', fromSide: 'bottom', toSide: 'top' }] }), false);
+  assert.equal(looksRightToLeftOnly({ nodes: legacy.nodes, edges: [rl('ab', 'a', 'b'), { id: 'ac', fromNode: 'a', toNode: 'c' }] }), false);
+  assert.equal(looksRightToLeftOnly({ nodes: legacy.nodes, edges: [] }), false);
+  const unpinned = structuredClone(legacy);
+  assert.equal(unpinAllSides(unpinned), 2);
+  assert.deepEqual(unpinned.edges, [{ id: 'ab', fromNode: 'a', toNode: 'b' }, { id: 'ac', fromNode: 'a', toNode: 'c', label: 'kept', future: 1 }]);
+  assert.equal(unpinAllSides(unpinned), 0); assert.equal(looksRightToLeftOnly(unpinned), false);
+});
+test('a selection box takes every card it touches and arrow keys find the nearest card in a direction', () => {
+  const card = (id, x, y) => ({ id, x, y, width: 200, height: 120 });
+  const cards = [card('a', 0, 0), card('b', 300, 0), card('c', 0, 200), card('d', 320, 230), card('far', 2000, 0)];
+  const ids = (items) => items.map((item) => item.id);
+  assert.deepEqual(ids(rectsTouching(cards, { x: -10, y: -10, width: 250, height: 150 })), ['a']);
+  assert.deepEqual(ids(rectsTouching(cards, { x: 150, y: 50, width: 200, height: 200 })), ['a', 'b', 'c', 'd']);
+  // Touching edges do not count, and an empty box selects nothing.
+  assert.deepEqual(ids(rectsTouching(cards, { x: 200, y: 0, width: 100, height: 120 })), []);
+  assert.deepEqual(ids(rectsTouching(cards, { x: 250, y: 150, width: 0, height: 0 })), []);
+  const from = (id, direction) => neighbourInDirection(cards, cards.find((item) => item.id === id), direction)?.id ?? null;
+  assert.equal(from('a', 'right'), 'b'); assert.equal(from('a', 'down'), 'c'); assert.equal(from('b', 'left'), 'a');
+  assert.equal(from('b', 'down'), 'd'); assert.equal(from('d', 'up'), 'b'); assert.equal(from('d', 'left'), 'c');
+  // Nothing in that direction, or only far off to the side.
+  assert.equal(from('a', 'left'), null); assert.equal(from('a', 'up'), null); assert.equal(from('b', 'right'), 'far');
+  assert.equal(from('c', 'right'), 'd'); assert.equal(from('far', 'down'), null);
+});
 test('group membership is geometric and alignment guides snap to the nearest edge or centre', () => {
   const group = { id: 'g', x: 0, y: 0, width: 400, height: 300 };
   const nodes = [group, { id: 'in', x: 40, y: 60, width: 200, height: 120 }, { id: 'edge', x: 200, y: 180, width: 200, height: 120 }, { id: 'half', x: 300, y: 250, width: 200, height: 120 }, { id: 'out', x: 500, y: 0, width: 200, height: 120 }, { id: 'inner', type: 'group', x: 10, y: 10, width: 100, height: 100 }];
@@ -125,6 +167,28 @@ test('a move, resize, paste and delete each round-trip every unknown field, key 
   assert.equal(canvasColor('4'), '#3fb26f'); assert.equal(canvasColor('#AABBCC'), '#AABBCC'); assert.equal(canvasColor('red'), null); assert.equal(canvasColor(undefined), null);
   assert.equal(canvasNodeTitle({ id: 't', type: 'text', x: 0, y: 0, width: 1, height: 1, text: '' }), 'Empty card');
   assert.equal(canvasNodeTitle({ id: 'g', type: 'group', x: 0, y: 0, width: 1, height: 1 }), 'Group');
+});
+test('a change keeps the file\'s own indentation, line endings and final newline, and a no-op changes no byte', () => {
+  const value = { nodes: [{ id: 'a', type: 'text', x: 1, y: 2, width: 3, height: 4, text: 't' }], edges: [], extra: { kept: [1, { deep: true }] } };
+  const styles = { two: JSON.stringify(value, null, 2) + '\n', four: JSON.stringify(value, null, 4) + '\n', tabs: JSON.stringify(value, null, '\t'), crlf: JSON.stringify(value, null, '\t').replaceAll('\n', '\r\n') + '\r\n', compact: JSON.stringify(value), compactNewline: JSON.stringify(value) + '\n' };
+  assert.deepEqual(canvasFormat(styles.two), { eol: '\n', indent: '  ', trailing: true });
+  assert.deepEqual(canvasFormat(styles.tabs), { eol: '\n', indent: '\t', trailing: false });
+  assert.deepEqual(canvasFormat(styles.crlf), { eol: '\r\n', indent: '\t', trailing: true });
+  assert.deepEqual(canvasFormat(styles.compact), { eol: '\n', indent: 0, trailing: false });
+  for (const [name, text] of Object.entries(styles)) {
+    // Nothing changed: the very same string comes back, and it is reported as unchanged.
+    const idle = mutateCanvasDocument(text, (canvas) => { canvas.nodes[0].x = 1; });
+    assert.equal(idle.text, text, name); assert.equal(idle.changed, false, name);
+    // One number changed: only that number differs in the file.
+    const moved = mutateCanvasDocument(text, (canvas) => { canvas.nodes[0].x = 77; });
+    assert.equal(moved.changed, true, name);
+    assert.equal(moved.text, text.replace(/"x":( ?)1/u, '"x":$177'), name);
+    assert.deepEqual(parseCanvas(moved.text).extra, value.extra, name);
+  }
+  // Hand-spaced JSON that no serializer would write is normalised on a real change, never on a no-op.
+  const odd = '{ "nodes":[ ],\n\n   "edges":[] }';
+  assert.equal(mutateCanvasDocument(odd, () => {}).text, odd);
+  assert.deepEqual(parseCanvas(mutateCanvasDocument(odd, (canvas) => { canvas.nodes.push(value.nodes[0]); }).text).nodes, value.nodes);
 });
 test('variables are typed text with own-property lookup and never evaluate expressions', () => {
   const values={title:'Note',count:42,done:false,tags:['one','two'],project:{name:'Nested'},empty:null};
