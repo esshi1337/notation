@@ -17,7 +17,9 @@
   import Workspace from './Workspace.svelte';
   import History from './History.svelte';
   import Templates from './Templates.svelte';
-  import Canvas from './Canvas.svelte';
+  // The canvas and its interaction library load when a canvas is first shown.
+  const loadCanvas = () => import('./Canvas.svelte');
+  let canvasView = $state<{ chooseSidesAutomatically: () => void }>();
   import { newCanvas as emptyCanvas } from './canvas';
   import { renderMarkdown } from './render-markdown';
   import { renderContent } from './render-content';
@@ -210,7 +212,7 @@
     ...command,
     ...(command.id === 'panel.scripts' && !scriptsEnabled ? { label: 'Scripts (enable in Settings → Editor)' } : {}),
     shortcut: formatShortcut(shortcutFor(command.id, shortcuts), mac),
-    disabled: (command.id === 'panel.git' && !gitRoot) || (command.id === 'panel.scripts' && !scriptsEnabled) || (ui.performanceMode && ['view.split','view.preview','view.live'].includes(command.id)) || (command.id === 'view.language' && canvasDocument) || (!intelligenceEnabled && ['code.definition','code.references','code.rename','code.format'].includes(command.id)) || (codeDocument && (command.id.startsWith('block.') || command.id.startsWith('insert.') || ['panel.properties','panel.templates','panel.table','panel.export','view.split','view.preview','view.live'].includes(command.id))) || (active.hemingway && hemingwayCommandBlocked(command.id)) || ((busy || workspaceBusy) && ['file.new', 'file.newCanvas', 'file.open', 'file.save', 'file.saveAs', 'tab.close'].includes(command.id)) || (canvasDocument && (['panel.properties','panel.table','panel.templates','panel.export','block.actions'].includes(command.id) || command.id.startsWith('block.') || command.id.startsWith('fold.') || command.id.startsWith('insert.'))),
+    disabled: (command.id === 'panel.git' && !gitRoot) || (command.id === 'panel.scripts' && !scriptsEnabled) || (ui.performanceMode && ['view.split','view.preview','view.live'].includes(command.id)) || (command.id === 'view.language' && canvasDocument) || (command.id === 'canvas.autoSides' && !canvasVisible) || (!intelligenceEnabled && ['code.definition','code.references','code.rename','code.format'].includes(command.id)) || (codeDocument && (command.id.startsWith('block.') || command.id.startsWith('insert.') || ['panel.properties','panel.templates','panel.table','panel.export','view.split','view.preview','view.live'].includes(command.id))) || (active.hemingway && hemingwayCommandBlocked(command.id)) || ((busy || workspaceBusy) && ['file.new', 'file.newCanvas', 'file.open', 'file.save', 'file.saveAs', 'tab.close'].includes(command.id)) || (canvasDocument && (['panel.properties','panel.table','panel.templates','panel.export','block.actions'].includes(command.id) || command.id.startsWith('block.') || command.id.startsWith('fold.') || command.id.startsWith('insert.'))),
     checked: command.id.startsWith('view.') ? command.id === 'view.hemingway' ? active.hemingway : command.id === 'view.focus' ? ui.focusMode : !active.hemingway && command.id === 'view.' + effectiveLayout : command.id.startsWith('panel.') ? panel === command.id.slice(6) && !ui.focusMode : undefined,
   })));
   let layoutItems = $derived(codeDocument ? commandItems.filter(command => command.id === 'view.source') : active.hemingway ? commandItems.filter(command => command.id === 'view.hemingway') : canvasDocument
@@ -819,6 +821,7 @@
     if (id === 'app.settings') { settingsOpen = true; return; }
     if (id === 'file.rename') { renameId = activeId; return; }
     if (id === 'file.newCanvas') { newCanvasDocument(); return; }
+    if (id === 'canvas.autoSides') { if (canvasVisible) canvasView?.chooseSidesAutomatically(); return; }
     if (id === 'file.new') { newDocument(); await tick(); editor?.focus(); return; }
     if (id === 'file.open') { await openDocument(); return; }
     if (id === 'file.save' || id === 'file.saveAs') { await saveDocument(id === 'file.saveAs'); return; }
@@ -1045,7 +1048,7 @@
         {#each documents as tab (tab.lifetime)}<div class="editor-tab-host" hidden={tab.id !== activeId}><Editor bind:this={editors[tab.id]} mathMode={ui.mathSyntax} value={tab.content} codeLanguage={ui.performanceMode ? 'plaintext' : detectLanguage(tab.name, tab.language)} intelligenceEnabled={desktop && intelligenceEnabled} tabSize={ui.tabSize} indentWithTabs={ui.indentWithTabs} onIntelligence={(value) => { intelligenceStates[tab.id] = value; }} hemingway={tab.hemingway} initialSelection={tab.selection} active={tab.id === activeId} {wrap} showLineNumbers={ui.showLineNumbers} appearance={[fontSize, ui.editorFont, ui.lineHeight, ui.readingWidth].join(':')} live={tab.id === activeId && effectiveLayout === 'live' && !canvasDocument} standalone={tab.name.toLowerCase().endsWith('.mmd')} {theme} folds={tab.folds} cells={cellsFor(tab)} sourcePath={tab.path ?? tab.id} loadEmbed={loadEmbedded} onOpenPath={(path) => void openPath(path)} onOpenWiki={(target, path) => void openWiki(target, tab.id, path)} onEditProperties={() => editProperties(tab.id)} wikiCandidates={(context) => candidatesFor(tab.id, context)} onFormatting={(state) => { formattingReduced[tab.id] = state.reduced; }} onChange={(value) => { invalidateDiskCheck(); scheduleDiskCheck(); tab.content = value; tab.updatedAt = Date.now(); }} onSelection={(selection) => { tab.selection = selection; }} /></div>{/each}
       </section>
       <section class="pane preview-pane" aria-label="Preview pane" hidden={effectiveLayout === 'source' || effectiveLayout === 'live' || canvasVisible || active.hemingway}>{#if effectiveLayout === 'split'}<div class="pane-heading"><span>PREVIEW</span></div>{/if}{#if !active.hemingway && !canvasVisible && (effectiveLayout === 'split' || effectiveLayout === 'preview')}<Preview bind:this={preview} mathMode={ui.mathSyntax} documentId={active.lifetime} content={active.content} {standalone} {theme} folds={active.folds} onToggleTask={togglePreviewTask} onInsertSqlTable={insertPreviewSqlTable} onEditSource={(from) => void editSource(from)} cells={cellsFor(active)} sourcePath={active.path ?? active.id} loadEmbed={loadEmbedded} onOpenPath={(path) => void openPath(path)} onOpenWiki={wikiHandler(activeId)} onEditProperties={propertiesHandler(activeId)} />{/if}</section>
-      {#if canvasVisible}<Canvas content={active.content} documentId={active.lifetime} path={active.path} apply={applyCanvas} openNote={(file,subpath)=>void openWiki(file+(subpath||''),activeId,'')} noteCandidates={canvasNoteCandidates} renderCard={renderCanvasCard} undo={()=>editor?.undoEdit()} redo={()=>editor?.redoEdit()} />{/if}
+      {#if canvasVisible}{#await loadCanvas() then { default: Canvas }}<Canvas bind:this={canvasView} content={active.content} documentId={active.lifetime} path={active.path} apply={applyCanvas} openNote={(file,subpath)=>void openWiki(file+(subpath||''),activeId,'')} noteCandidates={canvasNoteCandidates} renderCard={renderCanvasCard} undo={()=>editor?.undoEdit()} redo={()=>editor?.redoEdit()} />{:catch cause}<div class="app-error" role="alert">The canvas could not be loaded: {String(cause)}. Use Source to edit the JSON.</div>{/await}{/if}
     </div>
 
   </div>

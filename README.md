@@ -23,7 +23,7 @@
   <img src="docs/readme/hero.png" width="100%" alt="Notation in Split view: Markdown source on the left; the rendered document with a callout, task list, Mermaid flowchart and KaTeX math on the right">
 </p>
 
-Built with Svelte 5, CodeMirror 6 and a Rust/Tauri 2 backend. It ships as a standalone Linux AppImage, with a browser mode for development.
+Built with Svelte 5, CodeMirror 6 and a Rust/Tauri 2 backend; canvas boards use [Svelte Flow](https://svelteflow.dev). It ships as a standalone Linux AppImage, with a browser mode for development.
 
 | Area | Highlights |
 | --- | --- |
@@ -459,11 +459,17 @@ Footnotes use `[^note]` and `[^note]: Definition`, with indented continuation pa
 
 ## Canvas and export
 
-**New canvas** creates a separate `.canvas` document using [JSON Canvas 1.0](https://jsoncanvas.org/spec/1.0/). Add and move text, note, media, diagram, and group cards, connect them, and zoom or pan. File cards use workspace-relative paths. Canvas changes use the same tab recovery, Save, and undo mechanisms as notes. Source mode exposes the JSON, including preserved unknown fields. Save exports the `.canvas` file; rendered canvas conversion is not included.
+**New canvas** creates a separate `.canvas` document using [JSON Canvas 1.0](https://jsoncanvas.org/spec/1.0/). Add and move text, note, media, diagram, and group cards, connect them, and zoom or pan. The board's interaction layer is [Svelte Flow](https://svelteflow.dev) (MIT). File cards use workspace-relative paths. Canvas changes use the same tab recovery, Save, and undo mechanisms as notes. Source mode exposes the JSON, including preserved unknown fields. Save exports the `.canvas` file; rendered canvas conversion is not included.
 
-Drag a card title to move it and its bottom-right corner to resize. With a card selected and the board focused, arrows move it, Alt+arrows resize it, and Shift uses larger steps. Space+drag or middle-drag pans. Click the arrow button on one card and then another to connect them; **Connect cards** also lets you add a label.
+Drag a card from anywhere on it to move it, and drag the handles of a selected card to resize. Double-click empty space to write a new text card there; double-click a card to edit its Markdown in place (Escape or clicking away keeps the change). The wheel or a two-finger scroll pans (Shift+wheel sideways), pinch or Ctrl/Cmd+wheel zooms around the cursor, and Space+drag or middle-drag pans from anywhere. Shift+drag draws a selection box, also inside a group (the **Select** tool makes that the plain drag), and Shift+click or Ctrl/Cmd+click adds or removes a card; selected cards move together, and a group moves the cards inside it. **Snap** keeps cards on a 20-unit grid; with it off, cards line up with their neighbours when released near an edge or centre. **Map** shows a minimap. Zoomed far out, cards show their title only and get their content back as you zoom in. **Escape** cancels a drag, a resize, a selection box or a connection in progress and puts everything back.
 
-A blank note card offers **Choose note**. Search for a note or enter a workspace-relative path, select a result, and **Apply card**. **Open original** then opens the linked note. Desktop searches indexed workspace notes; browser mode resolves open tabs only. Use **Open** or **Add note card / Add media card** for files; dropping a file does not import it.
+Drag from a dot on a card's side to another card to connect them. Dropping on empty space creates a connected card. A connection leaves from the sides that face each other and follows its cards; a side is recorded in the file only when you pick one other than the automatic choice, or choose **Keep these sides** from the connection's menu. Select a connection to get a grip at each end: drag a grip to another card or side to reconnect it, or drop it on empty space to leave it as it was. Double-click a connection or its label to edit the label. Right-click the board, a card or a connection for more actions, including card colours.
+
+Boards from earlier versions recorded every connection as right-to-left, which can draw arrows around cards. Such a board shows a hint, and **Choose connection sides automatically** (Commands, the board's menu, or the hint) frees every connection in one undoable step. Nothing is rewritten until you ask.
+
+With the board focused, Tab reaches each card and connection. With nothing selected, arrows move focus from card to card (or pan the board); Enter selects the focused card and Enter again edits it. With a selection, arrows move it, Alt+arrows resize it and Shift uses larger steps (a run of arrow presses is one undo step); Ctrl/Cmd+C, V and D copy, paste and duplicate, Delete removes the selection, and Escape clears it. **Connect cards** connects by name with a label. A canvas holds up to 2,000 cards and 8,000 connections, and a change keeps the file's own indentation and line endings.
+
+A blank note card offers **Choose note**. The card details panel opens (also via a card's **⋯** button): search for a note or enter a workspace-relative path, select a result, and **Apply card**. **Open original** then opens the linked note. Desktop searches indexed workspace notes; browser mode resolves open tabs only. Use **Open** or **Add note card / Add media card** for files; dropping a file does not import it.
 
 **Export** captures a note snapshot as HTML, a self-contained webpage, PDF, DOCX, or PowerPoint slides. Rendered diagrams, math, note embeds, and query results are included. HTML includes its stylesheet and fonts; self-contained export also embeds supported local resources and reports any it cannot include. Remote resources are not fetched for export. Exports do not run code cells or change source files. Layout fidelity varies by format; Office/PDF conversions use a light theme.
 

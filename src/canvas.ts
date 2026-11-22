@@ -2,6 +2,7 @@ export type CanvasNode = { id: string; type: 'text' | 'file' | 'link' | 'group';
 export type CanvasEdge = { id: string; fromNode: string; toNode: string; fromSide?: 'top' | 'right' | 'bottom' | 'left'; toSide?: 'top' | 'right' | 'bottom' | 'left'; fromEnd?: 'none' | 'arrow'; toEnd?: 'none' | 'arrow'; color?: string; label?: string; [key: string]: unknown };
 export type CanvasDocument = { nodes: CanvasNode[]; edges: CanvasEdge[]; [key: string]: unknown };
 const MAX_BYTES = 4 * 1024 * 1024;
+export const MAX_CARDS = 2000, MAX_CONNECTIONS = 8000;
 function object(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value); }
 function string(value: unknown, field: string, optional = false) { if (value === undefined && optional) return; if (typeof value !== 'string') throw new Error('Canvas ' + field + ' must be text.'); }
 function color(value: unknown) { if (value !== undefined && (typeof value !== 'string' || !/^(?:#[\da-f]{6}|[1-6])$/iu.test(value))) throw new Error('Canvas colors must use #RRGGBB or a preset from 1 to 6.'); }
@@ -9,7 +10,7 @@ export function validateCanvas(value: unknown): CanvasDocument {
   if (!object(value)) throw new Error('Canvas JSON must be an object with nodes and edges arrays.');
   const nodes = value.nodes ?? [], edges = value.edges ?? [];
   if (!Array.isArray(nodes) || !Array.isArray(edges)) throw new Error('Canvas nodes and edges must be arrays.');
-  if (nodes.length > 500 || edges.length > 2000) throw new Error('Canvas supports at most 500 cards and 2,000 connections. The original JSON remains unchanged.');
+  if (nodes.length > MAX_CARDS || edges.length > MAX_CONNECTIONS) throw new Error('Canvas supports at most 2,000 cards and 8,000 connections. The original JSON remains unchanged.');
   const ids = new Set<string>();
   for (const node of nodes) {
     if (!object(node)) throw new Error('Every canvas node must be an object.');
@@ -37,16 +38,29 @@ export function parseCanvas(text: string) {
   let value: unknown; try { value = JSON.parse(text); } catch (cause) { throw new Error('Invalid Canvas JSON: ' + String(cause)); }
   return validateCanvas(value);
 }
-export function serializeCanvas(value: CanvasDocument, eol = '\n') {
+/** How a file was written: its line ending, its indentation and whether it ends with a newline. A change keeps all three. */
+export type CanvasFormat = { eol: string; indent: string | number; trailing: boolean };
+export function canvasFormat(text: string): CanvasFormat {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n', indent = /^\s*[{[]\r?\n([ \t]+)\S/u.exec(text)?.[1];
+  // A file on one line stays on one line.
+  return { eol, indent: indent ?? (/[{[,]\r?\n/u.test(text) ? 2 : 0), trailing: /\n\s*$/u.test(text) };
+}
+export function serializeCanvas(value: CanvasDocument, format: CanvasFormat = { eol: '\n', indent: 2, trailing: true }) {
   validateCanvas(value);
-  const text = JSON.stringify(value, null, 2).replace(/\n/gu, eol) + eol;
+  const text = JSON.stringify(value, null, format.indent).replace(/\n/gu, format.eol) + (format.trailing ? format.eol : '');
   if (new TextEncoder().encode(text).length > MAX_BYTES) throw new Error('Canvas exceeds the 4 MiB document limit. No changes were applied.');
   return text;
 }
 export function newCanvas() { return '{\n  "nodes": [],\n  "edges": []\n}\n'; }
-export function mutateCanvas(text: string, mutation: (canvas: CanvasDocument) => void) {
-  const canvas = parseCanvas(text); mutation(canvas); return serializeCanvas(canvas, text.includes('\r\n') ? '\r\n' : '\n');
+/**
+ * Apply a mutation and return the new text and the document it was serialized
+ * from. A mutation that leaves the document as it was returns the text
+ * untouched (`changed` is false), whatever formatting the file uses.
+ */
+export function mutateCanvasDocument(text: string, mutation: (canvas: CanvasDocument) => void) {
+  const canvas = parseCanvas(text), before = JSON.stringify(canvas);
+  mutation(canvas);
+  if (JSON.stringify(canvas) === before) return { text, canvas, changed: false };
+  return { text: serializeCanvas(canvas, canvasFormat(text)), canvas, changed: true };
 }
-export function removeCanvasNode(canvas: CanvasDocument, id: string) { canvas.nodes = canvas.nodes.filter((node) => node.id !== id); canvas.edges = canvas.edges.filter((edge) => edge.fromNode !== id && edge.toNode !== id); }
-export function canvasNodeTitle(node: CanvasNode) { return node.label || node.type === 'text' && node.text?.split('\n').find((line) => line.trim())?.replace(/^#+\s*/u, '').slice(0,80) || node.file || node.url || 'Group'; }
-export function canvasAnchor(node: CanvasNode, side = 'right') { return { x: node.x + (side === 'left' ? 0 : side === 'right' ? node.width : node.width / 2), y: node.y + (side === 'top' ? 0 : side === 'bottom' ? node.height : node.height / 2) }; }
+export function canvasNodeTitle(node: CanvasNode) { return node.label || node.type === 'text' && node.text?.split('\n').find((line) => line.trim())?.replace(/^#+\s*/u, '').slice(0,80) || node.file || node.url || (node.type === 'text' ? 'Empty card' : 'Group'); }

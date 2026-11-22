@@ -3,6 +3,7 @@ import { isMac } from './platform';
 export const COMMANDS = [
   { id: 'file.new', label: 'New', group: 'Document', defaultShortcut: 'Mod+N' },
   { id: 'file.newCanvas', label: 'New canvas', group: 'Document', defaultShortcut: '' },
+  { id: 'canvas.autoSides', label: 'Choose connection sides automatically', group: 'Document', defaultShortcut: '' },
   { id: 'sticky.new', label: 'New sticky note', group: 'Document', defaultShortcut: '' },
   { id: 'file.open', label: 'Open', group: 'Document', defaultShortcut: 'Mod+O' },
   { id: 'file.save', label: 'Save', group: 'Document', defaultShortcut: 'Mod+S' },

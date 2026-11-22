@@ -427,25 +427,49 @@ test('the canvas has a centered empty state, eases toolbar zoom and animates onl
   await expect.poll(animations).toEqual([{ duration: 180, properties: ['opacity', 'transform', 'transformOrigin'] }]);
 
   // Toolbar zoom eases the plane; the read-out and final scale are exact.
-  const plane = view.locator('.canvas-plane');
+  const board = view.locator('.canvas-board'), plane = view.locator('.svelte-flow__viewport');
   await view.getByRole('button', { name: 'Zoom in', exact: true }).click();
-  await expect(plane).toHaveClass(/easing/);
+  await expect(board).toHaveClass(/easing/);
   await expect(view.locator('.canvas-zoom')).toHaveText('120%');
-  await expect(plane).not.toHaveClass(/easing/);
+  await expect(board).not.toHaveClass(/easing/);
   expect(await plane.evaluate((element) => new DOMMatrix(getComputedStyle(element).transform).a)).toBeCloseTo(1.2, 5);
   // Wheel zoom is immediate: no easing class, transform applied at once.
   await view.locator('.canvas-viewport').hover();
   await page.keyboard.down('Control');
   await page.mouse.wheel(0, -100);
   await page.keyboard.up('Control');
-  await expect(plane).not.toHaveClass(/easing/);
+  await expect(board).not.toHaveClass(/easing/);
   expect(await plane.evaluate((element) => getComputedStyle(element).transitionDuration)).toBe('0s');
+  expect(await plane.evaluate((element) => new DOMMatrix(getComputedStyle(element).transform).a)).toBeCloseTo(1.2 * 1.1, 5);
 
   // A second card only animates itself.
   await view.getByRole('button', { name: 'Add card', exact: true }).click();
   await view.getByRole('menuitem', { name: 'Add text card', exact: true }).click();
   await expect(view.locator('.canvas-node')).toHaveCount(2);
   await expect.poll(async () => (await animations()).length).toBe(2);
+
+  // A deleted card fades out where it stood; only that one element animates.
+  await view.locator('.svelte-flow__node').first().click();
+  await page.keyboard.press('Delete');
+  await expect(view.locator('.canvas-node')).toHaveCount(1);
+  await expect(view.locator('.canvas-ghost')).toHaveCount(1);
+  await expect(view.locator('.canvas-ghost')).toHaveCount(0);
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(view.locator('.canvas-node')).toHaveCount(2);
+
+  // Reduced motion: toolbar zoom and fit land at once and a new card does not animate.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await view.getByRole('button', { name: 'Fit canvas', exact: true }).click();
+  expect(await board.evaluate((element) => element.classList.contains('easing'))).toBe(false);
+  await expect(view.locator('.canvas-zoom')).toHaveText('100%');
+  await view.getByRole('button', { name: 'Add card', exact: true }).click();
+  await view.getByRole('menuitem', { name: 'Add text card', exact: true }).click();
+  await expect(view.locator('.canvas-node')).toHaveCount(3);
+  expect((await animations()).length).toBe(2);
+  await view.locator('.svelte-flow__node').first().click();
+  await page.keyboard.press('Delete');
+  await expect(view.locator('.canvas-node')).toHaveCount(2);
+  await expect(view.locator('.canvas-ghost')).toHaveCount(0);
 });
 
 test('only the edited block fades in the Split preview, and document switches fade nothing', async ({ page }) => {

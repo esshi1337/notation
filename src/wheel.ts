@@ -20,6 +20,12 @@ export function wheelPixels(event: WheelLike): number {
   return event.deltaY;
 }
 
+/** Both wheel axes in pixels, whatever unit the device reports. */
+export function wheelDelta(event: Pick<WheelEvent, 'deltaX' | 'deltaY' | 'deltaMode'>): { x: number; y: number } {
+  const scale = event.deltaMode === 1 ? LINE_PIXELS : event.deltaMode === 2 ? PAGE_PIXELS : 1;
+  return { x: event.deltaX * scale, y: event.deltaY * scale };
+}
+
 /** True for a stream of small pixel deltas (trackpad, Magic Mouse, pinch). */
 export function isContinuousWheel(event: WheelLike): boolean {
   return event.deltaMode === 0 && Math.abs(event.deltaY) < NOTCH_PIXELS;
