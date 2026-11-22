@@ -21,7 +21,8 @@
   $effect(() => {
     if (!editing) return;
     untrack(() => { draft = (group ? node.label : node.text) ?? ''; });
-    void tick().then(() => { field?.focus(); field?.select(); });
+    // A label is replaced as a whole; card text is added to, so the caret goes to its end.
+    void tick().then(() => { field?.focus(); if (field instanceof HTMLTextAreaElement) field.setSelectionRange(field.value.length, field.value.length); else field?.select(); });
   });
   function editorKey(event: KeyboardEvent) {
     // Every app shortcut (Save, close tab, switch tab, quit) starts with Ctrl or Cmd going

@@ -1032,7 +1032,8 @@ test('cards are reachable and operable from the keyboard', async ({ page }) => {
   await expect(editor).toBeFocused();
   await page.keyboard.type('!');
   await page.keyboard.press('Escape');
-  await expect(card(view, '!')).toBeFocused();
+  // The caret opened at the end of the text, so typing adds to it.
+  await expect(card(view, 'a!')).toBeFocused();
   await page.keyboard.press('Tab');
   await page.keyboard.press('Tab');
   await expect(card(view, 'b')).toBeFocused();
@@ -1040,7 +1041,7 @@ test('cards are reachable and operable from the keyboard', async ({ page }) => {
   await page.keyboard.press('Delete');
   const data = await canvasData(page);
   expect(data.nodes).toHaveLength(1);
-  expect(data.nodes[0]).toMatchObject({ text: '!', x: 1, y: 0 });
+  expect(data.nodes[0]).toMatchObject({ text: 'a!', x: 1, y: 0 });
 });
 
 test('arrow keys move focus between cards, Enter selects and edits, and focus is always visible', async ({ page }) => {
@@ -1086,7 +1087,8 @@ test('arrow keys move focus between cards, Enter selects and edits, and focus is
   await expect(view.locator('.canvas-inline-editor')).toBeFocused();
   await page.keyboard.type('!');
   await page.keyboard.press('Escape');
-  await expect(card(view, '!')).toBeFocused();
+  // The caret opened at the end of the text, so typing adds to it.
+  await expect(card(view, 'a!')).toBeFocused();
   // Escape again clears the selection, so arrows walk between cards once more.
   await page.keyboard.press('Escape');
   expect(await selectedIds(view)).toEqual([]);
@@ -1106,7 +1108,7 @@ test('arrow keys move focus between cards, Enter selects and edits, and focus is
   expect((await card(view, 'c').boundingBox())!.x).toBeCloseTo(before.x - 60, 0);
   // Connections are focusable and describe both ends.
   await undo(page, view);
-  await expect(view.locator('.svelte-flow__edge')).toHaveAttribute('aria-label', 'Connection: ! to b');
+  await expect(view.locator('.svelte-flow__edge')).toHaveAttribute('aria-label', 'Connection: a! to b');
 });
 
 test('looking, selecting, panning, zooming and cancelled edits never write to the document', async ({ page }) => {
@@ -1203,6 +1205,8 @@ test('a 1000-card board opens, moves a card and saves every card', async ({ page
   // Zoomed in, only the cards in view are in the page.
   for (let step = 0; step < 12; step++) await view.getByRole('button', { name: 'Zoom in', exact: true }).click();
   await expect.poll(() => view.locator('.svelte-flow__node').count()).toBeLessThan(120);
+  // The zoom buttons ease the board; pick and drag a card once it has settled.
+  await expect(view.locator('.canvas-board')).not.toHaveClass(/easing/u);
   // Pick a card that lies wholly inside the board.
   const frame = (await boardOf(view).boundingBox())!;
   const id = await view.locator('.svelte-flow__node').evaluateAll((cards, area) => cards.find((item) => { const box = item.getBoundingClientRect(); return box.left > area.x + 20 && box.top > area.y + 20 && box.right < area.x + area.width - 80 && box.bottom < area.y + area.height - 80; })!.getAttribute('data-id')!, frame);

@@ -1,10 +1,11 @@
 /* Canvas view. The interaction layer is Svelte Flow (base.css supplies its
    layout); everything visible reads the app's tokens so both themes, the
    motion tokens and Reduce motion apply here as they do elsewhere. */
-/* The app's --accent is a quiet neutral in the built-in themes. Selection, focus and the
-   connection being drawn need to read at a glance in both, so they use the same stronger
-   mix the app's focus rings use; a user theme's accent colour carries through. */
-.canvas-view{--canvas-accent:color-mix(in srgb,var(--accent) 65%,var(--text));display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;flex:1;background:var(--bg)}
+/* The app's --accent is one quiet neutral shared by the dark and light themes. Selection,
+   focus and the connection being drawn must read at a glance on either paper, so they mix
+   it half and half with the heading colour (about 4.4:1 on the light theme's paper); a
+   user theme's accent colour still carries through. */
+.canvas-view{--canvas-accent:color-mix(in srgb,var(--accent) 50%,var(--heading));display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;flex:1;background:var(--bg)}
 .canvas-tools{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border);flex-wrap:nowrap;min-height:41px}
 .canvas-tools button{font-size:13px;line-height:18px;padding:3px 10px;min-width:28px;min-height:28px;border-color:var(--border);white-space:nowrap}
 .canvas-tools .canvas-zoom-button{padding:3px 0;font-size:15px}
